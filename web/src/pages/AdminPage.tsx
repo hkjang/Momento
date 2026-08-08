@@ -32,15 +32,17 @@ import { del, get, patch, post, put, type Site } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
-import { ErrorState, Loading } from "../components/States";
+import { ErrorState, Loading, NoSite } from "../components/States";
 
 const adminTabs = [
   "사이트",
   "SSO · 일반",
   "개인정보",
+  "보존 정책",
   "네트워크 망",
   "사용자 · 권한",
   "이벤트 스키마",
+  "사용자 정의 차원",
   "Tracking Debugger",
   "감사 로그",
 ];
@@ -68,11 +70,13 @@ export default function AdminPage() {
         <SettingsAdmin groups={["general", "oidc", "storage", "security"]} />
       )}{" "}
       {tab === 2 && <PrivacyAdmin />}
-      {tab === 3 && <NetworksAdmin />}
-      {tab === 4 && <UsersAdmin />}
-      {tab === 5 && <SchemasAdmin />}
-      {tab === 6 && <DebuggerAdmin />}
-      {tab === 7 && <AuditAdmin />}
+      {tab === 3 && <RetentionAdmin />}
+      {tab === 4 && <NetworksAdmin />}
+      {tab === 5 && <UsersAdmin />}
+      {tab === 6 && <SchemasAdmin />}
+      {tab === 7 && <DimensionsAdmin />}
+      {tab === 8 && <DebuggerAdmin />}
+      {tab === 9 && <AuditAdmin />}
     </Stack>
   );
 }
@@ -750,6 +754,321 @@ function DataDeletion() {
         </Alert>
       )}
     </Card>
+  );
+}
+
+interface RetentionPolicy {
+  raw_event_months: number;
+  session_months: number;
+  aggregation_months: number | null;
+  realtime_hours: number;
+  debug_days: number;
+}
+
+function RetentionAdmin() {
+  const { site } = useSite();
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: ["retention", site?.site_id],
+    queryFn: () =>
+      get<{ policy: RetentionPolicy; updated_at?: string }>(
+        `/api/v1/sites/${site!.site_id}/retention`,
+      ),
+    enabled: !!site,
+  });
+  const [local, setLocal] = useState<RetentionPolicy | null>(null);
+  const current = local || query.data?.policy;
+  const save = useMutation({
+    mutationFn: () => put(`/api/v1/sites/${site!.site_id}/retention`, current),
+    onSuccess: async () => {
+      setLocal(null);
+      await qc.invalidateQueries({ queryKey: ["retention", site?.site_id] });
+    },
+  });
+  if (!site) return <NoSite />;
+  if (query.isLoading) return <Loading />;
+  if (query.error) return <ErrorState error={query.error} />;
+  const set = (key: keyof RetentionPolicy, value: number | null) =>
+    setLocal({ ...query.data!.policy, ...local, [key]: value });
+  return (
+    <Stack spacing={2}>
+      <Alert severity="info">
+        정책은 사이트별로 적용됩니다. Raw Event와 물리화 Session은 매시간
+        독립적으로 정리되며 집계 보존기간을 비워 두면 무기한입니다.
+      </Alert>
+      <Card sx={{ p: 3 }}>
+        <Section
+          title={`${site.name} 보존 정책`}
+          desc="법무·보안 정책에 맞춰 데이터 종류별 보존기간을 지정합니다."
+        >
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "repeat(2,1fr)",
+                xl: "repeat(3,1fr)",
+              },
+              gap: 2,
+            }}
+          >
+            <TextField
+              label="Raw Event (개월)"
+              type="number"
+              value={current?.raw_event_months ?? 13}
+              onChange={(event) =>
+                set("raw_event_months", Number(event.target.value))
+              }
+              helperText="1~120개월"
+            />
+            <TextField
+              label="Session 요약 (개월)"
+              type="number"
+              value={current?.session_months ?? 25}
+              onChange={(event) =>
+                set("session_months", Number(event.target.value))
+              }
+              helperText="Raw Event 삭제 후에도 유지되는 요약"
+            />
+            <TextField
+              label="Aggregation (개월)"
+              type="number"
+              value={current?.aggregation_months ?? ""}
+              onChange={(event) =>
+                set(
+                  "aggregation_months",
+                  event.target.value ? Number(event.target.value) : null,
+                )
+              }
+              helperText="비워 두면 무기한"
+            />
+            <TextField
+              label="Realtime (시간)"
+              type="number"
+              value={current?.realtime_hours ?? 24}
+              onChange={(event) =>
+                set("realtime_hours", Number(event.target.value))
+              }
+              helperText="1~168시간"
+            />
+            <TextField
+              label="Debugger / Dead Letter (일)"
+              type="number"
+              value={current?.debug_days ?? 7}
+              onChange={(event) =>
+                set("debug_days", Number(event.target.value))
+              }
+              helperText="1~90일"
+            />
+          </Box>
+          {save.error && <Alert severity="error">{save.error.message}</Alert>}
+          <Button
+            variant="contained"
+            startIcon={<SaveRounded />}
+            disabled={!local || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            보존 정책 저장
+          </Button>
+        </Section>
+      </Card>
+    </Stack>
+  );
+}
+
+interface CustomDimension {
+  id: string;
+  name: string;
+  query_name: string;
+  property_key: string;
+  scope: string;
+  data_type: string;
+  description: string;
+  active: boolean;
+}
+
+function DimensionsAdmin() {
+  const { site } = useSite();
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: ["dimensions", site?.site_id],
+    queryFn: () =>
+      get<CustomDimension[]>(`/api/v1/dimensions?site_id=${site!.site_id}`),
+    enabled: !!site,
+  });
+  const [form, setForm] = useState({
+    name: "",
+    property_key: "",
+    scope: "event",
+    data_type: "string",
+    description: "",
+    active: true,
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      post("/api/v1/dimensions", { site_id: site!.site_id, ...form }),
+    onSuccess: async () => {
+      setForm({
+        name: "",
+        property_key: "",
+        scope: "event",
+        data_type: "string",
+        description: "",
+        active: true,
+      });
+      await qc.invalidateQueries({ queryKey: ["dimensions", site?.site_id] });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => del(`/api/v1/dimensions/${id}`),
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ["dimensions", site?.site_id] }),
+  });
+  if (!site) return <NoSite />;
+  if (query.isLoading) return <Loading />;
+  if (query.error) return <ErrorState error={query.error} />;
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", lg: "380px 1fr" },
+        gap: 2,
+      }}
+    >
+      <Card sx={{ p: 2.5, height: "fit-content" }}>
+        <Typography fontWeight={720}>Custom Dimension Registry</Typography>
+        <Typography variant="body2" color="text.secondary" mb={2}>
+          Event Property에 분석 이름과 Scope를 부여합니다. 저장 후 Query
+          Builder에서 custom.이름으로 사용합니다.
+        </Typography>
+        <Stack spacing={2}>
+          <TextField
+            label="Dimension 이름"
+            value={form.name}
+            onChange={(event) =>
+              setForm({ ...form, name: event.target.value.toLowerCase() })
+            }
+            placeholder="membership"
+          />
+          <TextField
+            label="Property key"
+            value={form.property_key}
+            onChange={(event) =>
+              setForm({ ...form, property_key: event.target.value })
+            }
+            placeholder="membership"
+          />
+          <TextField
+            select
+            label="Scope"
+            value={form.scope}
+            onChange={(event) =>
+              setForm({ ...form, scope: event.target.value })
+            }
+          >
+            {[
+              ["user", "User"],
+              ["session", "Session"],
+              ["event", "Event"],
+              ["item", "Item (Ecommerce)"],
+            ].map(([value, label]) => (
+              <MenuItem key={value} value={value}>
+                {label}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            select
+            label="Data type"
+            value={form.data_type}
+            onChange={(event) =>
+              setForm({ ...form, data_type: event.target.value })
+            }
+          >
+            {["string", "number", "boolean", "date"].map((value) => (
+              <MenuItem key={value} value={value}>
+                {value}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="설명"
+            value={form.description}
+            onChange={(event) =>
+              setForm({ ...form, description: event.target.value })
+            }
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={form.active}
+                onChange={(event) =>
+                  setForm({ ...form, active: event.target.checked })
+                }
+              />
+            }
+            label="활성화"
+          />
+          {save.error && <Alert severity="error">{save.error.message}</Alert>}
+          <Button
+            variant="contained"
+            onClick={() => save.mutate()}
+            disabled={!form.name || !form.property_key || save.isPending}
+          >
+            등록 또는 갱신
+          </Button>
+        </Stack>
+      </Card>
+      <DataTable
+        columns={[
+          { key: "query_name", label: "Query Dimension" },
+          { key: "property_key", label: "Property" },
+          {
+            key: "scope",
+            label: "Scope",
+            format: (value) => <Chip size="small" label={String(value)} />,
+          },
+          { key: "data_type", label: "Type" },
+          { key: "description", label: "설명" },
+          {
+            key: "active",
+            label: "상태",
+            format: (value) => (value ? "활성" : "비활성"),
+          },
+          {
+            key: "id",
+            label: "관리",
+            format: (value, row) => (
+              <Stack direction="row" gap={0.5}>
+                <Button
+                  size="small"
+                  onClick={() =>
+                    setForm({
+                      name: String(row.name),
+                      property_key: String(row.property_key),
+                      scope: String(row.scope),
+                      data_type: String(row.data_type),
+                      description: String(row.description || ""),
+                      active: Boolean(row.active),
+                    })
+                  }
+                >
+                  편집
+                </Button>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => remove.mutate(String(value))}
+                >
+                  <DeleteOutlineRounded fontSize="small" />
+                </IconButton>
+              </Stack>
+            ),
+          },
+        ]}
+        rows={(query.data || []) as unknown as Record<string, unknown>[]}
+      />
+    </Box>
   );
 }
 

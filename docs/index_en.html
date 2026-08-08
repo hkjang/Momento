@@ -22,6 +22,10 @@
     <meta name="twitter:title" content="Momento - On-Premise Event Analytics Platform">
     <meta name="twitter:description" content="100% data sovereignty for internal apps and web services. Collect and analyze raw behavioral events on-premise.">
 
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="shortcut icon" href="favicon.svg">
+
     <!-- Canonical & Alternate -->
     <link rel="canonical" href="https://hkjang.github.io/Momento/index_en.html">
     <link rel="alternate" hreflang="ko" href="https://hkjang.github.io/Momento/">
@@ -43,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.2.0",
       "description": "Self-hosted, on-premise event analytics platform that collects and analyzes raw event data from enterprise applications.",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -85,7 +89,7 @@
           "name": "How does Momento differ from Google Analytics or SaaS solutions?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Momento ensures 100% data sovereignty. All raw events stay inside your firewall or internal cloud. It natively maps employee departments, org structures, and CIDR subnets to track internal tool adoption securely with built-in PII masking."
+            "text": "Momento keeps raw events inside your firewall or internal cloud. It maps employee departments, org structures, and CIDR subnets, and provides administrator-defined property blocking and URL parameter masking."
           }
         },
         {
@@ -146,9 +150,7 @@
     <header class="navbar">
         <div class="container nav-container">
             <a href="index_en.html" class="logo">
-                <span class="logo-icon">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                </span>
+                <img src="logo.png" alt="Momento Logo" width="36" height="36" style="border-radius: 10px; box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);">
                 Momento
             </a>
             <ul class="nav-links desktop-only">
@@ -237,7 +239,7 @@
                 </div>
                 <div class="stat-item fade-up-element">
                     <span class="stat-icon">🛡️</span>
-                    <span>Automatic PII Masking</span>
+                    <span>Privacy Data Minimization</span>
                 </div>
                 <div class="stat-item fade-up-element">
                     <span class="stat-icon">🤖</span>
@@ -269,8 +271,8 @@
                     </article>
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">🔐</div>
-                        <h3 class="feature-title">PII Masking & Enterprise Security</h3>
-                        <p class="feature-desc">Automatically redact sensitive PII patterns (emails, SSNs, phone numbers). Supports Keycloak OIDC (PKCE), RBAC, API key rotation, and audit logs.</p>
+                        <h3 class="feature-title">Data Minimization & Enterprise Security</h3>
+                        <p class="feature-desc">Remove administrator-defined sensitive properties and mask selected URL parameters. Supports Keycloak OIDC (PKCE), RBAC, API key rotation, and audit logs.</p>
                     </article>
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">🤖</div>
@@ -280,7 +282,7 @@
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">📦</div>
                         <h3 class="feature-title">Air-Gapped Deployment</h3>
-                        <p class="feature-desc">Deploy in isolated corporate networks using a single non-root Docker container and offline tar.gz release archives with zero external dependencies.</p>
+                        <p class="feature-desc">Deploy in isolated corporate networks using a single non-root Docker container, PostgreSQL, and offline tar.gz release archives without internet access.</p>
                     </article>
                 </div>
             </div>
@@ -302,7 +304,7 @@
                     <div class="step-card fade-up-element">
                         <div class="step-number">2</div>
                         <h4>Durable Collector</h4>
-                        <p>Validates domains/keys, redacts PII, and parses user agent context</p>
+                        <p>Validates domains/keys, applies privacy filters, and parses user agent context</p>
                     </div>
                     <div class="step-connector desktop-only">→</div>
                     <div class="step-card fade-up-element">
@@ -360,12 +362,12 @@ PII Filter & Key Check  OIDC Discovery / JWKS
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🔒</div>
                         <h4>API Key Rotation</h4>
-                        <p>Issue hashed API keys with zero-downtime grace period rotation. Raw keys are shown once upon creation.</p>
+                        <p>Issue, rotate, and revoke hashed API keys. Raw keys are shown once, and rotation immediately revokes the previous key.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🛡️</div>
-                        <h4>PII Redaction Rules</h4>
-                        <p>Automatic detection and masking of sensitive identifiers. Customize blocking rules dynamically via the admin console.</p>
+                        <h4>Privacy Filter Rules</h4>
+                        <p>Configure blocked property keys and masked URL parameters in the admin console. Value-pattern detection is not provided.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">📝</div>
@@ -463,12 +465,12 @@ docker compose up --build
                         <h4>📦 Offline Archive (.tar.gz)</h4>
                         <p>Docker image bundle for air-gapped corporate networks without internet access.</p>
 <pre><code># Load the release archive
-gzip -dc momento-v0.1.0.tar.gz | docker load
+gzip -dc momento-v0.2.0.tar.gz | docker load
 
 # Run in air-gapped environment
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento:v0.1.0</code></pre>
+  momento-v0.2.0</code></pre>
                     </div>
                 </div>
             </div>
@@ -495,19 +497,19 @@ docker run -d -p 8080:8080 \
                         <h3>📘 User Guide</h3>
                         <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">JavaScript SDK integration, identify/track APIs, Query Builder, Funnels, and Path analysis.</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 Download PDF</a>
-                            <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML View</a>
-                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Current v0.2</a>
+                            <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
+                            <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>
                     </div>
 
                     <div class="glass-panel fade-up-element">
                         <h3>🔧 Admin Guide</h3>
-                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC mapping, automatic PII redaction, CIDR subnet mapping, and audit logs.</p>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC mapping, privacy filters, CIDR subnet mapping, and audit logs.</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 Download PDF</a>
-                            <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML View</a>
-                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Current v0.2</a>
+                            <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
+                            <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>
                     </div>
 

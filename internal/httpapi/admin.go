@@ -217,6 +217,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "SITE_CREATE_FAILED", err.Error())
 		return
 	}
+	_, _ = s.DB.Exec(r.Context(), `INSERT INTO retention_policies(site_id) VALUES($1) ON CONFLICT(site_id) DO NOTHING`, id)
 	s.audit(r.Context(), &p, "site.create", "site", id.String(), map[string]any{"name": in.Name}, clientIP(r))
 	writeJSON(w, 201, map[string]any{"id": id, "tracking_key": plain, "server_api_key": serverPlain, "message": "Store the keys now; they will not be shown again."})
 }

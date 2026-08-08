@@ -14,6 +14,8 @@ Content-Type: application/json
 
 - `query_metrics`: 기간별 users, new_users, sessions, page_views, events, engagement_rate, conversions, revenue
 - `analyze_internal_usage`: department, organization, service, feature, button, network 차원별 사용량
+- `query_ecommerce`: 매출, 환불, 순매출, 거래, 구매자, 평균 주문 금액, 구매 전환율
+- `list_segments`: MCP 분석에서 재사용할 수 있는 저장 Segment와 중첩 AND/OR 정의
 
 초기화 예제:
 

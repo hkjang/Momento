@@ -26,7 +26,7 @@ jobs:
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./cmd/... ./internal/...
       - run: npm ci && npm audit && npm run typecheck && npm run build
         working-directory: sdk
-      - run: npm ci && npm audit && npm run build
+      - run: npm ci && npm audit && npm run lint && npm run build
         working-directory: web
       - name: Build production image
         run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA::12} -t momento:ci .

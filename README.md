@@ -1,4 +1,7 @@
-# Momento
+<p align="center">
+  <img src="docs/logo.png" alt="Momento Logo" width="160" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);"><br><br>
+  <h1 align="center">Momento</h1>
+</p>
 
 <p align="center">
   <strong>사내 Web/App을 위한 온프레미스 이벤트 애널리틱스 플랫폼</strong><br>
@@ -15,8 +18,9 @@
 
 - JavaScript SDK: Page View, SPA route, custom event, identify, session/visitor, UTM, device, click/scroll/form/download/outbound/error/heartbeat, consent, cookieless, batch, Beacon, offline queue
 - Durable Collector: `POST /collect/v1/events`, domain/key 검증, 중복 제거, 개인정보 필터, PostgreSQL inbox 기반 비동기 적재
-- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, 사내 사용 현황, Query Builder, 2-10 step Funnel, Path
-- 관리: Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, C 클래스/CIDR 망 이름, Event Schema/Conversion, Audit
+- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, 사내 사용 현황, 저장형 Query Builder, 조건형 Open/Closed Funnel, Path, Ecommerce, User Timeline
+- 관리: Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, C 클래스/CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
+- 고급 분석: 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 물리화 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
 - 연동: REST/OpenAPI, Raw CSV/NDJSON export, Analytics MCP
 - 배포: 단일 non-root Docker image, PostgreSQL migration 자동 적용, tag 기반 offline `.tar.gz` GitHub Release
@@ -73,7 +77,7 @@ cd ../web && npm install && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.1.0` 태그는 `momento-v0.1.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.2.0` 태그는 `momento-v0.2.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

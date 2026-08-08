@@ -280,14 +280,52 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 		}
 		propsJSON, _ := json.Marshal(props)
 		userJSON, _ := json.Marshal(userProps)
-		_, err = tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,is_conversion,is_internal,traffic_class)
+		result, err := tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,is_conversion,is_internal,traffic_class)
 			VALUES($1,$2,$3,$4,$5,$6,nullif($7,''),nullif($8,''),nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''),nullif($14,''),nullif($15,''),nullif($16,''),nullif($17,''),nullif($18,''),nullif($19,''),$20,$21,$22,$23,$24,$25,$26)
 			ON CONFLICT(site_id,event_id) DO NOTHING`, eventID, siteID, event.Name, eventTime, p.Request.VisitorID, p.Request.SessionID, userID, pageURL, ctxValue.Page.Title, ctxValue.Page.Referrer, ctxValue.Traffic.Source, ctxValue.Traffic.Medium, ctxValue.Traffic.Campaign, ctxValue.Device.Type, ctxValue.Device.Browser, ctxValue.Device.OS, ctxValue.Device.Language, ctxValue.Device.Screen, userAgent, nullableIP(ip), networkName, propsJSON, userJSON, conversion, internal, trafficClass)
 		if err != nil {
 			return err
 		}
+		if result.RowsAffected() > 0 {
+			if err := updateSession(ctx, tx, siteID, p.Request, event, eventTime, userID, pageURL, ctxValue, conversion); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request model.CollectRequest, event model.IncomingEvent, eventTime time.Time, userID, pageURL string, eventContext model.EventContext, conversion bool) error {
+	var page any
+	if event.Name == "page_view" && pageURL != "" {
+		page = pageURL
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6,$7,$8,$9,$9,nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''))
+		ON CONFLICT(site_id,session_id) DO UPDATE SET
+		visitor_id=excluded.visitor_id,
+		user_id=coalesce(excluded.user_id,sessions.user_id),
+		landing_page=CASE WHEN excluded.started_at<sessions.started_at AND excluded.landing_page IS NOT NULL THEN excluded.landing_page ELSE coalesce(sessions.landing_page,excluded.landing_page) END,
+		exit_page=CASE WHEN excluded.last_event_at>=sessions.last_event_at AND excluded.exit_page IS NOT NULL THEN excluded.exit_page ELSE sessions.exit_page END,
+		started_at=least(sessions.started_at,excluded.started_at),
+		last_event_at=greatest(sessions.last_event_at,excluded.last_event_at),
+		event_count=sessions.event_count+1,
+		page_views=sessions.page_views+excluded.page_views,
+		conversion_count=sessions.conversion_count+excluded.conversion_count,
+		engaged=sessions.engaged OR excluded.engaged,
+		source=coalesce(sessions.source,excluded.source),
+		medium=coalesce(sessions.medium,excluded.medium),
+		campaign=coalesce(sessions.campaign,excluded.campaign),
+		device_type=coalesce(sessions.device_type,excluded.device_type),
+		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), event.Name == "user_engagement", page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type)
+	return err
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func filteredProperties(in map[string]any, blocked []string) map[string]any {
@@ -469,13 +507,16 @@ func (w Worker) cleanup(ctx context.Context) error {
 	if debugDays > 90 {
 		debugDays = 90
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM raw_events WHERE event_timestamp < now()-make_interval(months=>$1)`, months); err != nil {
+	if _, err := w.DB.Exec(ctx, `DELETE FROM raw_events e WHERE e.event_timestamp < now()-make_interval(months=>coalesce((SELECT p.raw_event_months FROM retention_policies p WHERE p.site_id=e.site_id),$1))`, months); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM event_inbox WHERE processed_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
+	if _, err := w.DB.Exec(ctx, `DELETE FROM sessions s WHERE s.last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=s.site_id),25))`); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM event_dead_letters WHERE failed_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
+	if _, err := w.DB.Exec(ctx, `DELETE FROM event_inbox i WHERE i.processed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=i.site_id),$1))`, debugDays); err != nil {
+		return err
+	}
+	if _, err := w.DB.Exec(ctx, `DELETE FROM event_dead_letters d WHERE d.failed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=d.site_id),$1))`, debugDays); err != nil {
 		return err
 	}
 	if _, err := w.DB.Exec(ctx, `DELETE FROM user_sessions WHERE expires_at<now()`); err != nil {

@@ -5,6 +5,7 @@ import {
   Button,
   Card,
   IconButton,
+  MenuItem,
   Stack,
   TextField,
   Typography,
@@ -18,21 +19,80 @@ import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
-type Step = { name: string; event: string };
+import { builtInSegmentFields } from "../components/SegmentBuilder";
+type Step = {
+  name: string;
+  event: string;
+  filterField: string;
+  filterOperator: string;
+  filterValue: string;
+};
 export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const { site } = useSite();
   const [steps, setSteps] = useState<Step[]>([
-    { name: "페이지 조회", event: "page_view" },
-    { name: "클릭", event: "click" },
-    { name: "전환", event: "conversion" },
+    {
+      name: "페이지 조회",
+      event: "page_view",
+      filterField: "",
+      filterOperator: "=",
+      filterValue: "",
+    },
+    {
+      name: "클릭",
+      event: "click",
+      filterField: "",
+      filterOperator: "=",
+      filterValue: "",
+    },
+    {
+      name: "전환",
+      event: "conversion",
+      filterField: "",
+      filterOperator: "=",
+      filterValue: "",
+    },
   ]);
+  const [funnelMode, setFunnelMode] = useState("closed");
+  const [withinMinutes, setWithinMinutes] = useState(0);
+  const [segmentId, setSegmentId] = useState("");
+  const segments = useQuery({
+    queryKey: ["segments", site?.site_id],
+    queryFn: () =>
+      get<{ id: string; name: string }[]>(
+        `/api/v1/segments?site_id=${site!.site_id}`,
+      ),
+    enabled: !!site && mode === "funnel",
+  });
+  const customDimensions = useQuery({
+    queryKey: ["dimensions", site?.site_id],
+    queryFn: () =>
+      get<{ query_name: string; active: boolean; scope: string }[]>(
+        `/api/v1/dimensions?site_id=${site!.site_id}`,
+      ),
+    enabled: !!site && mode === "funnel",
+  });
   const funnel = useMutation({
     mutationFn: () =>
       post<{ steps: Record<string, unknown>[] }>("/api/v1/funnel", {
         site_id: site!.site_id,
         from: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
         to: new Date().toISOString().slice(0, 10),
-        steps,
+        mode: funnelMode,
+        within_minutes: withinMinutes,
+        segment_id: segmentId || undefined,
+        steps: steps.map((step) => ({
+          name: step.name,
+          event: step.event,
+          filters: step.filterField
+            ? [
+                {
+                  field: step.filterField,
+                  operator: step.filterOperator,
+                  value: step.filterValue,
+                },
+              ]
+            : [],
+        })),
       }),
   });
   const paths = useQuery({
@@ -47,6 +107,12 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
     if (site && mode === "funnel") funnel.mutate();
   }, [site?.site_id]);
   if (!site) return <NoSite />;
+  const funnelFields = [
+    ...builtInSegmentFields,
+    ...(customDimensions.data || [])
+      .filter((item) => item.active && item.scope !== "item")
+      .map((item) => item.query_name),
+  ];
   if (mode === "path") {
     if (paths.isLoading) return <Loading />;
     if (paths.error) return <ErrorState error={paths.error} />;
@@ -126,53 +192,179 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
             분석
           </Button>
         </Stack>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "180px 1fr 220px" },
+            gap: 1.5,
+            mb: 2,
+          }}
+        >
+          <TextField
+            select
+            size="small"
+            label="Funnel 유형"
+            value={funnelMode}
+            onChange={(event) => setFunnelMode(event.target.value)}
+          >
+            <MenuItem value="closed">Closed Funnel</MenuItem>
+            <MenuItem value="open">Open Funnel</MenuItem>
+          </TextField>
+          <TextField
+            select
+            size="small"
+            label="Segment"
+            value={segmentId}
+            onChange={(event) => setSegmentId(event.target.value)}
+          >
+            <MenuItem value="">전체 사용자</MenuItem>
+            {(segments.data || []).map((segment) => (
+              <MenuItem key={segment.id} value={segment.id}>
+                {segment.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            type="number"
+            label="최대 전환 시간 (분)"
+            value={withinMinutes || ""}
+            onChange={(event) => setWithinMinutes(Number(event.target.value))}
+            helperText="비워 두면 제한 없음"
+          />
+        </Box>
         <Stack spacing={1.2}>
           {steps.map((step, i) => (
-            <Stack direction="row" spacing={1} alignItems="center" key={i}>
-              <Box
-                sx={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: "50%",
-                  bgcolor: "#EEEEFF",
-                  color: "primary.main",
-                  display: "grid",
-                  placeItems: "center",
-                  fontWeight: 750,
-                }}
+            <Card
+              key={i}
+              variant="outlined"
+              sx={{ p: 1.5, bgcolor: "#FAFBFD" }}
+            >
+              <Stack
+                direction={{ xs: "column", lg: "row" }}
+                spacing={1}
+                alignItems={{ lg: "center" }}
               >
-                {i + 1}
-              </Box>
-              <TextField
-                label="단계 이름"
-                value={step.name}
-                onChange={(e) =>
-                  setSteps((v) =>
-                    v.map((x, j) =>
-                      j === i ? { ...x, name: e.target.value } : x,
+                <Box
+                  sx={{
+                    width: 30,
+                    height: 30,
+                    flex: "0 0 auto",
+                    borderRadius: "50%",
+                    bgcolor: "#EEEEFF",
+                    color: "primary.main",
+                    display: "grid",
+                    placeItems: "center",
+                    fontWeight: 750,
+                  }}
+                >
+                  {i + 1}
+                </Box>
+                <TextField
+                  size="small"
+                  label="단계 이름"
+                  value={step.name}
+                  onChange={(event) =>
+                    setSteps((value) =>
+                      value.map((item, index) =>
+                        index === i
+                          ? { ...item, name: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                />
+                <TextField
+                  size="small"
+                  label="Event name"
+                  value={step.event}
+                  onChange={(event) =>
+                    setSteps((value) =>
+                      value.map((item, index) =>
+                        index === i
+                          ? { ...item, event: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  sx={{ minWidth: 180 }}
+                />
+                <TextField
+                  select
+                  size="small"
+                  label="Property 조건"
+                  value={step.filterField}
+                  onChange={(event) =>
+                    setSteps((value) =>
+                      value.map((item, index) =>
+                        index === i
+                          ? { ...item, filterField: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  sx={{ minWidth: 190 }}
+                >
+                  <MenuItem value="">조건 없음</MenuItem>
+                  {funnelFields.map((field) => (
+                    <MenuItem key={field} value={field}>
+                      {field}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  size="small"
+                  label="연산자"
+                  value={step.filterOperator}
+                  disabled={!step.filterField}
+                  onChange={(event) =>
+                    setSteps((value) =>
+                      value.map((item, index) =>
+                        index === i
+                          ? { ...item, filterOperator: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  sx={{ minWidth: 105 }}
+                >
+                  {["=", "!=", "contains", ">", ">=", "<", "<=", "exists"].map(
+                    (operator) => (
+                      <MenuItem key={operator} value={operator}>
+                        {operator}
+                      </MenuItem>
                     ),
-                  )
-                }
-              />
-              <TextField
-                label="Event name"
-                value={step.event}
-                onChange={(e) =>
-                  setSteps((v) =>
-                    v.map((x, j) =>
-                      j === i ? { ...x, event: e.target.value } : x,
-                    ),
-                  )
-                }
-                sx={{ flex: 1 }}
-              />
-              <IconButton
-                disabled={steps.length <= 2}
-                onClick={() => setSteps((v) => v.filter((_, j) => j !== i))}
-              >
-                <DeleteOutlineRounded />
-              </IconButton>
-            </Stack>
+                  )}
+                </TextField>
+                <TextField
+                  size="small"
+                  label="조건 값"
+                  value={step.filterValue}
+                  disabled={
+                    !step.filterField || step.filterOperator === "exists"
+                  }
+                  onChange={(event) =>
+                    setSteps((value) =>
+                      value.map((item, index) =>
+                        index === i
+                          ? { ...item, filterValue: event.target.value }
+                          : item,
+                      ),
+                    )
+                  }
+                  sx={{ flex: 1 }}
+                />
+                <IconButton
+                  disabled={steps.length <= 2}
+                  onClick={() =>
+                    setSteps((value) => value.filter((_, index) => index !== i))
+                  }
+                >
+                  <DeleteOutlineRounded />
+                </IconButton>
+              </Stack>
+            </Card>
           ))}
         </Stack>
         <Button
@@ -180,7 +372,16 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
           startIcon={<AddRounded />}
           disabled={steps.length >= 10}
           onClick={() =>
-            setSteps((v) => [...v, { name: `단계 ${v.length + 1}`, event: "" }])
+            setSteps((v) => [
+              ...v,
+              {
+                name: `단계 ${v.length + 1}`,
+                event: "",
+                filterField: "",
+                filterOperator: "=",
+                filterValue: "",
+              },
+            ])
           }
         >
           단계 추가

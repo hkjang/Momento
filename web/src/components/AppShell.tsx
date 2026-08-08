@@ -61,12 +61,19 @@ const groups = [
       { to: "/pages", label: "페이지", icon: <ArticleOutlined /> },
       { to: "/events", label: "이벤트", icon: <MouseOutlined /> },
       { to: "/visitors", label: "사용자", icon: <PeopleAltOutlined /> },
+      {
+        to: "/user-explorer",
+        label: "User Explorer",
+        icon: <PeopleAltOutlined />,
+      },
+      { to: "/ecommerce", label: "Ecommerce", icon: <ArticleOutlined /> },
     ],
   },
   {
     label: "탐색",
     items: [
       { to: "/explorer", label: "자유 분석", icon: <TuneRounded /> },
+      { to: "/segments", label: "Segment", icon: <FilterAltOutlined /> },
       { to: "/funnel", label: "퍼널", icon: <FilterAltOutlined /> },
       { to: "/path", label: "경로", icon: <AccountTreeOutlined /> },
     ],
@@ -80,7 +87,13 @@ const titles: Record<string, [string, string]> = {
   "/pages": ["페이지", "콘텐츠별 조회와 전환 성과입니다."],
   "/events": ["이벤트", "수집된 행동과 주요 이벤트를 탐색합니다."],
   "/visitors": ["사용자", "익명 방문자와 식별 사용자의 활동입니다."],
+  "/user-explorer": [
+    "User Explorer",
+    "Visitor 단위 Event Timeline을 확인합니다.",
+  ],
+  "/ecommerce": ["Ecommerce", "매출·거래·상품과 구매 전환을 분석합니다."],
   "/explorer": ["자유 분석", "Dimension과 Metric을 조합해 분석합니다."],
+  "/segments": ["Segment", "중첩 AND/OR 조건으로 분석 대상을 정의합니다."],
   "/funnel": ["퍼널", "단계별 전환과 이탈을 분석합니다."],
   "/path": ["경로", "사용자가 이동한 주요 흐름입니다."],
   "/admin": ["관리", "Momento 운영 설정을 관리합니다."],

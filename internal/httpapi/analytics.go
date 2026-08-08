@@ -288,7 +288,9 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 }
 
 type queryRequest struct {
-	SiteID    string `json:"site_id"`
+	SiteID    string       `json:"site_id"`
+	SegmentID string       `json:"segment_id,omitempty"`
+	Segment   *segmentNode `json:"segment,omitempty"`
 	DateRange struct {
 		From string `json:"from"`
 		To   string `json:"to"`
@@ -303,8 +305,7 @@ type queryRequest struct {
 	Limit int `json:"limit"`
 }
 
-var dimensionSQL = map[string]string{"event.name": "event_name", "page.url": "page_url", "device.type": "device_type", "browser": "browser", "os": "os", "country": "country", "traffic.source": "source", "traffic.medium": "medium", "traffic.campaign": "campaign", "network": "network_name", "user.department": "user_properties->>'department'", "user.organization": "user_properties->>'organization'", "feature": "properties->>'feature'", "button": "coalesce(properties->>'button',properties->>'element_text')"}
-var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT coalesce(nullif(user_id,''),visitor_id))", "sessions": "count(DISTINCT session_id)", "page_views": "count(*) FILTER(WHERE event_name='page_view')", "conversions": "count(*) FILTER(WHERE is_conversion)", "revenue": "coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value','') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (properties->>'value')::numeric ELSE 0 END),0)"}
+var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id))", "sessions": "count(DISTINCT e.session_id)", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "revenue": "coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value','') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (e.properties->>'value')::numeric ELSE 0 END),0)"}
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	var in queryRequest
@@ -315,6 +316,11 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSiteKey(r.Context(), in.SiteID)
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
+		return
+	}
+	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
 	from, err := time.Parse("2006-01-02", in.DateRange.From)
@@ -332,9 +338,9 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	groups := []string{}
 	columns := []string{}
 	for _, d := range in.Dimensions {
-		expr, ok := dimensionSQL[d]
-		if !ok {
-			writeError(w, 400, "INVALID_DIMENSION", "unsupported dimension: "+d)
+		expr, err := resolver.expression(d, "e")
+		if err != nil {
+			writeError(w, 400, "INVALID_DIMENSION", err.Error())
 			return
 		}
 		selects = append(selects, "coalesce("+expr+",'(not set)') AS d"+strconv.Itoa(len(groups)+1))
@@ -355,59 +361,41 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	args := []any{siteID, from, to}
-	where := []string{"site_id=$1", "event_timestamp >= $2", "event_timestamp < $3"}
+	where := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3"}
 	for _, f := range in.Filters {
-		expr, ok := dimensionSQL[f.Field]
-		if !ok {
-			writeError(w, 400, "INVALID_FILTER", "unsupported filter: "+f.Field)
+		part, err := compileSegment(segmentNode{Field: f.Field, Operator: f.Operator, Value: f.Value}, resolver, "e", &args, 0)
+		if err != nil {
+			writeError(w, 400, "INVALID_FILTER", err.Error())
 			return
 		}
-		filterValue := f.Value
-		if f.Operator == "in" || f.Operator == "not in" {
-			raw, ok := f.Value.([]any)
-			if !ok || len(raw) == 0 {
-				writeError(w, 400, "INVALID_FILTER", "in operator requires a non-empty array")
-				return
-			}
-			values := make([]string, 0, len(raw))
-			for _, item := range raw {
-				values = append(values, fmt.Sprint(item))
-			}
-			filterValue = values
-		}
-		args = append(args, filterValue)
-		n := len(args)
-		switch f.Operator {
-		case "=", "!=", ">", ">=", "<", "<=":
-			where = append(where, fmt.Sprintf("%s %s $%d", expr, f.Operator, n))
-		case "contains":
-			where = append(where, fmt.Sprintf("%s ILIKE '%%'||$%d||'%%'", expr, n))
-		case "not contains":
-			where = append(where, fmt.Sprintf("%s NOT ILIKE '%%'||$%d||'%%'", expr, n))
-		case "startsWith":
-			where = append(where, fmt.Sprintf("%s ILIKE $%d||'%%'", expr, n))
-		case "endsWith":
-			where = append(where, fmt.Sprintf("%s ILIKE '%%'||$%d", expr, n))
-		case "in":
-			where = append(where, fmt.Sprintf("%s = ANY($%d)", expr, n))
-		case "not in":
-			where = append(where, fmt.Sprintf("%s <> ALL($%d)", expr, n))
-		case "exists":
-			args = args[:len(args)-1]
-			where = append(where, expr+" IS NOT NULL")
-		case "not exists":
-			args = args[:len(args)-1]
-			where = append(where, expr+" IS NULL")
-		default:
-			writeError(w, 400, "INVALID_OPERATOR", "unsupported operator: "+f.Operator)
+		where = append(where, part)
+	}
+	if in.SegmentID != "" {
+		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
 			return
 		}
+		part, err := compileSegment(definition, resolver, "e", &args, 0)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		where = append(where, part)
+	}
+	if in.Segment != nil {
+		part, err := compileSegment(*in.Segment, resolver, "e", &args, 0)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		where = append(where, part)
 	}
 	limit := in.Limit
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	sql := `SELECT ` + strings.Join(selects, ",") + ` FROM raw_events WHERE ` + strings.Join(where, " AND ")
+	sql := `SELECT ` + strings.Join(selects, ",") + ` FROM raw_events e WHERE ` + strings.Join(where, " AND ")
 	if len(groups) > 0 {
 		sql += ` GROUP BY ` + strings.Join(groups, ",")
 	}
@@ -503,12 +491,17 @@ func exportUUID(value any) any {
 }
 
 type funnelRequest struct {
-	SiteID string `json:"site_id"`
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Steps  []struct {
-		Name  string `json:"name"`
-		Event string `json:"event"`
+	SiteID        string       `json:"site_id"`
+	From          string       `json:"from"`
+	To            string       `json:"to"`
+	Mode          string       `json:"mode,omitempty"`
+	WithinMinutes int          `json:"within_minutes,omitempty"`
+	SegmentID     string       `json:"segment_id,omitempty"`
+	Segment       *segmentNode `json:"segment,omitempty"`
+	Steps         []struct {
+		Name    string        `json:"name"`
+		Event   string        `json:"event"`
+		Filters []segmentNode `json:"filters,omitempty"`
 	} `json:"steps"`
 }
 
@@ -527,6 +520,11 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
+	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
+	}
 	from, err1 := time.Parse("2006-01-02", in.From)
 	to, err2 := time.Parse("2006-01-02", in.To)
 	to = to.Add(24 * time.Hour)
@@ -534,23 +532,75 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", "from/to must use YYYY-MM-DD")
 		return
 	}
+	if in.Mode == "" {
+		in.Mode = "closed"
+	}
+	if in.Mode != "closed" && in.Mode != "open" {
+		writeError(w, 400, "INVALID_MODE", "funnel mode must be closed or open")
+		return
+	}
+	if in.WithinMinutes < 0 || in.WithinMinutes > 525600 {
+		writeError(w, 400, "INVALID_WINDOW", "within_minutes must be between 0 and 525600")
+		return
+	}
 	args := []any{siteID, from, to}
-	ctes := []string{`base AS (SELECT coalesce(nullif(user_id,''),visitor_id) entity,event_name,event_timestamp FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3)`}
+	baseWhere := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3"}
+	if in.SegmentID != "" {
+		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		part, err := compileSegment(definition, resolver, "e", &args, 0)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		baseWhere = append(baseWhere, part)
+	}
+	if in.Segment != nil {
+		part, err := compileSegment(*in.Segment, resolver, "e", &args, 0)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		baseWhere = append(baseWhere, part)
+	}
+	ctes := []string{`base AS (SELECT e.*,coalesce(nullif(e.user_id,''),e.visitor_id) entity FROM raw_events e WHERE ` + strings.Join(baseWhere, " AND ") + `)`}
 	for i, step := range in.Steps {
+		if strings.TrimSpace(step.Event) == "" {
+			writeError(w, 400, "INVALID_STEPS", "every funnel step requires an event")
+			return
+		}
 		args = append(args, step.Event)
 		param := len(args)
 		name := fmt.Sprintf("s%d", i+1)
-		if i == 0 {
-			ctes = append(ctes, fmt.Sprintf(`%s AS (SELECT entity,min(event_timestamp) t FROM base WHERE event_name=$%d GROUP BY entity)`, name, param))
+		conditions := []string{fmt.Sprintf("b.event_name=$%d", param)}
+		for _, filter := range step.Filters {
+			part, err := compileSegment(filter, resolver, "b", &args, 0)
+			if err != nil {
+				writeError(w, 400, "INVALID_STEP_FILTER", err.Error())
+				return
+			}
+			conditions = append(conditions, part)
+		}
+		conditionSQL := strings.Join(conditions, " AND ")
+		if i == 0 || in.Mode == "open" {
+			ctes = append(ctes, fmt.Sprintf(`%s AS (SELECT b.entity,min(b.event_timestamp) t FROM base b WHERE %s GROUP BY b.entity)`, name, conditionSQL))
 		} else {
 			prev := fmt.Sprintf("s%d", i)
-			ctes = append(ctes, fmt.Sprintf(`%s AS (SELECT p.entity,min(b.event_timestamp) t FROM %s p LEFT JOIN base b ON b.entity=p.entity AND b.event_name=$%d AND b.event_timestamp>=p.t WHERE p.t IS NOT NULL GROUP BY p.entity)`, name, prev, param))
+			windowSQL := ""
+			if in.WithinMinutes > 0 {
+				args = append(args, in.WithinMinutes)
+				windowSQL = fmt.Sprintf(" AND b.event_timestamp<=p.t+make_interval(mins=>$%d)", len(args))
+			}
+			ctes = append(ctes, fmt.Sprintf(`%s AS (SELECT p.entity,min(b.event_timestamp) t FROM %s p LEFT JOIN base b ON b.entity=p.entity AND %s AND b.event_timestamp>=p.t%s WHERE p.t IS NOT NULL GROUP BY p.entity)`, name, prev, conditionSQL, windowSQL))
 		}
 	}
 	parts := []string{}
 	for i := range in.Steps {
 		name := fmt.Sprintf("s%d", i+1)
-		if i == 0 {
+		if i == 0 || in.Mode == "open" {
 			parts = append(parts, fmt.Sprintf(`SELECT %d step,count(t) users,0::double precision avg_seconds FROM %s`, i+1, name))
 		} else {
 			prev := fmt.Sprintf("s%d", i)
@@ -590,7 +640,7 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 			}(), "avg_seconds": seconds})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"steps": out, "from": from, "to": to})
+	writeJSON(w, 200, map[string]any{"steps": out, "from": from, "to": to, "mode": in.Mode, "within_minutes": in.WithinMinutes})
 }
 
 func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,9 @@ import ExplorerPage from "./pages/ExplorerPage";
 import AdminPage from "./pages/AdminPage";
 import ProfilePage from "./pages/ProfilePage";
 import FunnelPage from "./pages/FunnelPage";
+import SegmentsPage from "./pages/SegmentsPage";
+import EcommercePage from "./pages/EcommercePage";
+import UserExplorerPage from "./pages/UserExplorerPage";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -36,7 +39,10 @@ export default function App() {
           <Route path="/pages" element={<ReportPage kind="pages" />} />
           <Route path="/events" element={<ReportPage kind="events" />} />
           <Route path="/visitors" element={<ReportPage kind="visitors" />} />
+          <Route path="/user-explorer" element={<UserExplorerPage />} />
+          <Route path="/ecommerce" element={<EcommercePage />} />
           <Route path="/explorer" element={<ExplorerPage />} />
+          <Route path="/segments" element={<SegmentsPage />} />
           <Route path="/funnel" element={<FunnelPage mode="funnel" />} />
           <Route path="/path" element={<FunnelPage mode="path" />} />
           <Route path="/admin" element={<AdminPage />} />

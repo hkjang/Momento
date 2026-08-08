@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -94,12 +95,28 @@ func (s *Server) Handler() http.Handler {
 		api.Post("/api/v1/privacy/delete", s.admin(s.deleteAnalyticsData))
 		api.Get("/api/v1/event-definitions", s.listEventDefinitions)
 		api.Post("/api/v1/event-definitions", s.admin(s.upsertEventDefinition))
+		api.Get("/api/v1/dimensions", s.listDimensions)
+		api.Post("/api/v1/dimensions", s.admin(s.saveDimension))
+		api.Delete("/api/v1/dimensions/{id}", s.admin(s.deleteDimension))
+		api.Get("/api/v1/segments", s.listSegments)
+		api.Post("/api/v1/segments", s.sessionOnly(s.createSegment))
+		api.Put("/api/v1/segments/{id}", s.sessionOnly(s.updateSegment))
+		api.Delete("/api/v1/segments/{id}", s.sessionOnly(s.deleteSegment))
+		api.Get("/api/v1/reports", s.listSavedReports)
+		api.Post("/api/v1/reports", s.sessionOnly(s.createSavedReport))
+		api.Put("/api/v1/reports/{id}", s.sessionOnly(s.updateSavedReport))
+		api.Delete("/api/v1/reports/{id}", s.sessionOnly(s.deleteSavedReport))
+		api.Get("/api/v1/sites/{siteID}/retention", s.admin(s.getRetentionPolicy))
+		api.Put("/api/v1/sites/{siteID}/retention", s.admin(s.putRetentionPolicy))
 		api.Get("/api/v1/sites/{siteID}/overview", s.overview)
 		api.Get("/api/v1/sites/{siteID}/realtime", s.realtime)
 		api.Get("/api/v1/sites/{siteID}/events", s.eventReport)
 		api.Get("/api/v1/sites/{siteID}/pages", s.pageReport)
 		api.Get("/api/v1/sites/{siteID}/usage", s.usageReport)
 		api.Get("/api/v1/sites/{siteID}/visitors", s.visitorReport)
+		api.Get("/api/v1/sites/{siteID}/visitors/{visitorID}/timeline", s.visitorTimeline)
+		api.Get("/api/v1/sites/{siteID}/sessions", s.sessionReport)
+		api.Get("/api/v1/sites/{siteID}/ecommerce", s.ecommerceReport)
 		api.Post("/api/v1/query", s.query)
 		api.Post("/api/v1/funnel", s.funnel)
 		api.Get("/api/v1/sites/{siteID}/path", s.pathReport)
@@ -184,18 +201,22 @@ func (s *Server) requestLog(next http.Handler) http.Handler {
 
 func (s *Server) spaHandler() http.Handler {
 	files := http.FileServer(http.FS(s.Web))
+	index, indexErr := fs.ReadFile(s.Web, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if clean == "." {
-			clean = "index.html"
+		if clean != "." && clean != "" {
+			if info, err := fs.Stat(s.Web, clean); err == nil && !info.IsDir() {
+				files.ServeHTTP(w, r)
+				return
+			}
 		}
-		if _, err := fs.Stat(s.Web, clean); err != nil {
-			r2 := r.Clone(r.Context())
-			r2.URL.Path = "/index.html"
-			files.ServeHTTP(w, r2)
+		if indexErr != nil {
+			http.Error(w, "web console is unavailable", http.StatusInternalServerError)
 			return
 		}
-		files.ServeHTTP(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 	})
 }
 

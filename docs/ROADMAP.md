@@ -11,11 +11,20 @@
 - Local login and Keycloak-compatible OIDC Discovery + Authorization Code/PKCE
 - Offline single-image release workflow
 
+## v0.2 — implemented
+
+- Site-specific Raw Event, Session, Realtime and Debug retention policy editor
+- Materialized Session summaries with migration-time Raw Event backfill
+- Segment registry with nested AND/OR groups, 14 operators, personal/shared ownership and preview
+- Segment-aware Query Builder and open/closed Funnel with per-step property conditions and completion window
+- Saved Exploration registry
+- Custom Dimension Registry for User, Session, Event and Item scopes
+- Ecommerce revenue, refund, transaction, product and commerce funnel reports
+- Privacy-controlled Visitor Timeline and Session reporting APIs
+
 ## Next schema-compatible increments
 
-- Site-specific retention policy editor and scheduled aggregate rebuild jobs
-- Segment registry with nested AND/OR UI, property-aware funnel conditions and saved explorations
-- Ecommerce-specific reports, User Timeline, custom dimensions and Parquet export
+- Scheduled aggregate rebuild jobs and Parquet export
 - Cohort/retention and first/last/last-non-direct attribution
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation

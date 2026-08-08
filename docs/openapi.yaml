@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.1.0
+  version: 0.2.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -46,6 +46,75 @@ paths:
     get:
       summary: Internal organization, department, service, feature, button, and network usage
       responses: {'200': {description: Internal usage report}}
+  /api/v1/sites/{siteId}/sessions:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List materialized session summaries
+      responses: {'200': {description: Session rows}}
+  /api/v1/sites/{siteId}/ecommerce:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Revenue, commerce funnel, and product performance
+      responses: {'200': {description: Ecommerce report}}
+  /api/v1/sites/{siteId}/visitors/{visitorId}/timeline:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {name: visitorId, in: path, required: true, schema: {type: string}}
+    get:
+      summary: Visitor event timeline; disabled when visitor profiles are disabled
+      responses: {'200': {description: Visitor timeline}, '403': {$ref: '#/components/responses/Error'}}
+  /api/v1/sites/{siteId}/retention:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Read the site retention policy
+      responses: {'200': {description: Retention policy}}
+    put:
+      summary: Replace the site retention policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RetentionPolicy'}
+      responses: {'200': {description: Updated}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/segments:
+    get:
+      summary: List visible saved segments
+      parameters: [{name: site_id, in: query, required: true, schema: {type: string}}]
+      responses: {'200': {description: Segment list}}
+    post:
+      summary: Create a nested AND/OR segment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SegmentSaveRequest'}
+      responses: {'201': {description: Segment created}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/segments/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    put:
+      summary: Update a segment owned by the user or workspace
+      responses: {'200': {description: Updated}}
+    delete:
+      summary: Delete a segment
+      responses: {'204': {description: Deleted}}
+  /api/v1/dimensions:
+    get:
+      summary: List the custom dimension registry
+      parameters: [{name: site_id, in: query, required: true, schema: {type: string}}]
+      responses: {'200': {description: Dimension list}}
+    post:
+      summary: Register or update a custom dimension
+      responses: {'200': {description: Dimension saved}}
+  /api/v1/reports:
+    get:
+      summary: List saved explorations and reports
+      parameters:
+        - {name: site_id, in: query, required: true, schema: {type: string}}
+        - {name: kind, in: query, schema: {type: string}}
+      responses: {'200': {description: Saved report list}}
+    post:
+      summary: Save an exploration, funnel, path, or dashboard definition
+      responses: {'201': {description: Report saved}}
   /api/v1/query:
     post:
       summary: Run an allowlisted dimension and metric query
@@ -57,7 +126,7 @@ paths:
       responses: {'200': {description: Query rows}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/funnel:
     post:
-      summary: Analyze an ordered 2-10 step event funnel
+      summary: Analyze an open or closed 2-10 step event funnel with segment and property conditions
       responses: {'200': {description: Funnel steps}}
   /mcp:
     post:
@@ -121,5 +190,44 @@ components:
         dimensions: {type: array, items: {type: string}}
         metrics: {type: array, items: {type: string}}
         filters: {type: array, items: {type: object}}
+        segment_id: {type: string, format: uuid}
+        segment: {$ref: '#/components/schemas/SegmentNode'}
+    SegmentNode:
+      oneOf:
+        - type: object
+          required: [combinator, rules]
+          properties:
+            combinator: {type: string, enum: [and, or]}
+            rules:
+              type: array
+              minItems: 1
+              maxItems: 50
+              items: {$ref: '#/components/schemas/SegmentNode'}
+        - type: object
+          required: [field, operator]
+          properties:
+            field: {type: string}
+            operator:
+              type: string
+              enum: ['=', '!=', contains, 'not contains', startsWith, endsWith, '>', '>=', '<', '<=', exists, 'not exists', in, 'not in']
+            value: {}
+    SegmentSaveRequest:
+      type: object
+      required: [site_id, name, definition]
+      properties:
+        site_id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        shared: {type: boolean}
+        definition: {$ref: '#/components/schemas/SegmentNode'}
+    RetentionPolicy:
+      type: object
+      required: [raw_event_months, session_months, realtime_hours, debug_days]
+      properties:
+        raw_event_months: {type: integer, minimum: 1, maximum: 120}
+        session_months: {type: integer, minimum: 1, maximum: 120}
+        aggregation_months: {type: [integer, 'null'], minimum: 1, maximum: 1200}
+        realtime_hours: {type: integer, minimum: 1, maximum: 168}
+        debug_days: {type: integer, minimum: 1, maximum: 90}
 security:
   - bearer: []

@@ -22,6 +22,10 @@
     <meta name="twitter:title" content="Momento - 온프레미스 이벤트 애널리틱스 플랫폼">
     <meta name="twitter:description" content="사내 웹·앱 데이터의 100% 소유와 분석. 외부 유출 없는 온프레미스 Raw Event 애널리틱스 솔루션.">
 
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="shortcut icon" href="favicon.svg">
+
     <!-- Canonical & Alternate -->
     <link rel="canonical" href="https://hkjang.github.io/Momento/">
     <link rel="alternate" hreflang="ko" href="https://hkjang.github.io/Momento/">
@@ -43,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.1.0",
+      "softwareVersion": "0.2.0",
       "description": "사내 Web/App 사용 현황을 Raw Event 수준에서 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -85,7 +89,7 @@
           "name": "기존 SaaS 분석 도구(Google Analytics 등)와의 차이점은 무엇인가요?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Momento는 폐쇄망 및 온프레미스 환경을 완벽히 지원하며, 사내 부서·조직·네트워크 망(CIDR) 정보와 연동하여 어느 부서가 어느 기능을 사용하는지 상세하게 분석할 수 있습니다. 개인정보(PII) 자동 마스킹과 100% 데이터 주권을 보장합니다."
+            "text": "Momento는 폐쇄망 및 온프레미스 환경을 지원하며, 사내 부서·조직·네트워크 망(CIDR) 정보와 연동하여 어느 부서가 어느 기능을 사용하는지 상세하게 분석할 수 있습니다. 관리자 지정 개인정보 Property 차단과 URL Parameter 마스킹을 제공합니다."
           }
         },
         {
@@ -154,9 +158,7 @@
     <header class="navbar">
         <div class="container nav-container">
             <a href="#" class="logo">
-                <span class="logo-icon">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-                </span>
+                <img src="logo.png" alt="Momento Logo" width="36" height="36" style="border-radius: 10px; box-shadow: 0 0 12px rgba(99, 102, 241, 0.4);">
                 Momento
             </a>
             <ul class="nav-links desktop-only">
@@ -245,7 +247,7 @@
                 </div>
                 <div class="stat-item fade-up-element">
                     <span class="stat-icon">🛡️</span>
-                    <span>PII 개인정보 마스킹</span>
+                    <span>개인정보 최소 수집</span>
                 </div>
                 <div class="stat-item fade-up-element">
                     <span class="stat-icon">🤖</span>
@@ -263,7 +265,7 @@
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">📡</div>
                         <h3 class="feature-title">풍부한 JS SDK & 오프라인 큐</h3>
-                        <p class="feature-desc">PageView, SPA 라우팅, 클릭, 스크롤, 폼 입력, 파일 다운로드, 외부 링크 클릭, JS 에러, Heartbeat 및 네트워크 유실 시 Beacon/오프라인 큐 재전송을 보장합니다.</p>
+                        <p class="feature-desc">PageView, SPA 라우팅, 클릭, 스크롤, 폼 입력, 파일 다운로드, 외부 링크 클릭, JS 에러, Heartbeat를 수집하고 Beacon/오프라인 큐로 전송 손실을 줄입니다.</p>
                     </article>
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">🔍</div>
@@ -277,8 +279,8 @@
                     </article>
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">🔐</div>
-                        <h3 class="feature-title">PII 자동 마스킹 & 보안</h3>
-                        <p class="feature-desc">이메일, 주민번호, 전화번호 등 민감 정보를 자동 차단/마스킹합니다. Keycloak OIDC SSO(PKCE), RBAC, API 키 회전 및 감사 로그를 제공합니다.</p>
+                        <h3 class="feature-title">개인정보 최소 수집 & 보안</h3>
+                        <p class="feature-desc">관리자가 지정한 민감 Property를 제거하고 URL Parameter를 마스킹합니다. Keycloak OIDC SSO(PKCE), RBAC, API 키 회전 및 감사 로그를 제공합니다.</p>
                     </article>
                     <article class="feature-card glass-panel fade-up-element">
                         <div class="feature-icon">🤖</div>
@@ -363,22 +365,22 @@ PII Filter & Key Check  OIDC Discovery / JWKS
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🔑</div>
                         <h4>Keycloak OIDC SSO</h4>
-                        <p>PKCE(S256)를 적용한 표준 OIDC 인증. Keycloak 그룹/역할이 Momento 사내 부서 및 RBAC 역할로 즉시 매핑됩니다.</p>
+                        <p>PKCE(S256)를 적용한 표준 OIDC 인증. Email·이름·부서·조직 Claim을 매핑하며 신규 사용자는 Viewer로 등록됩니다.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🔒</div>
                         <h4>API 키 회전 및 폐기</h4>
-                        <p>해시 처리된 API 키를 발급하고 무중단 회전을 위한 유예 기간을 제공합니다. 원문 키는 최초 1회만 표시됩니다.</p>
+                        <p>해시 처리된 API 키를 발급·회전·폐기하며 원문 키는 최초 1회만 표시됩니다. 회전 시 기존 키는 즉시 폐기됩니다.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🛡️</div>
-                        <h4>개인정보 차단 룰셋</h4>
-                        <p>주민번호, 이메일, 전화번호 패턴을 자동 차단합니다. 관리자 콘솔에서 추가 마스킹 규칙을 동적으로 설정할 수 있습니다.</p>
+                        <h4>개인정보 필터 정책</h4>
+                        <p>관리자 콘솔에서 차단할 Property key와 마스킹할 URL Parameter를 설정합니다. 값 자체의 정규식 탐지는 제공하지 않습니다.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">📝</div>
                         <h4>감사 로그 (Audit Trail)</h4>
-                        <p>사이트 생성, 키 발급, PII 룰 변경, 사용자 권한 조정 등 모든 관리자 작업에 대한 무결성 감사 로그를 기록합니다.</p>
+                        <p>사이트 생성, 키 발급, 개인정보 설정 변경, 사용자 권한 조정 등 주요 관리자 작업을 구조화된 감사 로그로 기록합니다.</p>
                     </div>
                 </div>
             </div>
@@ -471,12 +473,12 @@ docker compose up --build
                         <h4>📦 오프라인 번들 (.tar.gz)</h4>
                         <p>인터넷 통신이 완전히 차단된 사내 폐쇄망 환경을 위한 오프라인 Docker 이미지 아카이브를 제공합니다.</p>
 <pre><code># 릴리스 아카이브 로드
-gzip -dc momento-v0.1.0.tar.gz | docker load
+gzip -dc momento-v0.2.0.tar.gz | docker load
 
 # 폐쇄망 컨테이너 실행
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento:v0.1.0</code></pre>
+  momento-v0.2.0</code></pre>
                     </div>
                 </div>
             </div>
@@ -503,19 +505,19 @@ docker run -d -p 8080:8080 \
                         <h3>📘 사용자 가이드 (User Guide)</h3>
                         <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">JavaScript SDK 연동, identify/track 호출, 쿼리 빌더, 퍼널 및 경로 분석 매뉴얼</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
-                            <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
-                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.2 최신 문서</a>
+                            <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
+                            <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>
                     </div>
 
                     <div class="glass-panel fade-up-element">
                         <h3>🔧 관리자 가이드 (Admin Guide)</h3>
-                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC 역할 매핑, PII 자동 마스킹, CIDR 망 설정 및 감사 로그</p>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC 역할 매핑, 개인정보 필터, CIDR 망 설정 및 감사 로그</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
-                            <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
-                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.2 최신 문서</a>
+                            <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
+                            <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>
                     </div>
 

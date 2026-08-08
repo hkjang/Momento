@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/version"
 )
 
@@ -33,7 +34,14 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 	case "notifications/initialized":
 		w.WriteHeader(202)
 	case "tools/list":
-		writeJSON(w, 200, rpcResult(req.ID, map[string]any{"tools": []any{map[string]any{"name": "query_metrics", "description": "Momento 사이트의 기간별 핵심 사용자·세션·이벤트·전환 지표를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "from": map[string]string{"type": "string", "description": "YYYY-MM-DD"}, "to": map[string]string{"type": "string", "description": "YYYY-MM-DD"}}, "required": []string{"site_id", "from", "to"}}}, map[string]any{"name": "analyze_internal_usage", "description": "부서·조직·서비스·기능·버튼·사내망별 사용량을 분석합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "dimension": map[string]any{"type": "string", "enum": []string{"department", "organization", "service", "feature", "button", "network"}}, "from": map[string]string{"type": "string"}, "to": map[string]string{"type": "string"}}, "required": []string{"site_id", "dimension", "from", "to"}}}}}))
+		dateProperties := map[string]any{"site_id": map[string]string{"type": "string"}, "from": map[string]string{"type": "string", "description": "YYYY-MM-DD"}, "to": map[string]string{"type": "string", "description": "YYYY-MM-DD"}}
+		tools := []any{
+			map[string]any{"name": "query_metrics", "description": "Momento 사이트의 기간별 핵심 사용자·세션·이벤트·전환 지표를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "analyze_internal_usage", "description": "부서·조직·서비스·기능·버튼·사내망별 사용량을 분석합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "dimension": map[string]any{"type": "string", "enum": []string{"department", "organization", "service", "feature", "button", "network"}}, "from": map[string]string{"type": "string"}, "to": map[string]string{"type": "string"}}, "required": []string{"site_id", "dimension", "from", "to"}}},
+			map[string]any{"name": "query_ecommerce", "description": "매출·환불·거래·구매자·평균주문금액·구매전환율을 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "list_segments", "description": "사이트에서 사용할 수 있는 저장 Segment와 중첩 조건 정의를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}}, "required": []string{"site_id"}}},
+		}
+		writeJSON(w, 200, rpcResult(req.ID, map[string]any{"tools": tools}))
 	case "tools/call":
 		s.mcpCall(w, r, req)
 	default:
@@ -55,12 +63,16 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		writeJSON(w, 200, rpcResult(req.ID, mcpText("Site not found", true)))
 		return
 	}
-	from, err1 := time.Parse("2006-01-02", stringArg(call.Arguments, "from"))
-	to, err2 := time.Parse("2006-01-02", stringArg(call.Arguments, "to"))
-	to = to.Add(24 * time.Hour)
-	if err1 != nil || err2 != nil {
-		writeJSON(w, 200, rpcResult(req.ID, mcpText("from/to must use YYYY-MM-DD", true)))
-		return
+	var from, to time.Time
+	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" {
+		var err1, err2 error
+		from, err1 = time.Parse("2006-01-02", stringArg(call.Arguments, "from"))
+		to, err2 = time.Parse("2006-01-02", stringArg(call.Arguments, "to"))
+		to = to.Add(24 * time.Hour)
+		if err1 != nil || err2 != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText("from/to must use YYYY-MM-DD", true)))
+			return
+		}
 	}
 	switch call.Name {
 	case "query_metrics":
@@ -96,6 +108,44 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			var events, users int64
 			if rows.Scan(&label, &events, &users) == nil {
 				out = append(out, map[string]any{"label": label, "events": events, "users": users})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "query_ecommerce":
+		var users, buyers, transactions int64
+		var revenue, refunds float64
+		err := s.DB.QueryRow(r.Context(), `WITH base AS (SELECT *,coalesce(nullif(user_id,''),visitor_id) entity FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to).Scan(&users, &buyers, &transactions, &revenue, &refunds)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		aov, rate := float64(0), float64(0)
+		if transactions > 0 {
+			aov = revenue / float64(transactions)
+		}
+		if users > 0 {
+			rate = float64(buyers) * 100 / float64(users)
+		}
+		body, _ := json.MarshalIndent(map[string]any{"revenue": revenue, "refunds": refunds, "net_revenue": revenue - refunds, "transactions": transactions, "buyers": buyers, "average_order_value": aov, "purchase_conversion_rate": rate}, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "list_segments":
+		p, _ := auth.FromContext(r.Context())
+		rows, err := s.DB.Query(r.Context(), `SELECT name,description,definition,shared FROM segments WHERE site_id=$1 AND (shared OR owner_id=$2 OR $3 IN ('super_admin','organization_admin','workspace_admin')) ORDER BY name`, siteID, p.ID, p.Role)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var name, description string
+			var definition []byte
+			var shared bool
+			if rows.Scan(&name, &description, &definition, &shared) == nil {
+				var value any
+				_ = json.Unmarshal(definition, &value)
+				out = append(out, map[string]any{"name": name, "description": description, "definition": value, "shared": shared})
 			}
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")

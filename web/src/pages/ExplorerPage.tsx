@@ -11,15 +11,18 @@ import {
   OutlinedInput,
   Select,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
-import { useMutation } from "@tanstack/react-query";
-import { post } from "../api/client";
+import SaveRounded from "@mui/icons-material/SaveRounded";
+import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { NoSite } from "../components/States";
-const dimensions = [
+const baseDimensions = [
   "event.name",
   "page.url",
   "device.type",
@@ -45,8 +48,44 @@ const metrics = [
 ];
 export default function ExplorerPage() {
   const { site } = useSite();
+  const qc = useQueryClient();
   const [dims, setDims] = useState<string[]>(["event.name"]);
   const [mets, setMets] = useState<string[]>(["events", "users"]);
+  const [segmentId, setSegmentId] = useState("");
+  const [reportId, setReportId] = useState("");
+  const [reportName, setReportName] = useState("");
+  const segments = useQuery({
+    queryKey: ["segments", site?.site_id],
+    queryFn: () =>
+      get<{ id: string; name: string }[]>(
+        `/api/v1/segments?site_id=${site!.site_id}`,
+      ),
+    enabled: !!site,
+  });
+  const customDimensions = useQuery({
+    queryKey: ["dimensions", site?.site_id],
+    queryFn: () =>
+      get<{ query_name: string; active: boolean; scope: string }[]>(
+        `/api/v1/dimensions?site_id=${site!.site_id}`,
+      ),
+    enabled: !!site,
+  });
+  const reports = useQuery({
+    queryKey: ["saved-reports", site?.site_id, "exploration"],
+    queryFn: () =>
+      get<
+        {
+          id: string;
+          name: string;
+          definition: {
+            dimensions?: string[];
+            metrics?: string[];
+            segment_id?: string;
+          };
+        }[]
+      >(`/api/v1/reports?site_id=${site!.site_id}&kind=exploration`),
+    enabled: !!site,
+  });
   const mutation = useMutation({
     mutationFn: () =>
       post<{ rows: Record<string, unknown>[]; columns: string[] }>(
@@ -62,13 +101,113 @@ export default function ExplorerPage() {
           dimensions: dims,
           metrics: mets,
           filters: [],
+          segment_id: segmentId || undefined,
           limit: 200,
         },
       ),
   });
+  const saveReport = useMutation({
+    mutationFn: () => {
+      const body = {
+        site_id: site!.site_id,
+        kind: "exploration",
+        name: reportName,
+        description: "Query Builder에서 저장",
+        definition: {
+          dimensions: dims,
+          metrics: mets,
+          segment_id: segmentId || undefined,
+        },
+        shared: false,
+      };
+      return reportId
+        ? put(`/api/v1/reports/${reportId}`, body)
+        : post("/api/v1/reports", body);
+    },
+    onSuccess: async () => {
+      setReportName("");
+      setReportId("");
+      await qc.invalidateQueries({
+        queryKey: ["saved-reports", site?.site_id, "exploration"],
+      });
+    },
+  });
+  const deleteReport = useMutation({
+    mutationFn: () => del(`/api/v1/reports/${reportId}`),
+    onSuccess: async () => {
+      setReportId("");
+      await qc.invalidateQueries({
+        queryKey: ["saved-reports", site?.site_id, "exploration"],
+      });
+    },
+  });
   if (!site) return <NoSite />;
+  const dimensions = [
+    ...baseDimensions,
+    ...(customDimensions.data || [])
+      .filter((item) => item.active && item.scope !== "item")
+      .map((item) => item.query_name),
+  ];
   return (
     <Stack spacing={2}>
+      <Card sx={{ p: 2.5 }}>
+        <Typography fontWeight={700} mb={2}>
+          저장된 Exploration
+        </Typography>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr auto auto" },
+            gap: 1.5,
+          }}
+        >
+          <TextField
+            select
+            size="small"
+            label="불러오기"
+            value={reportId}
+            onChange={(event) => {
+              const id = event.target.value;
+              setReportId(id);
+              const report = reports.data?.find((item) => item.id === id);
+              if (report) {
+                setReportName(report.name);
+                setDims(report.definition.dimensions || ["event.name"]);
+                setMets(report.definition.metrics || ["events"]);
+                setSegmentId(report.definition.segment_id || "");
+              }
+            }}
+          >
+            <MenuItem value="">선택 안 함</MenuItem>
+            {(reports.data || []).map((report) => (
+              <MenuItem key={report.id} value={report.id}>
+                {report.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            size="small"
+            label={reportId ? "Exploration 이름" : "새 Exploration 이름"}
+            value={reportName}
+            onChange={(event) => setReportName(event.target.value)}
+          />
+          <Button
+            startIcon={<SaveRounded />}
+            disabled={!reportName.trim() || saveReport.isPending}
+            onClick={() => saveReport.mutate()}
+          >
+            {reportId ? "변경 저장" : "저장"}
+          </Button>
+          <Button
+            color="error"
+            startIcon={<DeleteOutlineRounded />}
+            disabled={!reportId || deleteReport.isPending}
+            onClick={() => deleteReport.mutate()}
+          >
+            삭제
+          </Button>
+        </Box>
+      </Card>
       <Card sx={{ p: 2.5 }}>
         <Typography fontWeight={700} mb={2}>
           Query Builder
@@ -76,7 +215,7 @@ export default function ExplorerPage() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr auto" },
+            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 220px auto" },
             gap: 2,
             alignItems: "center",
           }}
@@ -109,6 +248,20 @@ export default function ExplorerPage() {
               ))}
             </Select>
           </FormControl>
+          <TextField
+            select
+            size="small"
+            label="Segment"
+            value={segmentId}
+            onChange={(event) => setSegmentId(event.target.value)}
+          >
+            <MenuItem value="">전체 사용자</MenuItem>
+            {(segments.data || []).map((segment) => (
+              <MenuItem key={segment.id} value={segment.id}>
+                {segment.name}
+              </MenuItem>
+            ))}
+          </TextField>
           <FormControl size="small">
             <InputLabel>Metrics</InputLabel>
             <Select
@@ -147,8 +300,10 @@ export default function ExplorerPage() {
           </Button>
         </Box>
       </Card>
-      {mutation.error && (
-        <Alert severity="error">{mutation.error.message}</Alert>
+      {(mutation.error || saveReport.error || deleteReport.error) && (
+        <Alert severity="error">
+          {(mutation.error || saveReport.error || deleteReport.error)?.message}
+        </Alert>
       )}
       {mutation.data ? (
         <DataTable
