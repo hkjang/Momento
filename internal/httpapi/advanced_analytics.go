@@ -91,7 +91,7 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT session_id,visitor_id,user_id,started_at,last_event_at,extract(epoch from(last_event_at-started_at))::double precision,event_count,page_views,conversion_count,engaged,active_engagement_ms,heartbeat_count,interaction_count,landing_page,exit_page,source,medium,campaign,device_type FROM sessions WHERE site_id=$1 AND last_event_at >= $2 AND last_event_at < $3 ORDER BY last_event_at DESC LIMIT 500`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `SELECT s.session_id,s.visitor_id,coalesce(i.user_id,s.user_id),s.started_at,s.last_event_at,extract(epoch from(s.last_event_at-s.started_at))::double precision,s.event_count,s.page_views,s.conversion_count,s.engaged,s.active_engagement_ms,s.heartbeat_count,s.interaction_count,s.landing_page,s.exit_page,s.source,s.medium,s.campaign,s.device_type FROM sessions s LEFT JOIN visitor_identities i ON i.site_id=s.site_id AND i.visitor_id=s.visitor_id WHERE s.site_id=$1 AND s.last_event_at >= $2 AND s.last_event_at < $3 ORDER BY s.last_event_at DESC LIMIT 500`, siteID, from, to)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -167,8 +167,18 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	var sessions, conversions int64
 	var firstSeen, lastSeen *time.Time
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion),min(event_timestamp),max(event_timestamp) FROM raw_events WHERE site_id=$1 AND visitor_id=$2`, siteID, visitorID).Scan(&sessions, &conversions, &firstSeen, &lastSeen)
-	writeJSON(w, 200, map[string]any{"visitor_id": visitorID, "user_id": latestUserID, "user_properties": latestUserProperties, "first_seen": firstSeen, "last_seen": lastSeen, "sessions": sessions, "conversions": conversions, "events": events})
+	var canonicalUserID *string
+	var linkedVisitors []string
+	_ = s.DB.QueryRow(r.Context(), `SELECT v.user_id,v.first_seen,v.last_seen,(SELECT count(*) FROM visitor_sessions vs WHERE vs.site_id=v.site_id AND vs.visitor_id=v.visitor_id),v.conversion_count FROM visitors v WHERE v.site_id=$1 AND v.visitor_id=$2`, siteID, visitorID).Scan(&canonicalUserID, &firstSeen, &lastSeen, &sessions, &conversions)
+	if canonicalUserID != nil {
+		_ = s.DB.QueryRow(r.Context(), `SELECT array_agg(visitor_id ORDER BY first_seen) FROM visitor_identities WHERE site_id=$1 AND user_id=$2`, siteID, *canonicalUserID).Scan(&linkedVisitors)
+		var canonicalProperties []byte
+		if s.DB.QueryRow(r.Context(), `SELECT user_properties FROM identified_users WHERE site_id=$1 AND user_id=$2`, siteID, *canonicalUserID).Scan(&canonicalProperties) == nil {
+			_ = json.Unmarshal(canonicalProperties, &latestUserProperties)
+		}
+		latestUserID = canonicalUserID
+	}
+	writeJSON(w, 200, map[string]any{"visitor_id": visitorID, "user_id": latestUserID, "linked_visitor_ids": linkedVisitors, "user_properties": latestUserProperties, "first_seen": firstSeen, "last_seen": lastSeen, "sessions": sessions, "conversions": conversions, "events": events})
 }
 
 func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +194,7 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 	}
 	var users, buyers, transactions, carts, checkouts int64
 	var revenue, refunds float64
-	err = s.DB.QueryRow(r.Context(), `WITH base AS (SELECT *,coalesce(nullif(user_id,''),visitor_id) entity FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),count(DISTINCT entity) FILTER(WHERE event_name='add_to_cart'),count(DISTINCT entity) FILTER(WHERE event_name='begin_checkout'),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to).Scan(&users, &buyers, &transactions, &carts, &checkouts, &revenue, &refunds)
+	err = s.DB.QueryRow(r.Context(), `WITH base AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),count(DISTINCT entity) FILTER(WHERE event_name='add_to_cart'),count(DISTINCT entity) FILTER(WHERE event_name='begin_checkout'),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to).Scan(&users, &buyers, &transactions, &carts, &checkouts, &revenue, &refunds)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -202,7 +212,7 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"item_id": itemID, "item_name": name, "category": category, "brand": brand, "quantity": quantity, "revenue": itemRevenue, "transactions": purchases}, err
 	})
 	steps := []map[string]any{}
-	stepRows, _ := s.DB.Query(r.Context(), `SELECT event_name,count(DISTINCT coalesce(nullif(user_id,''),visitor_id)) FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($4) GROUP BY event_name`, siteID, from, to, []string{"view_item", "add_to_cart", "begin_checkout", "purchase"})
+	stepRows, _ := s.DB.Query(r.Context(), `SELECT event_name,count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($4) GROUP BY event_name`, siteID, from, to, []string{"view_item", "add_to_cart", "begin_checkout", "purchase"})
 	if stepRows != nil {
 		defer stepRows.Close()
 		counts := map[string]int64{}

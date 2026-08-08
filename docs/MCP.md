@@ -15,6 +15,7 @@ Content-Type: application/json
 - `query_metrics`: 기간별 users, new_users, sessions, page_views, events, engagement_rate, conversions, revenue
 - `analyze_internal_usage`: department, organization, service, feature, button, network 차원별 사용량
 - `query_ecommerce`: 매출, 환불, 순매출, 거래, 구매자, 평균 주문 금액, 구매 전환율
+- `query_identity_graph`: 내부 User ID에 결정적으로 연결된 Visitor 목록, 최초/연결/최근 활동, Event와 Conversion 수. Visitor Profile 정책이 활성화된 경우에만 사용 가능
 - `list_segments`: MCP 분석에서 재사용할 수 있는 저장 Segment와 중첩 AND/OR 정의
 
 초기화 예제:
@@ -37,6 +38,23 @@ Content-Type: application/json
       "dimension": "department",
       "from": "2026-08-01",
       "to": "2026-08-08"
+    }
+  }
+}
+```
+
+Identity Graph 조회 예제:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "tools/call",
+  "params": {
+    "name": "query_identity_graph",
+    "arguments": {
+      "site_id": "SITE_12345678",
+      "user_id": "EMP_2026_9012"
     }
   }
 }

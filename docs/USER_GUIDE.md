@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.3.0
+- **문서 버전**: v0.4.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
 
@@ -134,7 +134,8 @@ Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의
 
 ### 3.5 Ecommerce와 User Explorer
 - Ecommerce는 `view_item`, `add_to_cart`, `begin_checkout`, `purchase`, `refund`와 `items` 배열을 기준으로 매출·거래·상품 성과를 계산합니다.
-- User Explorer는 Visitor별 Event Timeline을 제공하며 관리자가 Visitor Profile을 비활성화하면 API와 화면이 모두 차단됩니다.
+- User Explorer는 Visitor별 Event Timeline과 Deterministic Identity Graph를 제공합니다. 같은 `user_id`로 식별된 브라우저·기기의 Visitor ID는 하나의 canonical user로 연결되며, 로그인 전 익명 Event도 해당 사용자의 Funnel·Segment·전환 및 부서/조직 분석에 포함됩니다.
+- Momento는 fingerprint나 확률 기반 결합을 사용하지 않습니다. `analytics.identify()` 또는 SSO에서 받은 내부 pseudonymous ID만 신뢰하며, 관리자가 Visitor Profile을 비활성화하면 Identity Graph API와 화면도 함께 차단됩니다.
 
 ---
 

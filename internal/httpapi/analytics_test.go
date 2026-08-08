@@ -20,3 +20,19 @@ func TestPreviousDateRangeKeepsCalendarMidnightAcrossDST(t *testing.T) {
 		t.Fatalf("previous to = %s", got)
 	}
 }
+
+func TestLocalDateBucketRange(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 8, 1, 0, 0, 0, 0, location).UTC()
+	to := time.Date(2026, 8, 9, 0, 0, 0, 0, location).UTC()
+	dateFrom, dateTo, ok := localDateBucketRange(from, to, location)
+	if !ok || dateFrom.Format("2006-01-02") != "2026-08-01" || dateTo.Format("2006-01-02") != "2026-08-09" {
+		t.Fatalf("unexpected daily range: %s %s %v", dateFrom, dateTo, ok)
+	}
+	if _, _, ok := localDateBucketRange(from.Add(time.Minute), to, location); ok {
+		t.Fatal("partial-day range must not use daily aggregates")
+	}
+}

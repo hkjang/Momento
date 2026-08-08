@@ -48,11 +48,11 @@ var builtinDimensionSQL = map[string]string{
 	"traffic.campaign":  "%s.campaign",
 	"traffic.class":     "%s.traffic_class",
 	"network":           "%s.network_name",
-	"user.id":           "%s.user_id",
+	"user.id":           "%s.canonical_user_id",
 	"visitor.id":        "%s.visitor_id",
 	"session.id":        "%s.session_id",
-	"user.department":   "%s.user_properties->>'department'",
-	"user.organization": "%s.user_properties->>'organization'",
+	"user.department":   "%s.canonical_user_properties->>'department'",
+	"user.organization": "%s.canonical_user_properties->>'organization'",
 	"feature":           "%s.properties->>'feature'",
 	"button":            "coalesce(%s.properties->>'button',%s.properties->>'element_text')",
 	"is_conversion":     "%s.is_conversion::text",
@@ -91,7 +91,7 @@ func (r dimensionResolver) expression(field, alias string) (string, error) {
 	}
 	switch item.Scope {
 	case "user":
-		return fmt.Sprintf("%s.user_properties->>'%s'", alias, item.PropertyKey), nil
+		return fmt.Sprintf("%s.canonical_user_properties->>'%s'", alias, item.PropertyKey), nil
 	case "event", "session":
 		return fmt.Sprintf("%s.properties->>'%s'", alias, item.PropertyKey), nil
 	default:
@@ -181,7 +181,7 @@ func compileSegment(node segmentNode, resolver dimensionResolver, alias string, 
 }
 
 func compileEventExistence(node segmentNode, alias string, args *[]any) (string, error) {
-	identity := "coalesce(nullif(segment_event.user_id,''),segment_event.visitor_id)=coalesce(nullif(" + alias + ".user_id,'')," + alias + ".visitor_id)"
+	identity := "segment_event.entity_id=" + alias + ".entity_id"
 	base := "segment_event.site_id=" + alias + ".site_id AND " + identity
 	switch node.Operator {
 	case "=", "!=":
@@ -190,7 +190,7 @@ func compileEventExistence(node segmentNode, alias string, args *[]any) (string,
 			return "", fmt.Errorf("event.has requires a valid event name")
 		}
 		*args = append(*args, name)
-		exists := "EXISTS(SELECT 1 FROM raw_events segment_event WHERE " + base + " AND segment_event.event_name=$" + strconv.Itoa(len(*args)) + ")"
+		exists := "EXISTS(SELECT 1 FROM analytics_events segment_event WHERE " + base + " AND segment_event.event_name=$" + strconv.Itoa(len(*args)) + ")"
 		if node.Operator == "!=" {
 			return "NOT " + exists, nil
 		}
@@ -209,7 +209,7 @@ func compileEventExistence(node segmentNode, alias string, args *[]any) (string,
 			values = append(values, name)
 		}
 		*args = append(*args, values)
-		exists := "EXISTS(SELECT 1 FROM raw_events segment_event WHERE " + base + " AND segment_event.event_name=ANY($" + strconv.Itoa(len(*args)) + "))"
+		exists := "EXISTS(SELECT 1 FROM analytics_events segment_event WHERE " + base + " AND segment_event.event_name=ANY($" + strconv.Itoa(len(*args)) + "))"
 		if node.Operator == "not in" {
 			return "NOT " + exists, nil
 		}

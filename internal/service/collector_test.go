@@ -108,4 +108,21 @@ func TestInteractionEvents(t *testing.T) {
 	}
 }
 
+func TestEventRevenue(t *testing.T) {
+	tests := []struct {
+		event model.IncomingEvent
+		want  float64
+	}{
+		{event: model.IncomingEvent{Name: "purchase", Properties: map[string]any{"value": 12500.5}}, want: 12500.5},
+		{event: model.IncomingEvent{Name: "purchase", Properties: map[string]any{"revenue": "3300"}}, want: 3300},
+		{event: model.IncomingEvent{Name: "refund", Properties: map[string]any{"value": 100.0}}, want: 0},
+		{event: model.IncomingEvent{Name: "purchase", Properties: map[string]any{"value": "invalid"}}, want: 0},
+	}
+	for _, tt := range tests {
+		if got := eventRevenue(tt.event); got != tt.want {
+			t.Errorf("eventRevenue(%#v)=%v want %v", tt.event, got, tt.want)
+		}
+	}
+}
+
 var _ = model.CollectRequest{}

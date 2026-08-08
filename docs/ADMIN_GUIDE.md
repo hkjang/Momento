@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.3.0
+- **문서 버전**: v0.4.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -96,4 +96,13 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 
 ## 8. 개인정보 삭제 일관성
 
-Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter 원본 payload를 먼저 정리하고 Raw Event를 삭제한 뒤 남은 Raw Event에서 Session 요약을 재생성합니다. Event Property 삭제도 처리 대기/Debug payload와 Raw Event에 함께 적용됩니다. 따라서 삭제된 데이터가 Worker 재시도로 복원되거나 Session 보고서에 잔존하지 않습니다.
+Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter 원본 payload를 먼저 정리하고 Raw Event를 삭제한 뒤 남은 Raw Event에서 Session, Visitor, Identity Graph와 일별 집계를 재생성합니다. User ID 삭제 시 Identity Graph에 연결된 로그인 전 익명 Visitor와 다른 기기의 Raw Event도 함께 삭제합니다. Event Property 삭제도 처리 대기/Debug payload와 Raw Event에 함께 적용됩니다. 따라서 삭제된 데이터가 Worker 재시도로 복원되거나 파생 보고서에 잔존하지 않습니다.
+
+## 9. Identity Graph와 파생 집계 운영
+
+- `visitor_identities`는 `(site_id, visitor_id) → user_id`의 결정적 연결을 보관합니다.
+- `identified_users`는 연결된 모든 Visitor에서 가장 이른 최초 활동과 최신 User Property를 유지합니다.
+- `visitors`, `visitor_sessions`, `daily_site_metrics`, `daily_site_visitors`, `daily_site_sessions`는 Worker가 Raw Event와 같은 transaction에서 증분 갱신합니다.
+- Overview의 Site-local 일별 Trend는 일별 집계를 사용하고, 임의 시각 범위는 Raw Event로 정확히 fallback합니다.
+- Site Timezone을 바꾸면 Raw Timestamp는 그대로 두고 일별 집계만 새 Calendar 경계로 즉시 재생성합니다.
+- 장애 복구와 개인정보 삭제에서는 Raw Event를 Single Source of Truth로 파생 데이터를 재생성합니다.

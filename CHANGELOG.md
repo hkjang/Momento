@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.0
+
+- Added a deterministic Visitor Identity Graph that links anonymous and authenticated Visitor IDs through pseudonymous `user_id` values without fingerprinting.
+- Added canonical User profiles so historical anonymous events inherit the identified user's latest User-scope department, organization, and custom dimensions while Raw Events remain immutable.
+- Applied canonical identity to Overview, Realtime, Events, Pages, internal usage, Query Builder, Segment event-existence rules, Funnel, Ecommerce, Session reports, and Analytics MCP.
+- Added `visitors`, `identified_users`, `visitor_identities`, `visitor_sessions`, `daily_site_metrics`, `daily_site_visitors`, and `daily_site_sessions` PostgreSQL summaries with automatic v0.3 Raw Event backfill.
+- Added an `analytics_events` read model with collision-safe `u:`/`v:` entity identifiers and canonical user properties.
+- Added the privacy-controlled Identity Graph REST report, User Explorer graph UI, linked-Visitor navigation, and `query_identity_graph` MCP tool.
+- Accelerated Site-local Overview trends with daily aggregates while retaining exact Raw Event fallback for partial-day ranges.
+- Rebuilt daily aggregates atomically when a Site timezone changes.
+- Expanded User ID privacy deletion to every linked anonymous/device Visitor and atomically rebuilt all affected derived data.
+
 ## v0.3.0
 
 - Captured page, device, and first-touch acquisition context at event occurrence time so SPA route changes cannot rewrite queued event context.

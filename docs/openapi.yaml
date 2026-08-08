@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.3.0
+  version: 0.4.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -66,6 +66,12 @@ paths:
     get:
       summary: List materialized session summaries
       responses: {'200': {description: Session rows}}
+  /api/v1/sites/{siteId}/identities:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List deterministic User ID to Visitor ID identity links
+      description: Disabled when the Visitor Profile privacy policy is disabled.
+      responses: {'200': {description: Identity graph rows}, '403': {$ref: '#/components/responses/Error'}}
   /api/v1/sites/{siteId}/ecommerce:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
@@ -141,7 +147,7 @@ paths:
       responses: {'200': {description: Query rows}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/privacy/delete:
     post:
-      summary: Delete analytics data and atomically reconcile inbox, dead letters, Raw Events, and Session summaries
+      summary: Delete analytics data and atomically reconcile queue payloads, Raw Events, identity links, Visitor/Session summaries, and daily aggregates
       responses: {'200': {description: Data deleted or property scrubbed}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/funnel:
     post:

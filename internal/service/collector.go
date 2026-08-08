@@ -252,6 +252,14 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 	if err := json.Unmarshal(body, &p); err != nil {
 		return err
 	}
+	var timezone string
+	if err := tx.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&timezone); err != nil {
+		return err
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return fmt.Errorf("invalid site timezone %q: %w", timezone, err)
+	}
 	ip := net.ParseIP(strings.TrimSpace(p.ClientIP))
 	if privacy.IPAnonymization {
 		ip = anonymizeIP(ip)
@@ -319,12 +327,168 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 			return err
 		}
 		if result.RowsAffected() > 0 {
-			if err := updateSession(ctx, tx, siteID, p.Request, event, eventTime, userID, pageURL, ctxValue, conversion); err != nil {
+			if userID != "" {
+				if err := updateVisitorIdentity(ctx, tx, siteID, p.Request.VisitorID, userID, eventTime); err != nil {
+					return err
+				}
+			}
+			canonicalUserID, err := updateVisitor(ctx, tx, siteID, p.Request.VisitorID, userID, userJSON, eventTime, conversion)
+			if err != nil {
+				return err
+			}
+			if canonicalUserID != "" {
+				if _, err := tx.Exec(ctx, `UPDATE visitor_identities SET last_seen=greatest(last_seen,$3),updated_at=now() WHERE site_id=$1 AND visitor_id=$2`, siteID, p.Request.VisitorID, eventTime); err != nil {
+					return err
+				}
+				if err := updateIdentifiedUser(ctx, tx, siteID, p.Request.VisitorID, canonicalUserID, userJSON, eventTime); err != nil {
+					return err
+				}
+			}
+			if err := updateSession(ctx, tx, siteID, p.Request, event, eventTime, canonicalUserID, pageURL, ctxValue, conversion); err != nil {
+				return err
+			}
+			if err := updateVisitorSession(ctx, tx, siteID, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, eventTime); err != nil {
+				return err
+			}
+			if err := updateDailyAggregates(ctx, tx, siteID, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, userJSON, event, eventTime, location, conversion); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func updateVisitorIdentity(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, userID string, eventTime time.Time) error {
+	_, err := tx.Exec(ctx, `INSERT INTO visitor_identities(site_id,visitor_id,user_id,first_seen,linked_at,last_seen)
+		VALUES($1,$2,$3,coalesce((SELECT first_seen FROM visitors WHERE site_id=$1 AND visitor_id=$2),$4),$4,$4)
+		ON CONFLICT(site_id,visitor_id) DO UPDATE SET
+		user_id=CASE WHEN excluded.last_seen>=visitor_identities.last_seen THEN excluded.user_id ELSE visitor_identities.user_id END,
+		first_seen=least(visitor_identities.first_seen,excluded.first_seen),
+		linked_at=CASE
+			WHEN excluded.last_seen<visitor_identities.last_seen THEN visitor_identities.linked_at
+			WHEN visitor_identities.user_id=excluded.user_id THEN least(visitor_identities.linked_at,excluded.linked_at)
+			ELSE excluded.linked_at
+		END,
+		last_seen=greatest(visitor_identities.last_seen,excluded.last_seen),
+		confidence=1.000,source='identify',updated_at=now()`, siteID, visitorID, userID, eventTime)
+	if err != nil {
+		return err
+	}
+	// Identity is deterministic. Once a visitor is linked, all summaries expose
+	// the canonical user even for events that happened before identify().
+	if _, err = tx.Exec(ctx, `UPDATE visitors v SET user_id=i.user_id,updated_at=now() FROM visitor_identities i WHERE v.site_id=$1 AND v.visitor_id=$2 AND i.site_id=v.site_id AND i.visitor_id=v.visitor_id`, siteID, visitorID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE visitor_sessions v SET user_id=i.user_id,updated_at=now() FROM visitor_identities i WHERE v.site_id=$1 AND v.visitor_id=$2 AND i.site_id=v.site_id AND i.visitor_id=v.visitor_id`, siteID, visitorID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE daily_site_visitors v SET user_id=i.user_id,updated_at=now() FROM visitor_identities i WHERE v.site_id=$1 AND v.visitor_id=$2 AND i.site_id=v.site_id AND i.visitor_id=v.visitor_id`, siteID, visitorID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE daily_site_sessions v SET user_id=i.user_id,updated_at=now() FROM visitor_identities i WHERE v.site_id=$1 AND v.visitor_id=$2 AND i.site_id=v.site_id AND i.visitor_id=v.visitor_id`, siteID, visitorID); err != nil {
+		return err
+	}
+	// A deterministic reassignment may leave the previous user without any
+	// linked visitors. Remove that unreachable profile in the same transaction.
+	_, err = tx.Exec(ctx, `DELETE FROM identified_users u WHERE u.site_id=$1 AND NOT EXISTS(SELECT 1 FROM visitor_identities i WHERE i.site_id=u.site_id AND i.user_id=u.user_id)`, siteID)
+	return err
+}
+
+func updateVisitor(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, userID string, userProperties []byte, eventTime time.Time, conversion bool) (string, error) {
+	var canonicalUserID string
+	err := tx.QueryRow(ctx, `INSERT INTO visitors(site_id,visitor_id,user_id,first_seen,last_seen,event_count,conversion_count,user_properties)
+		VALUES($1,$2,coalesce((SELECT user_id FROM visitor_identities WHERE site_id=$1 AND visitor_id=$2),nullif($3,'')),$4,$4,1,$5,$6)
+		ON CONFLICT(site_id,visitor_id) DO UPDATE SET
+		user_id=coalesce((SELECT user_id FROM visitor_identities WHERE site_id=$1 AND visitor_id=$2),excluded.user_id,visitors.user_id),
+		first_seen=least(visitors.first_seen,excluded.first_seen),
+		last_seen=greatest(visitors.last_seen,excluded.last_seen),
+		event_count=visitors.event_count+1,
+		conversion_count=visitors.conversion_count+excluded.conversion_count,
+		user_properties=CASE WHEN excluded.user_properties<>'{}'::jsonb AND excluded.last_seen>=visitors.last_seen THEN excluded.user_properties ELSE visitors.user_properties END,
+		updated_at=now()
+		RETURNING coalesce(user_id,'')`, siteID, visitorID, userID, eventTime, boolInt(conversion), userProperties).Scan(&canonicalUserID)
+	return canonicalUserID, err
+}
+
+func updateIdentifiedUser(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, userID string, userProperties []byte, eventTime time.Time) error {
+	_, err := tx.Exec(ctx, `INSERT INTO identified_users(site_id,user_id,first_seen,last_seen,user_properties)
+		VALUES($1,$2,coalesce((SELECT first_seen FROM visitors WHERE site_id=$1 AND visitor_id=$3),$4),$4,$5)
+		ON CONFLICT(site_id,user_id) DO UPDATE SET
+		first_seen=least(identified_users.first_seen,excluded.first_seen),
+		last_seen=greatest(identified_users.last_seen,excluded.last_seen),
+		user_properties=CASE WHEN excluded.user_properties<>'{}'::jsonb AND excluded.last_seen>=identified_users.last_seen THEN excluded.user_properties ELSE identified_users.user_properties END,
+		updated_at=now()`, siteID, userID, visitorID, eventTime, userProperties)
+	return err
+}
+
+func updateVisitorSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, sessionID, userID string, eventTime time.Time) error {
+	_, err := tx.Exec(ctx, `INSERT INTO visitor_sessions(site_id,visitor_id,session_id,user_id,first_seen,last_seen)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5)
+		ON CONFLICT(site_id,visitor_id,session_id) DO UPDATE SET
+		user_id=coalesce(excluded.user_id,visitor_sessions.user_id),
+		first_seen=least(visitor_sessions.first_seen,excluded.first_seen),
+		last_seen=greatest(visitor_sessions.last_seen,excluded.last_seen),updated_at=now()`, siteID, visitorID, sessionID, userID, eventTime)
+	return err
+}
+
+func updateDailyAggregates(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, sessionID, userID string, userProperties []byte, event model.IncomingEvent, eventTime time.Time, location *time.Location, conversion bool) error {
+	local := eventTime.In(location)
+	eventDate := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_metrics(site_id,event_date,events,page_views,conversions,revenue)
+		VALUES($1,$2,1,$3,$4,$5)
+		ON CONFLICT(site_id,event_date) DO UPDATE SET
+		events=daily_site_metrics.events+1,
+		page_views=daily_site_metrics.page_views+excluded.page_views,
+		conversions=daily_site_metrics.conversions+excluded.conversions,
+		revenue=daily_site_metrics.revenue+excluded.revenue,updated_at=now()`, siteID, eventDate, boolInt(event.Name == "page_view"), boolInt(conversion), eventRevenue(event)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_visitors(site_id,event_date,visitor_id,user_id,first_seen,last_seen,event_count,conversion_count,user_properties)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6,$7)
+		ON CONFLICT(site_id,event_date,visitor_id) DO UPDATE SET
+		user_id=coalesce(excluded.user_id,daily_site_visitors.user_id),
+		first_seen=least(daily_site_visitors.first_seen,excluded.first_seen),
+		last_seen=greatest(daily_site_visitors.last_seen,excluded.last_seen),
+		event_count=daily_site_visitors.event_count+1,
+		conversion_count=daily_site_visitors.conversion_count+excluded.conversion_count,
+		user_properties=CASE WHEN excluded.user_properties<>'{}'::jsonb AND excluded.last_seen>=daily_site_visitors.last_seen THEN excluded.user_properties ELSE daily_site_visitors.user_properties END,
+		updated_at=now()`, siteID, eventDate, visitorID, userID, eventTime, boolInt(conversion), userProperties); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO daily_site_sessions(site_id,event_date,session_id,visitor_id,user_id,first_seen,last_seen)
+		VALUES($1,$2,$3,$4,nullif($5,''),$6,$6)
+		ON CONFLICT(site_id,event_date,session_id) DO UPDATE SET
+		visitor_id=excluded.visitor_id,user_id=coalesce(excluded.user_id,daily_site_sessions.user_id),
+		first_seen=least(daily_site_sessions.first_seen,excluded.first_seen),
+		last_seen=greatest(daily_site_sessions.last_seen,excluded.last_seen),updated_at=now()`, siteID, eventDate, sessionID, visitorID, userID, eventTime)
+	return err
+}
+
+func eventRevenue(event model.IncomingEvent) float64 {
+	if event.Name != "purchase" {
+		return 0
+	}
+	for _, key := range []string{"value", "revenue"} {
+		switch value := event.Properties[key].(type) {
+		case float64:
+			return value
+		case float32:
+			return float64(value)
+		case int:
+			return float64(value)
+		case int64:
+			return float64(value)
+		case json.Number:
+			if parsed, err := value.Float64(); err == nil {
+				return parsed
+			}
+		case string:
+			if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+				return parsed
+			}
+		}
+	}
+	return 0
 }
 
 func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request model.CollectRequest, event model.IncomingEvent, eventTime time.Time, userID, pageURL string, eventContext model.EventContext, conversion bool) error {

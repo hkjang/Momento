@@ -114,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 		api.Get("/api/v1/sites/{siteID}/pages", s.pageReport)
 		api.Get("/api/v1/sites/{siteID}/usage", s.usageReport)
 		api.Get("/api/v1/sites/{siteID}/visitors", s.visitorReport)
+		api.Get("/api/v1/sites/{siteID}/identities", s.identityReport)
 		api.Get("/api/v1/sites/{siteID}/visitors/{visitorID}/timeline", s.visitorTimeline)
 		api.Get("/api/v1/sites/{siteID}/sessions", s.sessionReport)
 		api.Get("/api/v1/sites/{siteID}/ecommerce", s.ecommerceReport)

@@ -22,7 +22,7 @@ func TestCompileNestedSegment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"e.device_type = $4", "e.user_properties->>'membership' = $5", "e.properties->>'price'", ">= $6", " AND ", " OR "} {
+	for _, expected := range []string{"e.device_type = $4", "e.canonical_user_properties->>'membership' = $5", "e.properties->>'price'", ">= $6", " AND ", " OR "} {
 		if !strings.Contains(sql, expected) {
 			t.Fatalf("compiled SQL %q does not contain %q", sql, expected)
 		}
@@ -54,7 +54,7 @@ func TestCompileEventExistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(sql, "EXISTS(SELECT 1 FROM raw_events segment_event") || !strings.Contains(sql, "segment_event.event_name=$4") {
+	if !strings.Contains(sql, "EXISTS(SELECT 1 FROM analytics_events segment_event") || !strings.Contains(sql, "segment_event.entity_id=e.entity_id") || !strings.Contains(sql, "segment_event.event_name=$4") {
 		t.Fatalf("unexpected existence SQL: %s", sql)
 	}
 	if args[3] != "purchase" {

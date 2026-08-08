@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
+	"github.com/hkjang/Momento/internal/service"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -295,6 +296,11 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var previousTimezone string
+	if err := tx.QueryRow(r.Context(), `SELECT timezone FROM sites WHERE id=$1 FOR UPDATE`, id).Scan(&previousTimezone); err != nil {
+		writeError(w, 404, "NOT_FOUND", "site not found")
+		return
+	}
 	result, err := tx.Exec(r.Context(), `UPDATE sites SET name=$2,service_name=$3,allowed_domains=$4,session_timeout_minutes=$5,timezone=$6,engagement_threshold_seconds=$7,active=coalesce($8,active),updated_at=now() WHERE id=$1`, id, in.Name, in.ServiceName, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Timezone, in.Engagement, in.Active)
 	if err == nil && result.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "site not found")
@@ -302,6 +308,9 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE sessions SET engaged=(extract(epoch FROM (last_event_at-started_at)) >= $2 OR conversion_count>0 OR page_views>=2 OR active_engagement_ms >= $2::bigint*1000),updated_at=now() WHERE site_id=$1`, id, in.Engagement)
+	}
+	if err == nil && previousTimezone != in.Timezone {
+		err = service.RebuildSiteDailyAggregates(r.Context(), tx, id)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
@@ -800,10 +809,32 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	linkedVisitors := []string{}
+	if in.Mode == "user_id" {
+		rows, queryErr := tx.Query(r.Context(), `SELECT visitor_id FROM visitor_identities WHERE site_id=$1 AND user_id=$2`, siteID, in.Value)
+		if queryErr != nil {
+			writeError(w, 500, "IDENTITY_LOOKUP_FAILED", queryErr.Error())
+			return
+		}
+		for rows.Next() {
+			var visitorID string
+			if scanErr := rows.Scan(&visitorID); scanErr != nil {
+				rows.Close()
+				writeError(w, 500, "IDENTITY_LOOKUP_FAILED", scanErr.Error())
+				return
+			}
+			linkedVisitors = append(linkedVisitors, visitorID)
+		}
+		rows.Close()
+		if rows.Err() != nil {
+			writeError(w, 500, "IDENTITY_LOOKUP_FAILED", rows.Err().Error())
+			return
+		}
+	}
 	// The inbox also contains the original event payload for the debugger and
 	// retries. Scrub it before Raw Events so a worker already holding a row lock
 	// commits first and its newly written event is covered by the deletion.
-	if err := scrubQueuedAnalyticsData(r.Context(), tx, siteID, in.Mode, in.Value, deleteFrom, deleteTo); err != nil {
+	if err := scrubQueuedAnalyticsData(r.Context(), tx, siteID, in.Mode, in.Value, linkedVisitors, deleteFrom, deleteTo); err != nil {
 		writeError(w, 500, "QUEUE_SCRUB_FAILED", err.Error())
 		return
 	}
@@ -813,7 +844,7 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 	case "visitor":
 		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND visitor_id=$2`, siteID, in.Value)
 	case "user_id":
-		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND user_id=$2`, siteID, in.Value)
+		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND (user_id=$2 OR visitor_id=ANY($3))`, siteID, in.Value, linkedVisitors)
 	case "period":
 		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, deleteFrom, deleteTo)
 	case "property":
@@ -824,8 +855,8 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Mode != "property" {
-		if err := rebuildSiteSessions(r.Context(), tx, siteID); err != nil {
-			writeError(w, 500, "SESSION_REBUILD_FAILED", err.Error())
+		if err := service.RebuildSiteDerivedData(r.Context(), tx, siteID); err != nil {
+			writeError(w, 500, "DERIVED_REBUILD_FAILED", err.Error())
 			return
 		}
 	}
@@ -837,7 +868,7 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"deleted_or_updated": tag.RowsAffected()})
 }
 
-func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, mode, value string, from, to time.Time) error {
+func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, mode, value string, linkedVisitors []string, from, to time.Time) error {
 	if mode == "site" {
 		if _, err := tx.Exec(ctx, `DELETE FROM event_dead_letters WHERE site_id=$1`, siteID); err != nil {
 			return err
@@ -846,13 +877,16 @@ func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, 
 		return err
 	}
 	if mode == "visitor" || mode == "user_id" {
-		field := "visitor_id"
-		if mode == "user_id" {
-			field = "user_id"
-		}
 		for _, table := range []string{"event_inbox", "event_dead_letters"} {
-			query := fmt.Sprintf(`DELETE FROM %s WHERE site_id=$1 AND payload->'request'->>$2=$3`, table)
-			if _, err := tx.Exec(ctx, query, siteID, field, value); err != nil {
+			var err error
+			if mode == "visitor" {
+				query := fmt.Sprintf(`DELETE FROM %s WHERE site_id=$1 AND payload->'request'->>'visitor_id'=$2`, table)
+				_, err = tx.Exec(ctx, query, siteID, value)
+			} else {
+				query := fmt.Sprintf(`DELETE FROM %s WHERE site_id=$1 AND (payload->'request'->>'user_id'=$2 OR payload->'request'->>'visitor_id'=ANY($3))`, table)
+				_, err = tx.Exec(ctx, query, siteID, value, linkedVisitors)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -931,37 +965,6 @@ func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, 
 		}
 	}
 	return nil
-}
-
-func rebuildSiteSessions(ctx context.Context, tx pgx.Tx, siteID uuid.UUID) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE site_id=$1`, siteID); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `WITH aggregates AS (
-		SELECT
-			e.site_id,e.session_id,
-			(array_agg(e.visitor_id ORDER BY e.event_timestamp,e.id))[1] visitor_id,
-			(array_agg(e.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_id IS NOT NULL))[1] user_id,
-			min(e.event_timestamp) started_at,max(e.event_timestamp) last_event_at,
-			count(*) event_count,count(*) FILTER(WHERE e.event_name='page_view') page_views,
-			count(*) FILTER(WHERE e.is_conversion) conversion_count,
-			coalesce(sum(CASE WHEN e.event_name='user_engagement' AND coalesce(e.properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$' THEN least((e.properties->>'active_seconds')::numeric*1000,3600000) ELSE 0 END),0)::bigint active_engagement_ms,
-			count(*) FILTER(WHERE e.event_name='user_engagement') heartbeat_count,
-			count(*) FILTER(WHERE e.event_name IN ('click','outbound_click','file_download','search','login','sign_up','form_start','form_submit','conversion','purchase','add_to_cart','begin_checkout','error')) interaction_count,
-			(array_agg(e.page_url ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.event_name='page_view' AND e.page_url IS NOT NULL))[1] landing_page,
-			(array_agg(e.page_url ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.event_name='page_view' AND e.page_url IS NOT NULL))[1] exit_page,
-			(array_agg(e.source ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.source IS NOT NULL))[1] source,
-			(array_agg(e.medium ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.medium IS NOT NULL))[1] medium,
-			(array_agg(e.campaign ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.campaign IS NOT NULL))[1] campaign,
-			(array_agg(e.device_type ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.device_type IS NOT NULL))[1] device_type
-		FROM raw_events e WHERE e.site_id=$1 GROUP BY e.site_id,e.session_id
-	)
-	INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count)
-	SELECT a.site_id,a.session_id,a.visitor_id,a.user_id,a.started_at,a.last_event_at,a.event_count,a.page_views,a.conversion_count,
-		extract(epoch FROM (a.last_event_at-a.started_at)) >= site.engagement_threshold_seconds OR a.conversion_count>0 OR a.page_views>=2 OR a.active_engagement_ms>=site.engagement_threshold_seconds*1000,
-		a.landing_page,a.exit_page,a.source,a.medium,a.campaign,a.device_type,a.active_engagement_ms,a.heartbeat_count,a.interaction_count
-	FROM aggregates a JOIN sites site ON site.id=a.site_id`, siteID)
-	return err
 }
 
 func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {

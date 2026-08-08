@@ -32,10 +32,22 @@
 - Worker savepoint isolation with durable retry/dead-letter bookkeeping
 - Queue-aware privacy deletion and Raw Event-driven Session reconciliation
 
+## v0.4 — implemented
+
+- Deterministic SSO/identify Visitor Identity Graph without fingerprinting
+- Collision-safe canonical user/entity read model across Query, Segment, Funnel, Ecommerce and MCP
+- Canonical User Profile propagation for department, organization and User-scope custom dimensions
+- Materialized Visitor, identified User, Visitor-Session and Site-local Daily summaries
+- Automatic Raw Event backfill for upgrades from v0.3 and fresh installations
+- Daily-aggregate Overview trends with partial-day Raw Event fallback
+- Privacy-controlled Identity Graph REST/MCP/User Explorer experience
+- Linked anonymous/device Visitor deletion and complete derived-data reconciliation
+- Atomic daily aggregate rebuild on Site Timezone changes
+
 ## Next schema-compatible increments
 
-- Scheduled aggregate rebuild jobs and Parquet export
 - Cohort/retention and first/last/last-non-direct attribution
+- Scheduled aggregate validation/rebuild jobs and Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation
 - Mobile/server SDK packages, anomaly alerts and AI-assisted diagnosis

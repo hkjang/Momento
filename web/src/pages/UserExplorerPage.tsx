@@ -32,12 +32,24 @@ interface TimelineEvent {
 interface Timeline {
   visitor_id: string;
   user_id?: string;
+  linked_visitor_ids?: string[];
   user_properties?: Record<string, unknown>;
   first_seen?: string;
   last_seen?: string;
   sessions: number;
   conversions: number;
   events: TimelineEvent[];
+}
+
+interface Identity {
+  user_id: string;
+  visitor_count: number;
+  visitor_ids: string[];
+  first_seen: string;
+  linked_at: string;
+  last_seen: string;
+  events: number;
+  conversions: number;
 }
 
 export default function UserExplorerPage() {
@@ -59,6 +71,12 @@ export default function UserExplorerPage() {
         `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(visitor)}/timeline?${rangeQuery(365, site!.timezone)}&limit=300`,
       ),
     enabled: !!site && !!visitor,
+  });
+  const identities = useQuery({
+    queryKey: ["identity-graph", site?.site_id],
+    queryFn: () =>
+      get<Identity[]>(`/api/v1/sites/${site!.site_id}/identities`),
+    enabled: !!site,
   });
   if (!site) return <NoSite />;
   return (
@@ -114,6 +132,58 @@ export default function UserExplorerPage() {
           </Stack>
         )}
       </Card>
+      {!!identities.data?.length && (
+        <Card sx={{ p: 2.5 }}>
+          <Typography fontWeight={720}>Deterministic Identity Graph</Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            SDK identify 또는 SSO User ID로 연결된 여러 Visitor를 한 사용자로
+            분석합니다. 확률 기반 fingerprint는 사용하지 않습니다.
+          </Typography>
+          <Stack spacing={1.5}>
+            {identities.data.slice(0, 12).map((identity) => (
+              <Box
+                key={identity.user_id}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: { xs: "1fr", md: "220px 1fr auto" },
+                  gap: 1.5,
+                  alignItems: "center",
+                  p: 1.5,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 2,
+                }}
+              >
+                <Box>
+                  <Typography className="mono" fontWeight={700}>
+                    {identity.user_id}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Visitor {identity.visitor_count}개 · 이벤트 {identity.events.toLocaleString("ko-KR")}개
+                  </Typography>
+                </Box>
+                <Stack direction="row" gap={0.75} flexWrap="wrap">
+                  {identity.visitor_ids.slice(0, 8).map((visitorID) => (
+                    <Chip
+                      key={visitorID}
+                      size="small"
+                      variant="outlined"
+                      label={visitorID}
+                      onClick={() => {
+                        setInput(visitorID);
+                        setVisitor(visitorID);
+                      }}
+                    />
+                  ))}
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  최근 {new Date(identity.last_seen).toLocaleString("ko-KR")}
+                </Typography>
+              </Box>
+            ))}
+          </Stack>
+        </Card>
+      )}
       {timeline.isLoading && <Loading />}
       {timeline.error && <ErrorState error={timeline.error} />}
       {timeline.data && (
@@ -141,6 +211,26 @@ export default function UserExplorerPage() {
                 size="small"
                 label={`User ${timeline.data.user_id}`}
               />
+            )}
+            {!!timeline.data.linked_visitor_ids?.length && (
+              <Stack direction="row" gap={0.5} mt={1} flexWrap="wrap">
+                {timeline.data.linked_visitor_ids.map((visitorID) => (
+                  <Chip
+                    key={visitorID}
+                    size="small"
+                    variant={
+                      visitorID === timeline.data.visitor_id
+                        ? "filled"
+                        : "outlined"
+                    }
+                    label={visitorID}
+                    onClick={() => {
+                      setInput(visitorID);
+                      setVisitor(visitorID);
+                    }}
+                  />
+                ))}
+              </Stack>
             )}
             <Divider sx={{ my: 2 }} />
             <Stack spacing={1.2}>
