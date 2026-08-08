@@ -1,28 +1,31 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
   <defs>
-    <linearGradient id="momento-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="50%" stop-color="#8b5cf6"/>
-      <stop offset="100%" stop-color="#06b6d4"/>
+    <linearGradient id="momento-edge-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" />
+      <stop offset="50%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#06b6d4" />
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur" />
-      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    <filter id="edge-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
     </filter>
   </defs>
-  <!-- Rounded Badge Background -->
-  <rect x="5" y="5" width="90" height="90" rx="24" fill="#0d111a" stroke="url(#momento-grad)" stroke-width="2.5" />
   
-  <!-- Stylized M Monogram + Analytics Pulse Wave -->
-  <path d="M 24 68 L 24 36 C 24 36, 32 30, 40 46 C 48 62, 52 30, 60 46 C 68 62, 76 34, 76 68" 
-        fill="none" 
-        stroke="url(#momento-grad)" 
-        stroke-width="7" 
-        stroke-linecap="round" 
-        stroke-linejoin="round" 
-        filter="url(#glow)" />
-        
-  <!-- Ascending Analytics Bar Motif -->
-  <rect x="68" y="44" width="6" height="24" rx="3" fill="#06b6d4" />
-  <rect x="56" y="52" width="6" height="16" rx="3" fill="#8b5cf6" />
+  <!-- Transparent Background, Sharp Edge Monogram M + Analytics Wave -->
+  <g filter="url(#edge-glow)">
+    <!-- Main Neon M Wave Path -->
+    <path d="M 16 88 L 16 34 L 44 80 L 60 50 L 76 80 L 104 28" 
+          fill="none" 
+          stroke="url(#momento-edge-grad)" 
+          stroke-width="11" 
+          stroke-linecap="round" 
+          stroke-linejoin="round" />
+    
+    <!-- Accent Pulsing Node Dots -->
+    <circle cx="104" cy="28" r="7.5" fill="#06b6d4" />
+    <circle cx="60" cy="50" r="5" fill="#a855f7" />
+  </g>
 </svg>

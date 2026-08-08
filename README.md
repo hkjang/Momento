@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.png" alt="Momento Logo" width="160" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(99, 102, 241, 0.3);"><br><br>
+  <img src="docs/favicon.svg" alt="Momento Logo" width="90"><br><br>
   <h1 align="center">Momento</h1>
 </p>
 

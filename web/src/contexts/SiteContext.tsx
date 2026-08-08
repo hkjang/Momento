@@ -1,4 +1,5 @@
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -20,14 +21,23 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   const [selected, setSelected] = useState(
     localStorage.getItem("momento:selected-site") || "",
   );
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const next = await get<Site[]>("/api/v1/sites");
     setSites(next);
-    if (!selected && next[0]) setSelected(next[0].site_id);
-  };
+    setSelected((current) => {
+      const available = next.some((item) => item.site_id === current);
+      const selectedSite = available ? current : next[0]?.site_id || "";
+      if (selectedSite) {
+        localStorage.setItem("momento:selected-site", selectedSite);
+      } else {
+        localStorage.removeItem("momento:selected-site");
+      }
+      return selectedSite;
+    });
+  }, []);
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
   const site = sites.find((s) => s.site_id === selected) || sites[0] || null;
   const value = useMemo(
     () => ({
@@ -39,7 +49,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       },
       refresh,
     }),
-    [sites, site],
+    [sites, site, refresh],
   );
   return <SiteContext.Provider value={value}>{children}</SiteContext.Provider>;
 }

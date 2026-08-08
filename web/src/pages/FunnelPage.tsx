@@ -103,9 +103,11 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       ),
     enabled: !!site && mode === "path",
   });
+  const runFunnel = funnel.mutate;
+  const siteID = site?.site_id;
   useEffect(() => {
-    if (site && mode === "funnel") funnel.mutate();
-  }, [site?.site_id]);
+    if (siteID && mode === "funnel") runFunnel();
+  }, [siteID, mode, runFunnel]);
   if (!site) return <NoSite />;
   const funnelFields = [
     ...builtInSegmentFields,
