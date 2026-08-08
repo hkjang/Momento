@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Momento - On-Premise Event Analytics Platform | Own Your Behavioral Data</title>
+    <meta name="description" content="Momento is a self-hosted, on-premise event analytics platform. Collect, own, and analyze raw event data across internal web and mobile apps without third-party leaks. Keycloak OIDC, REST API, Analytics MCP.">
+    <meta name="keywords" content="event analytics, on-premise analytics, raw event, data sovereignty, privacy, Keycloak OIDC, Analytics MCP, REST API, Momento">
+    <meta name="author" content="Momento">
+    <meta name="robots" content="index, follow">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Momento - On-Premise Event Analytics Platform">
+    <meta property="og:description" content="100% data sovereignty for internal apps and web services. Collect and analyze raw behavioral events on-premise without external leaks.">
+    <meta property="og:url" content="https://hkjang.github.io/Momento/index_en.html">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Momento">
+    <meta property="og:locale" content="en_US">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Momento - On-Premise Event Analytics Platform">
+    <meta name="twitter:description" content="100% data sovereignty for internal apps and web services. Collect and analyze raw behavioral events on-premise.">
+
+    <!-- Canonical & Alternate -->
+    <link rel="canonical" href="https://hkjang.github.io/Momento/index_en.html">
+    <link rel="alternate" hreflang="ko" href="https://hkjang.github.io/Momento/">
+    <link rel="alternate" hreflang="en" href="https://hkjang.github.io/Momento/index_en.html">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Momento",
+      "operatingSystem": "Linux, Docker",
+      "applicationCategory": "BusinessApplication",
+      "softwareVersion": "0.1.0",
+      "description": "Self-hosted, on-premise event analytics platform that collects and analyzes raw event data from enterprise applications.",
+      "url": "https://github.com/hkjang/Momento",
+      "downloadUrl": "https://github.com/hkjang/Momento",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "JavaScript SDK (PageView, SPA, Click, Custom Event, Offline Queue)",
+        "Durable Collector & PII Filter",
+        "Raw Event Data Ownership & Query Builder",
+        "2-10 Step Funnel & Path Analysis",
+        "Keycloak OIDC SSO & RBAC Control",
+        "CIDR Subnet Name Mapping",
+        "REST/OpenAPI & CSV/NDJSON Export",
+        "Analytics MCP (Model Context Protocol) Support",
+        "Air-Gapped Docker Image Packaging"
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: FAQPage -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Momento?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Momento is an enterprise-ready, on-premise event analytics platform designed to collect, store, and analyze user behavioral data across web and mobile applications at the raw event level without relying on third-party SaaS vendors."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does Momento differ from Google Analytics or SaaS solutions?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Momento ensures 100% data sovereignty. All raw events stay inside your firewall or internal cloud. It natively maps employee departments, org structures, and CIDR subnets to track internal tool adoption securely with built-in PII masking."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Can Momento be deployed in air-gapped environments?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes! Momento provides a single non-root Docker image and offline tar.gz release bundles that run seamlessly in environments without internet access, backed by a single PostgreSQL database."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Momento support MCP (Model Context Protocol)?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, Momento includes a /mcp endpoint implementing the Streamable HTTP MCP JSON-RPC protocol, allowing AI agents like Claude Desktop or Cursor to query analytics metrics natively."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: HowTo -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": "How to Deploy and Integrate Momento",
+      "description": "Step-by-step guide to deploying Momento on-premise and integrating the JavaScript SDK.",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "name": "Run Docker Container",
+          "text": "Launch Momento with PostgreSQL using docker compose up --build."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Register Site & Key",
+          "text": "Access the admin console to create your first site and generate a Site Tracking Key."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Embed JavaScript SDK",
+          "text": "Include the tracker.js script asynchronously in your web app."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "Track Users and Events",
+          "text": "Invoke analytics.identify() and analytics.track() to capture user behavior and feature usage."
+        }
+      ]
+    }
+    </script>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <header class="navbar">
+        <div class="container nav-container">
+            <a href="index_en.html" class="logo">
+                <span class="logo-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                </span>
+                Momento
+            </a>
+            <ul class="nav-links desktop-only">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#how-it-works">Architecture</a></li>
+                <li><a href="#security">Security</a></li>
+                <li><a href="#api">API & MCP</a></li>
+                <li><a href="#deployment">Deployment</a></li>
+                <li><a href="#faq">FAQ</a></li>
+            </ul>
+            <div class="nav-actions desktop-only">
+                <a href="https://github.com/sponsors/hkjang" target="_blank" rel="noopener" class="btn btn-sponsor">
+                    💖 Sponsor
+                </a>
+                <div class="lang-switcher">
+                    <a href="index.html">KO</a>
+                    <a href="index_en.html" class="active">EN</a>
+                </div>
+                <a href="https://github.com/hkjang/Momento" class="btn btn-secondary" target="_blank" rel="noopener">
+                    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                    GitHub
+                </a>
+            </div>
+            <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Toggle menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Mobile Menu Drawer -->
+    <div class="mobile-menu" id="mobile-menu">
+        <div class="mobile-nav-links">
+            <a href="#features">Features</a>
+            <a href="#how-it-works">Architecture</a>
+            <a href="#security">Security</a>
+            <a href="#api">API & MCP</a>
+            <a href="#deployment">Deployment</a>
+            <a href="#faq">FAQ</a>
+            <a href="https://github.com/sponsors/hkjang" target="_blank" class="btn btn-sponsor" style="justify-content: center;">💖 Sponsor</a>
+            <a href="https://github.com/hkjang/Momento" class="btn btn-primary" target="_blank">View on GitHub</a>
+            <div class="lang-switcher" style="justify-content: center; margin-top: 12px;">
+                <a href="index.html">한국어</a>
+                <a href="index_en.html" class="active">English</a>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero" id="hero">
+            <div class="container">
+                <div class="hero-badge fade-up-element">🔒 100% On-Premise & Air-Gapped Ready</div>
+                <h1 class="hero-headline fade-up-element">
+                    Own Your Raw Event Data<br>
+                    <span class="text-gradient">Without 3rd-Party Leaks</span>
+                </h1>
+                <p class="hero-subtitle fade-up-element">Understand who, in which department, uses which feature at raw-event scale</p>
+                <p class="hero-description fade-up-element">
+                    Momento is a self-hosted, on-premise event analytics engine that collects and stores behavioral data 
+                    from internal web and mobile applications. Enjoy complete data sovereignty, Keycloak OIDC integration, 
+                    and native Analytics MCP for AI agent interaction.
+                </p>
+                <div class="hero-ctas fade-up-element">
+                    <a href="https://github.com/hkjang/Momento" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+                        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="margin-right:6px"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                        Get Started (GitHub)
+                    </a>
+                    <a href="#how-it-works" class="btn btn-secondary btn-lg">
+                        📖 View Architecture
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats Bar -->
+        <section class="stats-bar">
+            <div class="container stats-container">
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">⚡</span>
+                    <span>Single Go Engine</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🐘</span>
+                    <span>PostgreSQL Inbox Queue</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🛡️</span>
+                    <span>Automatic PII Masking</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🤖</span>
+                    <span>Analytics MCP Native</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Core Features -->
+        <section class="section" id="features">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">Core Features</h2>
+                <p class="section-subtitle text-center fade-up-element">Purpose-built for enterprise security, internal tool adoption, and custom analytics</p>
+                <div class="feature-grid">
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">📡</div>
+                        <h3 class="feature-title">Rich JS SDK & Offline Queue</h3>
+                        <p class="feature-desc">Track PageViews, SPA routing, clicks, scrolls, form inputs, downloads, outbound links, errors, heartbeats, with automatic Beacon and offline retry queues.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🔍</div>
+                        <h3 class="feature-title">Raw Event Query Builder</h3>
+                        <p class="feature-desc">Store complete raw events rather than aggregated metrics. Query custom properties, filter by department/org, and analyze 2-10 step Funnels and Path flows.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🌐</div>
+                        <h3 class="feature-title">CIDR Subnet Mapping</h3>
+                        <p class="feature-desc">Map internal C-class and CIDR IP subnets to headquarters, R&D centers, or branch office names to measure physical network usage distribution.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🔐</div>
+                        <h3 class="feature-title">PII Masking & Enterprise Security</h3>
+                        <p class="feature-desc">Automatically redact sensitive PII patterns (emails, SSNs, phone numbers). Supports Keycloak OIDC (PKCE), RBAC, API key rotation, and audit logs.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🤖</div>
+                        <h3 class="feature-title">Analytics MCP Integration</h3>
+                        <p class="feature-desc">Streamable HTTP MCP JSON-RPC endpoint allows AI assistants like Claude Desktop and Cursor to query analytics metrics natively in conversation.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">📦</div>
+                        <h3 class="feature-title">Air-Gapped Deployment</h3>
+                        <p class="feature-desc">Deploy in isolated corporate networks using a single non-root Docker container and offline tar.gz release archives with zero external dependencies.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- How It Works -->
+        <section class="section bg-dark" id="how-it-works">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">Pipeline & Architecture</h2>
+                <p class="section-subtitle text-center fade-up-element" style="color: #94a3af">From durable collectors to asynchronous PostgreSQL inbox storage</p>
+
+                <div class="workflow-visual">
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">1</div>
+                        <h4>Web / App SDK</h4>
+                        <p>Batches and dispatches events via async fetch or Beacon API</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">2</div>
+                        <h4>Durable Collector</h4>
+                        <p>Validates domains/keys, redacts PII, and parses user agent context</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">3</div>
+                        <h4>PostgreSQL Inbox</h4>
+                        <p>Zero-loss async DB table queue capable of handling spike loads</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">4</div>
+                        <h4>Dashboard & MCP</h4>
+                        <p>Real-time overview, funnels, query builders, and AI agent responses</p>
+                    </div>
+                </div>
+
+                <!-- Architecture Diagram -->
+                <div class="architecture-diagram mt-12 fade-up-element" style="margin-top: 48px;">
+                    <div class="window-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="window-title">momento-architecture.md</span>
+                    </div>
+<pre><code>Browser / App Client (JS SDK)
+               │
+      POST /collect/v1/events
+               │
+      Go Durable Collector
+  ┌────────────┼────────────┐
+  │                         │
+PII Filter & Key Check  OIDC Discovery / JWKS
+  │                         │
+  └────────────┬────────────┘
+               ▼
+       PostgreSQL Inbox
+  (events, sites, users, CIDR maps, audit logs)
+               ▲
+               │ REST / MCP (/mcp)
+     React Admin & AI Agents</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- Security & Governance -->
+        <section class="section" id="security">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">Enterprise Security & Governance</h2>
+                <p class="section-subtitle text-center fade-up-element">Comprehensive protection designed for strict compliance standards</p>
+                <div class="security-grid">
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🔑</div>
+                        <h4>Keycloak OIDC SSO</h4>
+                        <p>Standard OIDC login with PKCE (S256). Maps Keycloak groups and roles directly into Momento RBAC permissions.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🔒</div>
+                        <h4>API Key Rotation</h4>
+                        <p>Issue hashed API keys with zero-downtime grace period rotation. Raw keys are shown once upon creation.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🛡️</div>
+                        <h4>PII Redaction Rules</h4>
+                        <p>Automatic detection and masking of sensitive identifiers. Customize blocking rules dynamically via the admin console.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">📝</div>
+                        <h4>Audit Trail Logs</h4>
+                        <p>Structured audit logging for site creation, key generation, PII rule changes, and user permission updates.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Developer Integration -->
+        <section class="section bg-dark" id="api">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">Developer & AI Agent Ready</h2>
+                <p class="section-subtitle text-center fade-up-element" style="color: #94a3af">Automate analytics workflows via REST API and MCP endpoints</p>
+                <div class="integration-layout fade-up-element">
+                    <div class="api-block glass-panel">
+                        <div class="api-title">
+                            <span class="badge badge-blue">JS SDK</span>
+                            SDK Usage Snippet
+                        </div>
+                        <p style="color: var(--text-muted); margin-bottom: 1rem;">Track user identity and custom events with just a few lines of code.</p>
+                        <div class="code-editor">
+                            <div class="code-header">javascript — Tracker SDK</div>
+<pre><code>// Identify user & internal department
+analytics.identify("EMP_2026_091", {
+  department: "Platform Engineering",
+  organization: "R&D Center"
+});
+
+// Track feature usage
+analytics.track("feature_used", {
+  service: "intranet_portal",
+  feature: "document_exporter",
+  button_id: "export_pdf_btn"
+});</code></pre>
+                        </div>
+                    </div>
+                    <div class="api-block glass-panel">
+                        <div class="api-title">
+                            <span class="badge badge-purple">MCP</span>
+                            Analytics MCP JSON-RPC
+                        </div>
+                        <p style="color: var(--text-muted); margin-bottom: 1rem;">Query metrics natively from AI agents like Claude Desktop and Cursor.</p>
+                        <div class="code-editor">
+                            <div class="code-header">json — MCP Tool Request</div>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "momento.get_overview_stats",
+    "arguments": {
+      "site_id": "SITE_CORPORATE_01",
+      "period": "last_7_days"
+    }
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tech Badges -->
+                <div class="tech-stack text-center fade-up-element" style="margin-top: 48px;">
+                    <h3 style="margin-bottom: 12px;">Tech Stack</h3>
+                    <div class="badges">
+                        <span class="tech-badge">🔵 Go (Golang)</span>
+                        <span class="tech-badge">⚛️ React 19</span>
+                        <span class="tech-badge">📘 TypeScript</span>
+                        <span class="tech-badge">🐘 PostgreSQL</span>
+                        <span class="tech-badge">🐳 Docker (Non-Root)</span>
+                        <span class="tech-badge">🔐 Keycloak OIDC</span>
+                        <span class="tech-badge">🤖 Analytics MCP</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deployment Section -->
+        <section class="section" id="deployment">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">Flexible Deployment</h2>
+                <p class="section-subtitle text-center fade-up-element">Choose the deployment model that best fits your environment</p>
+                <div class="deploy-grid">
+                    <div class="deploy-card glass-panel fade-up-element">
+                        <h4>🐳 Docker Compose</h4>
+                        <p>Run PostgreSQL and the Momento single container service together. The fastest way for local evaluation.</p>
+<pre><code>cp .env.example .env
+# Configure admin credentials in .env
+docker compose up --build
+
+# Web Admin: http://localhost:8080</code></pre>
+                    </div>
+                    <div class="deploy-card glass-panel fade-up-element">
+                        <h4>📦 Offline Archive (.tar.gz)</h4>
+                        <p>Docker image bundle for air-gapped corporate networks without internet access.</p>
+<pre><code># Load the release archive
+gzip -dc momento-v0.1.0.tar.gz | docker load
+
+# Run in air-gapped environment
+docker run -d -p 8080:8080 \
+  -e MOMENTO_POSTGRES_DSN='...' \
+  momento:v0.1.0</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section class="section bg-dark" id="faq">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">Frequently Asked Questions</h2>
+                <div class="faq-container" style="margin-top: 40px;">
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            What is Momento designed for?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>Momento is an on-premise event analytics platform designed to capture, own, and analyze raw user interaction events across internal web tools and mobile apps without relying on third-party cloud services.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            Why use Momento instead of SaaS analytics like Google Analytics?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>Internal tool usage contains confidential organizational data, department names, and employee activity details. Momento keeps 100% of data inside your infrastructure and works seamlessly in air-gapped networks.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            What infrastructure is required?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>A single PostgreSQL 14+ database is all you need. Momento does not require Redis or complex external queue clusters for high-performance event ingestion.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            How does Analytics MCP work?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>Momento exposes a /mcp JSON-RPC endpoint. AI tools like Claude Desktop or Cursor can connect directly using an API key to ask questions like "Which department used feature X most this week?"</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="section" id="get-started">
+            <div class="container">
+                <div class="cta-container glass-panel text-center fade-up-element" style="border-radius: var(--radius-xl)">
+                    <h2 class="cta-title">Get Started Today</h2>
+                    <p class="cta-desc" style="margin-bottom: 2rem">Maintain 100% data sovereignty and own your behavioral event analytics</p>
+                    <a href="https://github.com/hkjang/Momento" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+                        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="margin-right:8px"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                        Explore GitHub Repository
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <a href="#" class="logo" style="margin-bottom: 12px;">
+                        <span class="logo-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                        </span>
+                        Momento
+                    </a>
+                    <p class="footer-desc">Self-hosted, on-premise event analytics platform to own and analyze your raw behavioral data.</p>
+                </div>
+                <div>
+                    <h4 class="footer-heading">Quick Links</h4>
+                    <div class="footer-links">
+                        <a href="https://github.com/hkjang/Momento" target="_blank">GitHub Repository</a>
+                        <a href="https://github.com/hkjang/Momento#readme" target="_blank">Documentation</a>
+                        <a href="index.html">Korean Page</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <span>© 2026 Momento. Open Source Apache-2.0 License.</span>
+                <span class="footer-contact">Contact: <a href="mailto:gagagiga@naver.com">gagagiga@naver.com</a></span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript Interactions -->
+    <script>
+    (function() {
+        'use strict';
+
+        // Mobile menu toggle
+        var menuBtn = document.getElementById('mobile-menu-btn');
+        var mobileMenu = document.getElementById('mobile-menu');
+        if (menuBtn && mobileMenu) {
+            menuBtn.addEventListener('click', function() {
+                mobileMenu.classList.toggle('active');
+            });
+            mobileMenu.querySelectorAll('a').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    mobileMenu.classList.remove('active');
+                });
+            });
+        }
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+            anchor.addEventListener('click', function(e) {
+                var targetId = this.getAttribute('href');
+                if (targetId === '#') return;
+                var target = document.querySelector(targetId);
+                if (target) {
+                    e.preventDefault();
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+
+        // Intersection Observer for Animations
+        var animatedElements = document.querySelectorAll('.fade-up-element');
+        if ('IntersectionObserver' in window) {
+            var observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('animate-in');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+            animatedElements.forEach(function(el) { observer.observe(el); });
+        } else {
+            animatedElements.forEach(function(el) { el.classList.add('animate-in'); });
+        }
+
+        // FAQ Accordion
+        document.querySelectorAll('.faq-question').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var answer = this.nextElementSibling;
+                var icon = this.querySelector('.faq-icon');
+                var isOpen = answer.style.maxHeight && answer.style.maxHeight !== '0px';
+
+                document.querySelectorAll('.faq-answer').forEach(function(a) { a.style.maxHeight = '0px'; });
+                document.querySelectorAll('.faq-icon').forEach(function(i) { i.textContent = '+'; });
+                document.querySelectorAll('.faq-question').forEach(function(q) { q.setAttribute('aria-expanded', 'false'); });
+
+                if (!isOpen) {
+                    answer.style.maxHeight = answer.scrollHeight + 'px';
+                    icon.textContent = '−';
+                    this.setAttribute('aria-expanded', 'true');
+                }
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Momento - 온프레미스 이벤트 애널리틱스 플랫폼 | 사내 데이터 주권 보장</title>
+    <meta name="description" content="Momento는 사내 Web/App의 사용 현황을 Raw Event 수준에서 직접 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼입니다. Keycloak OIDC, REST API, MCP 지원.">
+    <meta name="keywords" content="이벤트 애널리틱스, 온프레미스 분석, 사용자 행동 분석, Raw Event, 데이터 주권, Keycloak OIDC, MCP, REST API, Momento">
+    <meta name="author" content="Momento">
+    <meta name="robots" content="index, follow">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Momento - 온프레미스 이벤트 애널리틱스 플랫폼">
+    <meta property="og:description" content="사내 웹·앱 데이터의 100% 소유와 분석. 외부 유출 없는 온프레미스 Raw Event 애널리틱스 솔루션.">
+    <meta property="og:url" content="https://hkjang.github.io/Momento/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Momento">
+    <meta property="og:locale" content="ko_KR">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Momento - 온프레미스 이벤트 애널리틱스 플랫폼">
+    <meta name="twitter:description" content="사내 웹·앱 데이터의 100% 소유와 분석. 외부 유출 없는 온프레미스 Raw Event 애널리틱스 솔루션.">
+
+    <!-- Canonical & Alternate -->
+    <link rel="canonical" href="https://hkjang.github.io/Momento/">
+    <link rel="alternate" hreflang="ko" href="https://hkjang.github.io/Momento/">
+    <link rel="alternate" hreflang="en" href="https://hkjang.github.io/Momento/index_en.html">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Stylesheet -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Momento",
+      "operatingSystem": "Linux, Docker",
+      "applicationCategory": "BusinessApplication",
+      "softwareVersion": "0.1.0",
+      "description": "사내 Web/App 사용 현황을 Raw Event 수준에서 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼",
+      "url": "https://github.com/hkjang/Momento",
+      "downloadUrl": "https://github.com/hkjang/Momento",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "JavaScript SDK (PageView, SPA, Click, Custom Event, Offline Queue)",
+        "Durable Collector & PII Filter",
+        "Raw Event 단위 데이터 소유 및 쿼리 빌더",
+        "2-10 단계 퍼널(Funnel) 및 사용자 경로(Path) 분석",
+        "Keycloak OIDC SSO 및 RBAC 역할 권한",
+        "사내 네트워크 망(CIDR) 이름 맵핑",
+        "REST/OpenAPI 및 Raw CSV/NDJSON 내보내기",
+        "Analytics MCP (Model Context Protocol) 지원",
+        "오프라인 air-gapped Docker 이미지 배포"
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: FAQPage -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Momento는 어떤 서비스인가요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Momento는 사내 Web 및 App 서비스를 이용하는 임직원 및 사용자의 행동 데이터를 외부 3rd party 서비스(GA 등)로 유출하지 않고, Raw Event 수준에서 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼입니다."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "기존 SaaS 분석 도구(Google Analytics 등)와의 차이점은 무엇인가요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Momento는 폐쇄망 및 온프레미스 환경을 완벽히 지원하며, 사내 부서·조직·네트워크 망(CIDR) 정보와 연동하여 어느 부서가 어느 기능을 사용하는지 상세하게 분석할 수 있습니다. 개인정보(PII) 자동 마스킹과 100% 데이터 주권을 보장합니다."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "오프라인(Air-gapped) 환경에서도 배포가 가능한가요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "네. 인터넷 연결이 없는 사내 폐쇄망 환경을 위해 단일 non-root Docker 이미지와 offline .tar.gz 번들을 제공합니다. PostgreSQL DB 하나만 있으면 즉시 실행 가능합니다."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "MCP(Model Context Protocol) 연동이 지원되나요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "네. Momento는 /mcp 엔드포인트를 통해 Streamable HTTP MCP JSON-RPC 표준을 지원하여 Claude Desktop, Cursor 등 AI 에이전트가 직접 애널리틱스 통계 및 지표를 조회할 수 있습니다."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "인증 및 보안 제어는 어떻게 구성되어 있나요?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Keycloak을 비롯한 표준 OIDC SSO(PKCE) 로그인과 RBAC(역할 기반 접근 제어), PII 마스킹 차단 필터, API 키 회전 및 상세 감사 로그(Audit Trail)를 기본 제공합니다."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: HowTo -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": "Momento 설치 및 SDK 연동 방법",
+      "description": "Momento 서버를 온프레미스 환경에 구축하고 사내 서비스에 SDK를 연동하는 4단계 절차",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "name": "Docker 이미지 실행",
+          "text": "docker compose up --build 명령으로 PostgreSQL과 Momento 단일 컨테이너를 구동합니다."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "사이트 및 트래킹 키 생성",
+          "text": "관리자 콘솔에 접속하여 측정 대상 사내 사이트를 등록하고 Site Tracking Key를 발급받습니다."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "JavaScript SDK 삽입",
+          "text": "사내 웹 서비스 상단에 tracker.js 스크립트를 비동기로 추가합니다."
+        },
+        {
+          "@type": "HowToStep",
+          "name": "사용자 및 이벤트 트래킹",
+          "text": "analytics.identify() 및 analytics.track() 호출로 부서 및 사용자 행동 이벤트를 수집합니다."
+        }
+      ]
+    }
+    </script>
+</head>
+<body>
+
+    <!-- Navigation -->
+    <header class="navbar">
+        <div class="container nav-container">
+            <a href="#" class="logo">
+                <span class="logo-icon">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                </span>
+                Momento
+            </a>
+            <ul class="nav-links desktop-only">
+                <li><a href="#features">주요 기능</a></li>
+                <li><a href="#how-it-works">작동 방식</a></li>
+                <li><a href="#security">보안 & 인증</a></li>
+                <li><a href="#api">API & MCP</a></li>
+                <li><a href="#deployment">배포 가이드</a></li>
+                <li><a href="#faq">FAQ</a></li>
+            </ul>
+            <div class="nav-actions desktop-only">
+                <a href="https://github.com/sponsors/hkjang" target="_blank" rel="noopener" class="btn btn-sponsor">
+                    💖 Sponsor
+                </a>
+                <div class="lang-switcher">
+                    <a href="index.html" class="active">KO</a>
+                    <a href="index_en.html">EN</a>
+                </div>
+                <a href="https://github.com/hkjang/Momento" class="btn btn-secondary" target="_blank" rel="noopener">
+                    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                    GitHub
+                </a>
+            </div>
+            <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="메뉴 열기">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Mobile Menu Drawer -->
+    <div class="mobile-menu" id="mobile-menu">
+        <div class="mobile-nav-links">
+            <a href="#features">주요 기능</a>
+            <a href="#how-it-works">작동 방식</a>
+            <a href="#security">보안 & 인증</a>
+            <a href="#api">API & MCP</a>
+            <a href="#deployment">배포 가이드</a>
+            <a href="#faq">FAQ</a>
+            <a href="https://github.com/sponsors/hkjang" target="_blank" class="btn btn-sponsor" style="justify-content: center;">💖 Sponsor</a>
+            <a href="https://github.com/hkjang/Momento" class="btn btn-primary" target="_blank">GitHub 바로가기</a>
+            <div class="lang-switcher" style="justify-content: center; margin-top: 12px;">
+                <a href="index.html" class="active">한국어</a>
+                <a href="index_en.html">English</a>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero" id="hero">
+            <div class="container">
+                <div class="hero-badge fade-up-element">🔒 100% On-Premise & Air-Gapped Ready</div>
+                <h1 class="hero-headline fade-up-element">
+                    사내 데이터 유출 없는,<br>
+                    <span class="text-gradient">Raw Event 분석 플랫폼</span>
+                </h1>
+                <p class="hero-subtitle fade-up-element">누가, 어느 부서에서, 어느 기능을 사용하는지 원천 소유 및 분석</p>
+                <p class="hero-description fade-up-element">
+                    Momento는 외부 SaaS 서비스로의 데이터 전송 없이 사내 Web 및 App 사용 현황을 
+                    원시 이벤트(Raw Event) 수준에서 수집·소유하고 분석하는 자체 호스팅 애널리틱스 엔진입니다. 
+                    조직·망 대역 연동부터 Keycloak OIDC, MCP 지표 조회까지 완벽하게 지원합니다.
+                </p>
+                <div class="hero-ctas fade-up-element">
+                    <a href="https://github.com/hkjang/Momento" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+                        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="margin-right:6px"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                        시작하기 (GitHub)
+                    </a>
+                    <a href="#how-it-works" class="btn btn-secondary btn-lg">
+                        📖 아키텍처 보기
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stats Bar -->
+        <section class="stats-bar">
+            <div class="container stats-container">
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">⚡</span>
+                    <span>단일 Go 수집 솔루션</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🐘</span>
+                    <span>PostgreSQL 기반 Inbox DB</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🛡️</span>
+                    <span>PII 개인정보 마스킹</span>
+                </div>
+                <div class="stat-item fade-up-element">
+                    <span class="stat-icon">🤖</span>
+                    <span>Analytics MCP 지원</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Core Features -->
+        <section class="section" id="features">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">핵심 기능</h2>
+                <p class="section-subtitle text-center fade-up-element">이벤트 수집부터 세밀한 행동 분석까지 기업 환경에 맞춤 설계되었습니다</p>
+                <div class="feature-grid">
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">📡</div>
+                        <h3 class="feature-title">풍부한 JS SDK & 오프라인 큐</h3>
+                        <p class="feature-desc">PageView, SPA 라우팅, 클릭, 스크롤, 폼 입력, 파일 다운로드, 외부 링크 클릭, JS 에러, Heartbeat 및 네트워크 유실 시 Beacon/오프라인 큐 재전송을 보장합니다.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🔍</div>
+                        <h3 class="feature-title">원시 이벤트 & 쿼리 빌더</h3>
+                        <p class="feature-desc">요약 데이터가 아닌 Raw Event를 직접 보존합니다. 커스텀 속성 필터링, 사내 부서/조직별 분류, 2~10단계 퍼널(Funnel) 및 사용자 이동 경로(Path)를 탐색할 수 있습니다.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🌐</div>
+                        <h3 class="feature-title">사내 망 대역(CIDR) 맵핑</h3>
+                        <p class="feature-desc">사내 C클래스 및 CIDR IP 대역을 특정 본사, 연구소, 지사 네트워크 이름으로 맵핑하여 사내 물리적 네트워크별 사용 비율을 시각화합니다.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🔐</div>
+                        <h3 class="feature-title">PII 자동 마스킹 & 보안</h3>
+                        <p class="feature-desc">이메일, 주민번호, 전화번호 등 민감 정보를 자동 차단/마스킹합니다. Keycloak OIDC SSO(PKCE), RBAC, API 키 회전 및 감사 로그를 제공합니다.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">🤖</div>
+                        <h3 class="feature-title">Analytics MCP 연동</h3>
+                        <p class="feature-desc">Streamable HTTP MCP JSON-RPC 표준 엔드포인트를 제공합니다. Claude, Cursor 등의 AI 에이전트가 사내 분석 지표를 직접 대화로 조회할 수 있습니다.</p>
+                    </article>
+                    <article class="feature-card glass-panel fade-up-element">
+                        <div class="feature-icon">📦</div>
+                        <h3 class="feature-title">폐쇄망(Air-Gapped) 지원</h3>
+                        <p class="feature-desc">외부 인터넷 통신이 전면 차단된 폐쇄망 환경을 위한 단일 non-root Docker 이미지와 .tar.gz 오프라인 패키지를 제공합니다.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- How It Works -->
+        <section class="section bg-dark" id="how-it-works">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">파이프라인 & 아키텍처</h2>
+                <p class="section-subtitle text-center fade-up-element" style="color: #94a3af">내구성 높은 수집기에서부터 PostgreSQL Inbox 기반 비동기 적재 구조</p>
+
+                <div class="workflow-visual">
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">1</div>
+                        <h4>Web / App SDK</h4>
+                        <p>사내 앱에서 수집한 이벤트를 비동기 배치 및 Beacon으로 전송</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">2</div>
+                        <h4>Durable Collector</h4>
+                        <p>Domain/Key 검증, PII 자동 필터링 및 디바이스 정보 파싱</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">3</div>
+                        <h4>PostgreSQL Inbox</h4>
+                        <p>트래픽 폭주 시에도 유실 없는 비동기 DB 테이블 적재</p>
+                    </div>
+                    <div class="step-connector desktop-only">→</div>
+                    <div class="step-card fade-up-element">
+                        <div class="step-number">4</div>
+                        <h4>대시보드 & MCP</h4>
+                        <p>Realtime, 퍼널, 쿼리 빌더 및 AI Agent 지표 응답</p>
+                    </div>
+                </div>
+
+                <!-- Architecture Diagram -->
+                <div class="architecture-diagram mt-12 fade-up-element" style="margin-top: 48px;">
+                    <div class="window-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="window-title">momento-architecture.md</span>
+                    </div>
+<pre><code>Browser / App Client (JS SDK)
+               │
+      POST /collect/v1/events
+               │
+      Go Durable Collector
+  ┌────────────┼────────────┐
+  │                         │
+PII Filter & Key Check  OIDC Discovery / JWKS
+  │                         │
+  └────────────┬────────────┘
+               ▼
+       PostgreSQL Inbox
+  (events, sites, users, CIDR maps, audit logs)
+               ▲
+               │ REST / MCP (/mcp)
+     React Admin & AI Agents</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- Security & Integration -->
+        <section class="section" id="security">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">엔터프라이즈 보안 및 권한</h2>
+                <p class="section-subtitle text-center fade-up-element">사내 보안 요구사항을 만족하는 다층 보안 체계</p>
+                <div class="security-grid">
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🔑</div>
+                        <h4>Keycloak OIDC SSO</h4>
+                        <p>PKCE(S256)를 적용한 표준 OIDC 인증. Keycloak 그룹/역할이 Momento 사내 부서 및 RBAC 역할로 즉시 매핑됩니다.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🔒</div>
+                        <h4>API 키 회전 및 폐기</h4>
+                        <p>해시 처리된 API 키를 발급하고 무중단 회전을 위한 유예 기간을 제공합니다. 원문 키는 최초 1회만 표시됩니다.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">🛡️</div>
+                        <h4>개인정보 차단 룰셋</h4>
+                        <p>주민번호, 이메일, 전화번호 패턴을 자동 차단합니다. 관리자 콘솔에서 추가 마스킹 규칙을 동적으로 설정할 수 있습니다.</p>
+                    </div>
+                    <div class="security-card fade-up-element">
+                        <div class="sec-icon">📝</div>
+                        <h4>감사 로그 (Audit Trail)</h4>
+                        <p>사이트 생성, 키 발급, PII 룰 변경, 사용자 권한 조정 등 모든 관리자 작업에 대한 무결성 감사 로그를 기록합니다.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Developer Integration -->
+        <section class="section bg-dark" id="api">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">개발자 & AI 에이전트 연동</h2>
+                <p class="section-subtitle text-center fade-up-element" style="color: #94a3af">REST API와 Analytics MCP로 자동화 분석 워크플로 구축</p>
+                <div class="integration-layout fade-up-element">
+                    <div class="api-block glass-panel">
+                        <div class="api-title">
+                            <span class="badge badge-blue">JS SDK</span>
+                            SDK 코드 예시
+                        </div>
+                        <p style="color: var(--text-muted); margin-bottom: 1rem;">단 몇 줄의 코드로 사내 부서 및 커스텀 이벤트를 수집합니다.</p>
+                        <div class="code-editor">
+                            <div class="code-header">javascript — Tracker SDK</div>
+<pre><code>// 사용자 식별 (부서 및 조직)
+analytics.identify("EMP_2026_091", {
+  department: "Platform Engineering",
+  organization: "R&D Center"
+});
+
+// 기능 사용 이벤트 트래킹
+analytics.track("feature_used", {
+  service: "intranet_portal",
+  feature: "document_exporter",
+  button_id: "export_pdf_btn"
+});</code></pre>
+                        </div>
+                    </div>
+                    <div class="api-block glass-panel">
+                        <div class="api-title">
+                            <span class="badge badge-purple">MCP</span>
+                            Analytics MCP JSON-RPC
+                        </div>
+                        <p style="color: var(--text-muted); margin-bottom: 1rem;">Claude Desktop, Cursor 등 AI 에이전트에서 직접 지표를 조회합니다.</p>
+                        <div class="code-editor">
+                            <div class="code-header">json — MCP Tool Request</div>
+<pre><code>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "momento.get_overview_stats",
+    "arguments": {
+      "site_id": "SITE_CORPORATE_01",
+      "period": "last_7_days"
+    }
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tech Stack Badges -->
+                <div class="tech-stack text-center fade-up-element" style="margin-top: 48px;">
+                    <h3 style="margin-bottom: 12px;">기술 스택</h3>
+                    <div class="badges">
+                        <span class="tech-badge">🔵 Go (Golang)</span>
+                        <span class="tech-badge">⚛️ React 19</span>
+                        <span class="tech-badge">📘 TypeScript</span>
+                        <span class="tech-badge">🐘 PostgreSQL</span>
+                        <span class="tech-badge">🐳 Docker (Non-Root)</span>
+                        <span class="tech-badge">🔐 Keycloak OIDC</span>
+                        <span class="tech-badge">🤖 Analytics MCP</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deployment Section -->
+        <section class="section" id="deployment">
+            <div class="container">
+                <h2 class="section-title text-center fade-up-element">쉽고 유연한 배포 방식</h2>
+                <p class="section-subtitle text-center fade-up-element">환경에 맞는 최적의 온프레미스 배포 방식을 선택하세요</p>
+                <div class="deploy-grid">
+                    <div class="deploy-card glass-panel fade-up-element">
+                        <h4>🐳 Docker Compose</h4>
+                        <p>PostgreSQL과 Momento 단일 컨테이너를 한 번에 구동합니다. 평가 및 사내 검증에 가장 빠른 방식입니다.</p>
+<pre><code>cp .env.example .env
+# .env 관리자 정보 설정
+docker compose up --build
+
+# Web Admin: http://localhost:8080</code></pre>
+                    </div>
+                    <div class="deploy-card glass-panel fade-up-element">
+                        <h4>📦 오프라인 번들 (.tar.gz)</h4>
+                        <p>인터넷 통신이 완전히 차단된 사내 폐쇄망 환경을 위한 오프라인 Docker 이미지 아카이브를 제공합니다.</p>
+<pre><code># 릴리스 아카이브 로드
+gzip -dc momento-v0.1.0.tar.gz | docker load
+
+# 폐쇄망 컨테이너 실행
+docker run -d -p 8080:8080 \
+  -e MOMENTO_POSTGRES_DSN='...' \
+  momento:v0.1.0</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section class="section bg-dark" id="faq">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">자주 묻는 질문 (FAQ)</h2>
+                <div class="faq-container" style="margin-top: 40px;">
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            Momento는 어떤 용도의 플랫폼인가요?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>Momento는 사내 Web 및 App 서비스의 사용자 행동 데이터(어느 부서가 어떤 기능을 얼마나 사용하는지)를 외부 서비스로 유출하지 않고 Raw Event 수준에서 수집·소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼입니다.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            GA(Google Analytics) 등 외부 SaaS 분석 도구 대신 사용하는 이유는 무엇인가요?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>사내 인트라넷, 업무 시스템의 트래픽 데이터에는 임직원의 부서, 조직, 업무 행동 패턴 등 기밀성 정보가 포함됩니다. Momento는 100% 데이터 주권을 유지하며 폐쇄망에서도 안전하게 운영할 수 있습니다.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            필수 인프라 요건은 어떻게 되나요?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>PostgreSQL 14+ 데이터베이스 하나만 있으면 실행 가능합니다. Redis 등 별도의 인메모리 캐시 서버 없이도 고성능 비동기 수집이 가능하도록 설계되었습니다.</p>
+                        </div>
+                    </div>
+                    <div class="faq-item fade-up-element">
+                        <button class="faq-question" aria-expanded="false">
+                            MCP(Model Context Protocol)는 어떻게 활용할 수 있나요?
+                            <span class="faq-icon">+</span>
+                        </button>
+                        <div class="faq-answer">
+                            <p>Momento는 /mcp 엔드포인트를 제공하여 Claude Desktop, Cursor 등의 AI agent가 자연어로 "지난 일주일간 가장 많이 사용된 기능 TOP 5는?"과 같이 직접 지표를 질의하고 답변을 받을 수 있습니다.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="section" id="get-started">
+            <div class="container">
+                <div class="cta-container glass-panel text-center fade-up-element" style="border-radius: var(--radius-xl)">
+                    <h2 class="cta-title">지금 바로 시작하세요</h2>
+                    <p class="cta-desc" style="margin-bottom: 2rem">사내 데이터 주권을 확보하고 세밀한 사용 현황을 직접 소유하세요</p>
+                    <a href="https://github.com/hkjang/Momento" class="btn btn-primary btn-lg" target="_blank" rel="noopener">
+                        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="margin-right:8px"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.46-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+                        GitHub 저장소 방문하기
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <a href="#" class="logo" style="margin-bottom: 12px;">
+                        <span class="logo-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                        </span>
+                        Momento
+                    </a>
+                    <p class="footer-desc">사내 Web/App 사용 현황을 Raw Event 수준에서 직접 소유하고 분석하는 온프레미스 애널리틱스 플랫폼</p>
+                </div>
+                <div>
+                    <h4 class="footer-heading">빠른 링크</h4>
+                    <div class="footer-links">
+                        <a href="https://github.com/hkjang/Momento" target="_blank">GitHub Repository</a>
+                        <a href="https://github.com/hkjang/Momento#readme" target="_blank">Documentation</a>
+                        <a href="index_en.html">English Page</a>
+                    </div>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <span>© 2026 Momento. Open Source Apache-2.0 License.</span>
+                <span class="footer-contact">도입 및 문의: <a href="mailto:gagagiga@naver.com">gagagiga@naver.com</a></span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript Interactions -->
+    <script>
+    (function() {
+        'use strict';
+
+        // Mobile menu toggle
+        var menuBtn = document.getElementById('mobile-menu-btn');
+        var mobileMenu = document.getElementById('mobile-menu');
+        if (menuBtn && mobileMenu) {
+            menuBtn.addEventListener('click', function() {
+                mobileMenu.classList.toggle('active');
+            });
+            mobileMenu.querySelectorAll('a').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    mobileMenu.classList.remove('active');
+                });
+            });
+        }
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(function(anchor) {
+            anchor.addEventListener('click', function(e) {
+                var targetId = this.getAttribute('href');
+                if (targetId === '#') return;
+                var target = document.querySelector(targetId);
+                if (target) {
+                    e.preventDefault();
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+            });
+        });
+
+        // Intersection Observer for Animations
+        var animatedElements = document.querySelectorAll('.fade-up-element');
+        if ('IntersectionObserver' in window) {
+            var observer = new IntersectionObserver(function(entries) {
+                entries.forEach(function(entry) {
+                    if (entry.isIntersecting) {
+                        entry.target.classList.add('animate-in');
+                        observer.unobserve(entry.target);
+                    }
+                });
+            }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+            animatedElements.forEach(function(el) { observer.observe(el); });
+        } else {
+            animatedElements.forEach(function(el) { el.classList.add('animate-in'); });
+        }
+
+        // FAQ Accordion
+        document.querySelectorAll('.faq-question').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var answer = this.nextElementSibling;
+                var icon = this.querySelector('.faq-icon');
+                var isOpen = answer.style.maxHeight && answer.style.maxHeight !== '0px';
+
+                document.querySelectorAll('.faq-answer').forEach(function(a) { a.style.maxHeight = '0px'; });
+                document.querySelectorAll('.faq-icon').forEach(function(i) { i.textContent = '+'; });
+                document.querySelectorAll('.faq-question').forEach(function(q) { q.setAttribute('aria-expanded', 'false'); });
+
+                if (!isOpen) {
+                    answer.style.maxHeight = answer.scrollHeight + 'px';
+                    icon.textContent = '−';
+                    this.setAttribute('aria-expanded', 'true');
+                }
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

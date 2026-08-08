@@ -1,6 +1,15 @@
 # Momento
 
-Momento는 사내 Web / App을 위한 on-premise Event Analytics Platform입니다. 누가 어느 조직·부서·네트워크 망에서 어느 서비스·기능·버튼을 사용하는지를 Raw Event 수준에서 소유하고 분석합니다.
+<p align="center">
+  <strong>사내 Web/App을 위한 온프레미스 이벤트 애널리틱스 플랫폼</strong><br>
+  누가 어느 조직·부서·네트워크 망에서 어느 서비스·기능·버튼을 사용하는지를 Raw Event 수준에서 직접 소유하고 분석합니다.
+</p>
+
+<p align="center">
+  <a href="https://hkjang.github.io/Momento/">🇰🇷 홍보 페이지</a> · <a href="https://hkjang.github.io/Momento/index_en.html">🇺🇸 English Page</a> · <a href="https://github.com/sponsors/hkjang">💖 Sponsor</a>
+</p>
+
+---
 
 ## 현재 제공 범위
 
