@@ -1,0 +1,10 @@
+.env
+bin/
+web/node_modules/
+web/dist/
+sdk/node_modules/
+sdk/dist/
+*.tar.gz
+*.sha256
+*.tsbuildinfo
+.DS_Store

@@ -1,0 +1,28 @@
+# 오프라인망 설치
+
+릴리스 자산에는 실행에 필요한 Momento 서비스 이미지 레이어가 모두 포함됩니다. 대상 서버에 Docker Engine과 접근 가능한 PostgreSQL 15 이상이 있어야 합니다.
+
+1. 인터넷 연결이 가능한 구간에서 GitHub Release의 `momento-image-<version>-linux-amd64.tar.gz`와 `.sha256`을 내려받습니다.
+2. 보안 반입 절차 후 checksum을 확인합니다.
+
+```bash
+sha256sum -c momento-image-<version>-linux-amd64.tar.gz.sha256
+gzip -dc momento-image-<version>-linux-amd64.tar.gz | docker load
+```
+
+3. 실행합니다. 애플리케이션이 받는 환경변수는 아래 세 개뿐입니다.
+
+```bash
+docker run -d --name momento --restart unless-stopped \
+  --read-only --tmpfs /tmp:size=64m,noexec,nosuid \
+  --security-opt no-new-privileges --cap-drop ALL \
+  -p 8080:8080 \
+  -e MOMENTO_POSTGRES_DSN='postgres://user:password@db.internal:5432/momento?sslmode=require' \
+  -e MOMENTO_BOOTSTRAP_ADMIN='admin@example.com' \
+  -e MOMENTO_BOOTSTRAP_ADMIN_PASSWORD='a-long-random-bootstrap-password' \
+  momento:<version>
+```
+
+최초 기동 시 DB migration과 bootstrap super admin 생성이 자동 수행됩니다. 같은 이메일이 이미 있으면 bootstrap 비밀번호로 덮어쓰지 않습니다. 이후 OIDC, 공개 URL, 개인정보, 수집 보안, 보존, 망 대역 등의 설정은 관리자 UI에서 변경합니다.
+
+백업 대상은 PostgreSQL뿐입니다. 업그레이드 전 `pg_dump`로 백업하고 새 이미지로 컨테이너를 교체하십시오. migration은 전진 적용되며 Raw Event는 삭제하지 않습니다.

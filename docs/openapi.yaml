@@ -1,0 +1,125 @@
+openapi: 3.1.0
+info:
+  title: Momento Analytics API
+  version: 0.1.0
+  description: On-premise event collection, reporting, management, and query API.
+servers:
+  - url: /
+paths:
+  /collect/v1/events:
+    post:
+      summary: Accept browser or server events into the durable inbox
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CollectRequest'}
+      responses:
+        '202': {description: Durable acceptance completed}
+        '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+  /api/v1/auth/login:
+    post:
+      summary: Local administrator login
+      security: []
+      responses: {'200': {description: Session cookie issued}, '401': {$ref: '#/components/responses/Error'}}
+  /api/v1/sites:
+    get:
+      summary: List analytics sites
+      responses: {'200': {description: Site list}}
+    post:
+      summary: Create a site and issue its tracking key once
+      responses: {'201': {description: Site created}}
+  /api/v1/sites/{siteId}/overview:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Dashboard metrics and daily trend
+      responses: {'200': {description: Overview}}
+  /api/v1/sites/{siteId}/realtime:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Last 1, 5, and 30 minute activity
+      responses: {'200': {description: Realtime report}}
+  /api/v1/sites/{siteId}/usage:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Internal organization, department, service, feature, button, and network usage
+      responses: {'200': {description: Internal usage report}}
+  /api/v1/query:
+    post:
+      summary: Run an allowlisted dimension and metric query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QueryRequest'}
+      responses: {'200': {description: Query rows}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/funnel:
+    post:
+      summary: Analyze an ordered 2-10 step event funnel
+      responses: {'200': {description: Funnel steps}}
+  /mcp:
+    post:
+      summary: MCP Streamable HTTP JSON-RPC endpoint
+      responses: {'200': {description: JSON-RPC response}}
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Personal mom_key_ API key or browser session token
+  parameters:
+    SiteId:
+      name: siteId
+      in: path
+      required: true
+      schema: {type: string}
+  responses:
+    Error:
+      description: Structured error
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                properties: {code: {type: string}, message: {type: string}}
+  schemas:
+    CollectRequest:
+      type: object
+      required: [site_id, visitor_id, session_id, events]
+      properties:
+        site_id: {type: string}
+        tracking_key: {type: string}
+        visitor_id: {type: string, maxLength: 128}
+        session_id: {type: string, maxLength: 128}
+        user_id: {type: string, maxLength: 128}
+        user_properties: {type: object, additionalProperties: true}
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [name, timestamp]
+            properties:
+              id: {type: string, format: uuid}
+              name: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'}
+              timestamp: {type: integer}
+              properties: {type: object, additionalProperties: true}
+    QueryRequest:
+      type: object
+      required: [site_id, date_range, metrics]
+      properties:
+        site_id: {type: string}
+        date_range:
+          type: object
+          required: [from, to]
+          properties: {from: {type: string, format: date}, to: {type: string, format: date}}
+        dimensions: {type: array, items: {type: string}}
+        metrics: {type: array, items: {type: string}}
+        filters: {type: array, items: {type: object}}
+security:
+  - bearer: []

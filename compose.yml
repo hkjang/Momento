@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: momento
+      POSTGRES_USER: momento
+      POSTGRES_PASSWORD: momento-local-only
+    volumes:
+      - momento-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U momento -d momento"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  momento:
+    build:
+      context: .
+      args:
+        VERSION: dev
+    image: momento:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MOMENTO_POSTGRES_DSN: ${MOMENTO_POSTGRES_DSN:-postgres://momento:momento-local-only@postgres:5432/momento?sslmode=disable}
+      MOMENTO_BOOTSTRAP_ADMIN: ${MOMENTO_BOOTSTRAP_ADMIN:?set MOMENTO_BOOTSTRAP_ADMIN}
+      MOMENTO_BOOTSTRAP_ADMIN_PASSWORD: ${MOMENTO_BOOTSTRAP_ADMIN_PASSWORD:?set MOMENTO_BOOTSTRAP_ADMIN_PASSWORD}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  momento-postgres:

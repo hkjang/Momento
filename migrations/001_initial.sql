@@ -1,0 +1,2 @@
+-- Canonical migration is embedded at internal/database/migrations/001_initial.sql.
+-- This marker keeps the top-level migration directory discoverable for operators.
