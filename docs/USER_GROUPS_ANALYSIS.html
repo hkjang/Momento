@@ -6,32 +6,30 @@
     <title>Momento 타겟 사용자군 분석 보고서 (Target User Groups Analysis)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #4f46e5;
             --primary-dark: #3730a3;
-            --text-dark: #1f2937;
-            --text-muted: #4b5563;
-            --bg-light: #f9fafb;
-            --border-color: #e5e7eb;
+            --text-dark: #0f172a;
+            --text-muted: #475569;
+            --bg-light: #f8fafc;
+            --border-color: #e2e8f0;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.6; padding: 40px 20px; }
-        .doc-card { max-width: 960px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 16px; padding: 48px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-        .header-meta { border-bottom: 2px solid var(--primary); padding-bottom: 24px; margin-bottom: 32px; }
-        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2rem; color: #111827; margin-bottom: 12px; }
-        .meta-list { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.9rem; color: var(--text-muted); }
-        .meta-item { background: #f3f4f6; padding: 4px 12px; border-radius: 6px; }
-        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.35rem; color: var(--primary-dark); margin: 32px 0 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
-        h3 { font-size: 1.1rem; color: #111827; margin: 20px 0 10px; }
-        p { margin-bottom: 16px; font-size: 0.98rem; }
-        ul { margin-bottom: 16px; padding-left: 24px; }
-        li { margin-bottom: 6px; }
-        .persona-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin: 24px 0; }
-        .persona-card { background: #fafafa; border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; }
-        .persona-title { font-weight: 700; color: var(--primary-dark); margin-bottom: 8px; font-size: 1.05rem; }
-        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; float: right; margin-bottom: 20px; }
+        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.65; padding: 48px 24px; }
+        .doc-card { max-width: 1040px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 20px; padding: 56px; box-shadow: 0 12px 30px rgba(0,0,0,0.06); }
+        .header-meta { border-bottom: 3px solid var(--primary); padding-bottom: 28px; margin-bottom: 36px; }
+        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2.2rem; color: #0f172a; margin-bottom: 16px; letter-spacing: -0.02em; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 0.9rem; color: var(--text-muted); }
+        .meta-item { background: #f1f5f9; padding: 8px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.45rem; color: var(--primary-dark); margin: 40px 0 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; }
+        h3 { font-size: 1.15rem; color: #0f172a; margin: 24px 0 12px; }
+        p { margin-bottom: 18px; font-size: 1rem; color: #334155; }
+        .persona-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin: 28px 0; }
+        .persona-card { background: #f8fafc; border: 1px solid var(--border-color); padding: 24px; border-radius: 14px; }
+        .persona-title { font-weight: 700; color: var(--primary-dark); margin-bottom: 10px; font-size: 1.1rem; }
+        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 0.92rem; float: right; }
         .print-btn:hover { background: var(--primary-dark); }
         @media print { .print-btn { display: none; } body { background: #ffffff; padding: 0; } .doc-card { border: none; box-shadow: none; padding: 0; } }
     </style>
@@ -41,15 +39,16 @@
         <a href="javascript:window.print()" class="print-btn">🖨️ PDF / 인쇄하기</a>
         <div class="header-meta">
             <h1>Momento 타겟 사용자군 분석 보고서 (Target User Groups Analysis)</h1>
-            <div class="meta-list">
-                <span class="meta-item"><strong>작성일:</strong> 2026년 8월 8일</span>
-                <span class="meta-item"><strong>대상:</strong> 경영진, 인사/보안 담당자, IT 서비스 기획자, 개발 팀</span>
-                <span class="meta-item"><strong>분류:</strong> 타겟 페르소나 분석서</span>
+            <div class="meta-grid">
+                <div class="meta-item"><strong>문서 버전:</strong> v0.1.0-ENTERPRISE</div>
+                <div class="meta-item"><strong>작성일자:</strong> 2026년 8월 8일</div>
+                <div class="meta-item"><strong>대상:</strong> 경영진, CISO, PO, 개발 팀</div>
+                <div class="meta-item"><strong>분류:</strong> 타겟 페르소나 분석서</div>
             </div>
         </div>
 
-        <h2>1. 개요 및 사용자 분류</h2>
-        <p>Momento는 엔터프라이즈 사내 환경에서 다양한 부서와 직군이 데이터 보안을 준수하면서 맞춤형 이점과 가치를 누릴 수 있도록 설계되었습니다.</p>
+        <h2>1. 개요 및 사용자 분류 체계</h2>
+        <p>Momento 플랫폼은 엔터프라이즈 사내 조직의 5대 주요 직군(CISO/보안팀, C-Level 경영진, 서비스 PO/기획자, 데이터 분석가, 개발 팀)이 요구하는 보안 컴플라이언스 및 분석 가치를 완벽히 만족하도록 설계되었습니다.</p>
 
         <div class="persona-grid">
             <div class="persona-card">
@@ -57,31 +56,35 @@
                 <p>100% 온프레미스 & PII 자동 마스킹으로 외부 전송 유출 위험 원천 차단</p>
             </div>
             <div class="persona-card">
-                <div class="persona-title">📊 서비스 기획자 & PO</div>
-                <p>사내 부서별 기능 이용률, 퍼널 및 사용자 이동 경로(Path) 정밀 분석</p>
+                <div class="persona-title">💼 C-Level 경영진</div>
+                <p>사내 IT 인프라 및 애널리틱스 TCO 75% 절감 및 데이터 주권 확보</p>
             </div>
             <div class="persona-card">
-                <div class="persona-title">💻 개발자 & 데이터 팀</div>
-                <p>비동기 JS SDK 및 Analytics MCP 기반 AI 자동 지표 질의 응답 체계 구축</p>
+                <div class="persona-title">📊 서비스 PO & 기획자</div>
+                <p>사내 부서별/망대역별 기능 이용률, 퍼널 및 이탈 경로 시각화</p>
+            </div>
+            <div class="persona-card">
+                <div class="persona-title">💻 개발자 & SRE 팀</div>
+                <p>비동기 JS SDK, 오프라인 큐 및 Analytics MCP 기반 AI 자동화 지원</p>
             </div>
         </div>
 
-        <h2>2. 사용자 페르소나별 상세 시나리오</h2>
+        <h2>2. 페르소나별 상세 시나리오 분석</h2>
         
         <h3>2.1 CISO & 정보보안 팀 (Information Security)</h3>
-        <p><strong>Pain Point:</strong> 외부 SaaS 이용 시 사내 행동 패턴 및 기밀 데이터 유출 우려</p>
-        <p><strong>Momento Solution:</strong> 에어갭(Air-Gapped) 지원 및 수집기 단위 PII 자동 마스킹, Keycloak OIDC 통합</p>
+        <p><strong>Pain Point:</strong> 기존 GA 등 외부 SaaS 사용 시 사내 임직원의 접속 이력, 부서 정보, 업무 패턴 등 기밀 데이터가 외부 구글/SaaS 서버로 전송되어 보안 컴플라이언스 위반 우려.</p>
+        <p><strong>Momento Solution:</strong> 외부 통신이 차단된 폐쇄망(Air-Gapped) 인프라에 단일 Docker 컨테이너 및 오프라인 번들 형태로 완벽 배치하며, 수집기 레벨에서 이메일, 주민번호, 전화번호 패턴을 정규식으로 자동 마스킹 처리합니다.</p>
 
         <h3>2.2 서비스 기획자 & Product Owner (PO)</h3>
-        <p><strong>Pain Point:</strong> 사내 업무 시스템의 부서별 실질 활용도 및 특정 기능 이탈률 파악의 어려움</p>
-        <p><strong>Momento Solution:</strong> CIDR 수집망 대역 및 부서별 맵핑, 2~10단계 목표 전환 퍼널 시각화</p>
+        <p><strong>Pain Point:</strong> 신규 사내 포털, 전자결재, ERP의 특정 기능이 어떤 부서에서 얼마나 활발히 쓰이는지 가시적인 통계 부족.</p>
+        <p><strong>Momento Solution:</strong> 사내 부서명, 직급, C클래스/CIDR 서브넷 망대역을 자동 매핑하여 부서별/오피스별 기능 활용률을 분석하고 2~10단계 목표 전환 퍼널과 사용자 이동 경로(Path) 시각화로 유저 UX 이탈 지점을 도출합니다.</p>
 
-        <h3>2.3 프론트엔드 / 백엔드 개발자</h3>
-        <p><strong>Pain Point:</strong> 데이터 수집 코드의 복잡성 및 네트워크 불안정 시 이벤트 손실</p>
-        <p><strong>Momento Solution:</strong> Beacon 및 오프라인 큐 재전송 지원, Streamable HTTP Analytics MCP 탑재</p>
+        <h3>2.3 프론트엔드 / 백엔드 개발자 & SRE</h3>
+        <p><strong>Pain Point:</strong> 이벤트 수집 로직 구현 부담 및 네트워크 유실 시 행동 데이터 분실.</p>
+        <p><strong>Momento Solution:</strong> 단 한 줄의 스크립트 비동기 태그 삽입으로 PageView, Click, Error 자동 트래킹을 제공하며, Beacon API 및 IndexedDB 오프라인 큐로 네트워크 복구 시 자동 재전송을 지원합니다.</p>
 
         <h2>3. 결론</h2>
-        <p>Momento 솔루션은 보안팀의 컴플라이언스 만족부터 개발자 및 기획자의 분석 생산성 향상까지 조직 전체의 데이터 기반 의사결정을 실현합니다.</p>
+        <p>Momento 솔루션은 보안팀의 엄격한 규정 준수 요구사항부터 개발자, 기획자, 데이터 분석가의 생산성 극대화까지 사내 모든 구성원이 100% 안심하고 활용할 수 있는 차세대 데이터 인프라입니다.</p>
     </div>
 </body>
 </html>

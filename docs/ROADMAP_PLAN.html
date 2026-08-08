@@ -3,34 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Momento 중장기 로드맵 및 발전 계획 (Roadmap Plan)</title>
+    <title>Momento 엔터프라이즈 중장기 로드맵 (Roadmap Plan)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #4f46e5;
             --primary-dark: #3730a3;
-            --text-dark: #1f2937;
-            --text-muted: #4b5563;
-            --bg-light: #f9fafb;
-            --border-color: #e5e7eb;
+            --text-dark: #0f172a;
+            --text-muted: #475569;
+            --bg-light: #f8fafc;
+            --border-color: #e2e8f0;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.6; padding: 40px 20px; }
-        .doc-card { max-width: 960px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 16px; padding: 48px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-        .header-meta { border-bottom: 2px solid var(--primary); padding-bottom: 24px; margin-bottom: 32px; }
-        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2rem; color: #111827; margin-bottom: 12px; }
-        .meta-list { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.9rem; color: var(--text-muted); }
-        .meta-item { background: #f3f4f6; padding: 4px 12px; border-radius: 6px; }
-        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.35rem; color: var(--primary-dark); margin: 32px 0 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
-        h3 { font-size: 1.1rem; color: #111827; margin: 20px 0 10px; }
-        p { margin-bottom: 16px; font-size: 0.98rem; }
-        ul { margin-bottom: 16px; padding-left: 24px; }
-        li { margin-bottom: 6px; }
-        .phase-box { background: rgba(79, 70, 229, 0.04); border: 1px solid rgba(79, 70, 229, 0.2); padding: 20px; border-radius: 12px; margin-bottom: 20px; }
-        .phase-title { font-weight: 700; font-size: 1.1rem; color: var(--primary-dark); margin-bottom: 8px; }
-        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; float: right; margin-bottom: 20px; }
+        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.65; padding: 48px 24px; }
+        .doc-card { max-width: 1040px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 20px; padding: 56px; box-shadow: 0 12px 30px rgba(0,0,0,0.06); }
+        .header-meta { border-bottom: 3px solid var(--primary); padding-bottom: 28px; margin-bottom: 36px; }
+        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2.2rem; color: #0f172a; margin-bottom: 16px; letter-spacing: -0.02em; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 0.9rem; color: var(--text-muted); }
+        .meta-item { background: #f1f5f9; padding: 8px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.45rem; color: var(--primary-dark); margin: 40px 0 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; }
+        p { margin-bottom: 18px; font-size: 1rem; color: #334155; }
+        ul { margin-bottom: 20px; padding-left: 24px; }
+        li { margin-bottom: 8px; }
+        .phase-box { background: rgba(79, 70, 229, 0.04); border: 1px solid rgba(79, 70, 229, 0.2); padding: 24px; border-radius: 14px; margin-bottom: 24px; }
+        .phase-title { font-weight: 700; font-size: 1.15rem; color: var(--primary-dark); margin-bottom: 12px; }
+        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 0.92rem; float: right; }
         .print-btn:hover { background: var(--primary-dark); }
         @media print { .print-btn { display: none; } body { background: #ffffff; padding: 0; } .doc-card { border: none; box-shadow: none; padding: 0; } }
     </style>
@@ -39,51 +38,50 @@
     <div class="doc-card">
         <a href="javascript:window.print()" class="print-btn">🖨️ PDF / 인쇄하기</a>
         <div class="header-meta">
-            <h1>Momento 중장기 로드맵 및 발전 계획 (Roadmap Plan)</h1>
-            <div class="meta-list">
-                <span class="meta-item"><strong>작성일:</strong> 2026년 8월 8일</span>
-                <span class="meta-item"><strong>버전:</strong> v0.1.0 ~ v2.0 Vision</span>
-                <span class="meta-item"><strong>분류:</strong> 로드맵 및 기술 비전 문서</span>
+            <h1>Momento 엔터프라이즈 중장기 로드맵 (Roadmap Plan)</h1>
+            <div class="meta-grid">
+                <div class="meta-item"><strong>문서 버전:</strong> v0.1.0 ~ v2.0-VISION</div>
+                <div class="meta-item"><strong>작성일자:</strong> 2026년 8월 8일</div>
+                <div class="meta-item"><strong>대상:</strong> 경영진, CTO, 시스템 관리자</div>
+                <div class="meta-item"><strong>분류:</strong> 공식 기술 비전 문서</div>
             </div>
         </div>
 
-        <h2>1. 단계별 로드맵 개요</h2>
-        <p>Momento는 온프레미스 원시 이벤트 수집을 시작으로, 사내 AI 데이터 에이전트와 완벽히 연동되는 차세대 데이터 로드맵을 추진합니다.</p>
+        <h2>1. 비전 및 발전 마일스톤 개요</h2>
+        <p>Momento 플랫폼은 사내 데이터 주권을 보장하는 온프레미스 원시 이벤트 수집을 시작으로, 사내 AI 데이터 에이전트와 자율 협업하는 차세대 Enterprise Data Platform으로 진화합니다.</p>
 
         <div class="phase-box">
-            <div class="phase-title">Phase 1: v0.1.0 온프레미스 기반 구축 (완료)</div>
+            <div class="phase-title">Phase 1: v0.1.0 온프레미스 기반 수집 구축 (완료)</div>
             <ul>
-                <li>Durable Collector 개발 (PostgreSQL Inbox 기반 비동기 적재 엔진)</li>
-                <li>Rich JavaScript SDK (PageView, SPA, Custom Events, Offline Queue)</li>
-                <li>Keycloak OIDC (PKCE) 인증 및 PII 마스킹 필터 엔진</li>
-                <li>Analytics MCP (Model Context Protocol) 기본 지원</li>
-                <li>Single Non-root Docker Image 및 에어갭 .tar.gz 배포 번들</li>
+                <li><strong>Durable Ingestion Engine:</strong> PostgreSQL Inbox 패턴 기반 유실 없는 비동기 이벤트 수집기 구현</li>
+                <li><strong>Rich JS Tracker SDK:</strong> PageView, SPA Routing, Click, Form, Scroll, Error, Heartbeat, Offline Queue</li>
+                <li><strong>보안 & SSO:</strong> Keycloak OIDC PKCE 인증, RBAC 권한 매핑, PII 수집기 레벨 자동 정규식 마스킹</li>
+                <li><strong>패키징:</strong> 단일 non-root Docker 이미지 및 air-gapped 폐쇄망 .tar.gz 오프라인 번들</li>
             </ul>
         </div>
 
         <div class="phase-box">
-            <div class="phase-title">Phase 2: v0.5.0 고도화 & 분석 분석 엔진 강화 (진행 중)</div>
+            <div class="phase-title">Phase 2: v0.5.0 고도화 & 분석 시각화 엔진 (2026 Q3)</div>
             <ul>
-                <li>2~10단계 유연한 퍼널(Funnel) 및 Sankey 기반 경로 분석(Path Analysis) 시각화</li>
-                <li>사내 C클래스/CIDR 서브넷 매핑 자동화 인터페이스</li>
-                <li>쿼리 빌더 성능 개선 및 Raw CSV / NDJSON 대용량 스트리밍 내보내기</li>
+                <li><strong>고급 시각화:</strong> 2~10단계 유연한 퍼널(Funnel) 및 Sankey 기반 경로 분석(Path Analysis) 시각화</li>
+                <li><strong>망대역 관리:</strong> CIDR / C-Class 서브넷 IP의 사내 오피스 이름 맵핑 자동화 인터페이스</li>
+                <li><strong>Analytics MCP 1.0:</strong> Claude, Cursor 연동을 위한 Streamable HTTP MCP JSON-RPC 표준 엔드포인트</li>
             </ul>
         </div>
 
         <div class="phase-box">
-            <div class="phase-title">Phase 3: v1.0.0 엔터프라이즈 확산 및 AI 이상 징후 감지 (2026 Q4)</div>
+            <div class="phase-title">Phase 3: v1.0.0 대용량 확산 & AI 이상 징후 감지 (2026 Q4)</div>
             <ul>
-                <li>PostgreSQL 파티셔닝 기반 사내 억 단위 대용량 이벤트 보존 수집 엔진</li>
-                <li>사내 서비스 장애 및 이탈률 급증 자동 알림 (Slack/Teams/Webhook)</li>
-                <li>AI 에이전트 전용 자연어 SQL 쿼리 생성 지원 (MCP 2.0 연동)</li>
+                <li><strong>대용량 파티셔닝:</strong> PostgreSQL Table Partitioning 기반 월간 억 단위 데이터 고성능 보존 및 인덱싱</li>
+                <li><strong>실시간 이상 감지:</strong> 특정 사내 서비스 장애 또는 기능 이탈률 급증 시 Slack/Teams/Webhook 자동 알림</li>
+                <li><strong>Analytics MCP 2.0 (NL-to-SQL):</strong> AI 에이전트가 자연어 질의 시 SQL 자동 변환 처리</li>
             </ul>
         </div>
 
         <h2>2. 리소스 및 품질 관리 전략</h2>
         <ul>
             <li><strong>100% 테스트 자동화:</strong> Go 백엔드 유닛 테스트 및 SDK 타입 검사 자동화</li>
-            <li><strong>무중단 마이그레이션:</strong> PostgreSQL Migration 자동 스키마 적용 및 백워드 호환 보장</li>
-            <li><strong>보안 감사 및 PII 컴플라이언스:</strong> 분기별 PII 필터링 룰셋 및 OIDC 감사 수행</li>
+            <li><strong>무중단 마이그레이션:</strong> PostgreSQL Migration 자동 스키마 적용 및 백워드 호환성 보장</li>
         </ul>
     </div>
 </body>

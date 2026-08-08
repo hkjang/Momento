@@ -3,36 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Momento 사용자 가이드 (User Guide)</title>
+    <title>Momento 엔터프라이즈 사용자 가이드 (User Guide)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
         :root {
             --primary: #4f46e5;
             --primary-dark: #3730a3;
-            --text-dark: #1f2937;
-            --text-muted: #4b5563;
-            --bg-light: #f9fafb;
-            --border-color: #e5e7eb;
+            --text-dark: #0f172a;
+            --text-muted: #475569;
+            --bg-light: #f8fafc;
+            --border-color: #e2e8f0;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.6; padding: 40px 20px; }
-        .doc-card { max-width: 960px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 16px; padding: 48px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
-        .header-meta { border-bottom: 2px solid var(--primary); padding-bottom: 24px; margin-bottom: 32px; }
-        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2rem; color: #111827; margin-bottom: 12px; }
-        .meta-list { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.9rem; color: var(--text-muted); }
-        .meta-item { background: #f3f4f6; padding: 4px 12px; border-radius: 6px; }
-        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.35rem; color: var(--primary-dark); margin: 32px 0 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
-        h3 { font-size: 1.1rem; color: #111827; margin: 20px 0 10px; }
-        p { margin-bottom: 16px; font-size: 0.98rem; }
-        ul, ol { margin-bottom: 16px; padding-left: 24px; }
-        li { margin-bottom: 6px; }
-        pre { background: #0f172a; color: #f8fafc; padding: 20px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; overflow-x: auto; margin: 16px 0; }
-        code { font-family: 'JetBrains Mono', monospace; background: #f1f5f9; color: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 0.88rem; }
+        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.65; padding: 48px 24px; }
+        .doc-card { max-width: 1040px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 20px; padding: 56px; box-shadow: 0 12px 30px rgba(0,0,0,0.06); }
+        .header-meta { border-bottom: 3px solid var(--primary); padding-bottom: 28px; margin-bottom: 36px; }
+        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2.2rem; color: #0f172a; margin-bottom: 16px; letter-spacing: -0.02em; }
+        .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; font-size: 0.9rem; color: var(--text-muted); }
+        .meta-item { background: #f1f5f9; padding: 8px 14px; border-radius: 8px; border: 1px solid #e2e8f0; }
+        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.45rem; color: var(--primary-dark); margin: 40px 0 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px; }
+        h3 { font-size: 1.15rem; color: #0f172a; margin: 24px 0 12px; }
+        p { margin-bottom: 18px; font-size: 1rem; color: #334155; }
+        ul, ol { margin-bottom: 20px; padding-left: 24px; }
+        li { margin-bottom: 8px; }
+        table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.92rem; }
+        th, td { border: 1px solid var(--border-color); padding: 12px 16px; text-align: left; }
+        th { background: #f8fafc; font-weight: 700; color: #0f172a; }
+        pre { background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; overflow-x: auto; margin: 20px 0; }
+        code { font-family: 'JetBrains Mono', monospace; background: #e2e8f0; color: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 0.88rem; }
         pre code { background: none; color: inherit; padding: 0; }
-        .highlight-box { background: rgba(79, 70, 229, 0.05); border-left: 4px solid var(--primary); padding: 16px; border-radius: 0 8px 8px 0; margin: 20px 0; }
-        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; float: right; margin-bottom: 20px; }
+        .warn-box { background: #fff1f2; border-left: 4px solid #e11d48; padding: 18px; border-radius: 0 8px 8px 0; margin: 24px 0; color: #9f1239; font-size: 0.95rem; }
+        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 12px 24px; border-radius: 10px; text-decoration: none; font-weight: 700; font-size: 0.92rem; float: right; }
         .print-btn:hover { background: var(--primary-dark); }
         @media print { .print-btn { display: none; } body { background: #ffffff; padding: 0; } .doc-card { border: none; box-shadow: none; padding: 0; } }
     </style>
@@ -41,52 +44,95 @@
     <div class="doc-card">
         <a href="javascript:window.print()" class="print-btn">🖨️ PDF / 인쇄하기</a>
         <div class="header-meta">
-            <h1>Momento 사용자 가이드 (User Guide)</h1>
-            <div class="meta-list">
-                <span class="meta-item"><strong>버전:</strong> v0.1.0</span>
-                <span class="meta-item"><strong>대상:</strong> 개발자, 데이터 분석가, 서비스 기획자</span>
-                <span class="meta-item"><strong>분류:</strong> 사용자 매뉴얼</span>
+            <h1>Momento 엔터프라이즈 사용자 가이드 (User Guide)</h1>
+            <div class="meta-grid">
+                <div class="meta-item"><strong>문서 버전:</strong> v0.1.0-ENTERPRISE</div>
+                <div class="meta-item"><strong>작성일자:</strong> 2026년 8월 8일</div>
+                <div class="meta-item"><strong>대상:</strong> 개발자, 데이터 분석가, PO</div>
+                <div class="meta-item"><strong>분류:</strong> 공식 사용자 & 개발자 매뉴얼</div>
             </div>
         </div>
 
-        <h2>1. 플랫폼 개요</h2>
-        <p>Momento는 사내 웹 및 애플리케이션의 사용자 행동 데이터를 수집하고 분석하는 <strong>온프레미스 이벤트 애널리틱스 플랫폼</strong>입니다. 사내 데이터가 외부 SaaS로 전송되지 않으며, 사내 부서/조직/CIDR 망 기반으로 원시 이벤트(Raw Event) 수준에서 조회할 수 있습니다.</p>
+        <h2>1. 플랫폼 아키텍처 개요</h2>
+        <p>Momento는 사내 애플리케이션 및 인트라넷 환경에서 발생하는 모든 행동 이벤트를 외부 SaaS로 전송하지 않고 사내 DB에 원시 이벤트(Raw Event) 수준으로 직접 저장·분석하는 온프레미스 플랫폼입니다.</p>
 
-        <h2>2. JavaScript SDK 연동 가이드</h2>
+        <h2>2. JavaScript SDK 연동 및 설정 가이드</h2>
         
-        <h3>2.1 스크립트 태그 삽입</h3>
-        <p>웹 서비스 상단 <code>&lt;head&gt;</code> 영역에 비동기 스크립트를 추가합니다.</p>
-        <pre><code>&lt;script async src="https://momento.example.com/tracker.js" data-site-id="SITE_CORPORATE_001"&gt;&lt;/script&gt;</code></pre>
+        <h3>2.1 스크립트 비동기 설치</h3>
+        <pre><code>&lt;script 
+  async 
+  src="https://momento.internal/tracker.js" 
+  data-site-id="SITE_CORPORATE_001"
+  data-endpoint="https://momento.internal/collect/v1/events"
+  data-auto-track="pageview,click,error,download"
+&gt;&lt;/script&gt;</code></pre>
 
-        <h3>2.2 사용자 식별 (identify)</h3>
-        <p>로그인한 사용자의 사내 부서 및 조직 정보를 식별할 때 호출합니다.</p>
-        <pre><code>analytics.identify("EMP_2026_1042", {
+        <table>
+            <thead>
+                <tr>
+                    <th>속성 (Attribute)</th>
+                    <th>타입</th>
+                    <th>필수 여부</th>
+                    <th>설명</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>data-site-id</code></td>
+                    <td>String</td>
+                    <td><strong>필수</strong></td>
+                    <td>관리자 콘솔에서 생성한 사이트 고유 식별 키</td>
+                </tr>
+                <tr>
+                    <td><code>data-endpoint</code></td>
+                    <td>String</td>
+                    <td>선택</td>
+                    <td>수집기 URL (기본값: <code>/collect/v1/events</code>)</td>
+                </tr>
+                <tr>
+                    <td><code>data-auto-track</code></td>
+                    <td>String</td>
+                    <td>선택</td>
+                    <td>자동 트래킹 요소 (<code>pageview,click,error,download</code>)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>2.2 사용자 및 부서 식별 (analytics.identify)</h3>
+        <pre><code>analytics.identify("EMP_2026_9012", {
   department: "Digital Platform Team",
   organization: "R&D Center",
-  position: "Senior Engineer"
+  role: "Senior Architect",
+  location: "HQ_Seoul"
 });</code></pre>
 
-        <div class="highlight-box">
-            <strong>보안 주의사항:</strong> 주민등록번호, 이메일, 전화번호 등 개인 식별 정보(PII)는 user_id 또는 속성값으로 절대 전달하지 마십시오.
+        <div class="warn-box">
+            <strong>⚠️ 보안 정책 (PII Security Policy):</strong><br>
+            이메일 주소, 전화번호, 주민등록번호, 카드번호 등 개인식별정보(PII)는 user_id 또는 속성으로 전달하지 마십시오. 수집기 단에서 자동 마스킹 처리됩니다.
         </div>
 
-        <h3>2.3 커스텀 이벤트 트래킹 (track)</h3>
-        <pre><code>analytics.track("document_exported", {
-  format: "PDF",
-  document_type: "Monthly_Report",
-  button_id: "export_btn_top"
+        <h3>2.3 커스텀 이벤트 트래킹 (analytics.track)</h3>
+        <pre><code>analytics.track("document_submitted", {
+  document_id: "DOC_2026_0808",
+  category: "Approval",
+  amount: 1500000,
+  approval_step: "Final"
 });</code></pre>
 
-        <h2>3. 주요 분석 기능 활용</h2>
+        <h2>3. 고급 분석 기능 사용법</h2>
         <ul>
-            <li><strong>실시간 (Realtime) & 개요:</strong> 현재 접속 중인 활성 사용자 및 이벤트 동향 실시간 모니터링</li>
-            <li><strong>쿼리 빌더 (Query Builder):</strong> 커스텀 속성, 부서 필터, 날짜 범위를 조합한 즉각적 맞춤 탐색</li>
-            <li><strong>퍼널 분석 (Funnel Analysis):</strong> 2~10단계 목표 전환 퍼널 및 단계별 이탈 분석</li>
-            <li><strong>경로 분석 (Path Analysis):</strong> 사용자의 화면 진입부터 최종 목표 달성까지의 이동 노드 시각화</li>
+            <li><strong>쿼리 빌더 (Query Builder):</strong> 커스텀 이벤트 속성, 부서 필터, 날짜 범위를 조합하여 원하는 맞춤 데이터를 즉시 필터링 및 시계열 집계할 수 있습니다.</li>
+            <li><strong>2~10단계 퍼널 분석 (Funnel Analysis):</strong> 주요 서비스 진입 후 최종 목표 달성까지의 단계별 전환율 및 이탈율(Drop-off)을 분석합니다.</li>
+            <li><strong>사용자 경로 분석 (Path Analysis):</strong> 사용자의 화면 진입부터 최종 목표 달성까지의 이동 노드를 Sankey 그래프로 시각화합니다.</li>
         </ul>
 
-        <h2>4. 데이터 내보내기 (Export)</h2>
-        <p>분석 결과를 Raw CSV 및 NDJSON 형식으로 원클릭 다운로드하여 사내 BI 도구(Tableau, PowerBI)와 연동할 수 있습니다.</p>
+        <h2>4. BI 연동 & 데이터 내보내기 (Export)</h2>
+        <pre><code>import pandas as pd
+
+# Momento Export NDJSON 읽기
+df = pd.read_json('momento_events_20260808.ndjson', lines=True)
+dept_stats = df.groupby('department')['event_name'].value_counts()
+print(dept_stats)</code></pre>
     </div>
 </body>
 </html>
