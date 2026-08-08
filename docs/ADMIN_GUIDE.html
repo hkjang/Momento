@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Momento 관리자 가이드 (Admin Guide)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-dark: #3730a3;
+            --text-dark: #1f2937;
+            --text-muted: #4b5563;
+            --bg-light: #f9fafb;
+            --border-color: #e5e7eb;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', -apple-system, sans-serif; color: var(--text-dark); background: var(--bg-light); line-height: 1.6; padding: 40px 20px; }
+        .doc-card { max-width: 960px; margin: 0 auto; background: #ffffff; border: 1px solid var(--border-color); border-radius: 16px; padding: 48px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+        .header-meta { border-bottom: 2px solid var(--primary); padding-bottom: 24px; margin-bottom: 32px; }
+        .header-meta h1 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 2rem; color: #111827; margin-bottom: 12px; }
+        .meta-list { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.9rem; color: var(--text-muted); }
+        .meta-item { background: #f3f4f6; padding: 4px 12px; border-radius: 6px; }
+        h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 1.35rem; color: var(--primary-dark); margin: 32px 0 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+        h3 { font-size: 1.1rem; color: #111827; margin: 20px 0 10px; }
+        p { margin-bottom: 16px; font-size: 0.98rem; }
+        ul, ol { margin-bottom: 16px; padding-left: 24px; }
+        li { margin-bottom: 6px; }
+        pre { background: #0f172a; color: #f8fafc; padding: 20px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.88rem; overflow-x: auto; margin: 16px 0; }
+        code { font-family: 'JetBrains Mono', monospace; background: #f1f5f9; color: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 0.88rem; }
+        pre code { background: none; color: inherit; padding: 0; }
+        .highlight-box { background: rgba(79, 70, 229, 0.05); border-left: 4px solid var(--primary); padding: 16px; border-radius: 0 8px 8px 0; margin: 20px 0; }
+        .print-btn { display: inline-block; background: var(--primary); color: #ffffff; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem; float: right; margin-bottom: 20px; }
+        .print-btn:hover { background: var(--primary-dark); }
+        @media print { .print-btn { display: none; } body { background: #ffffff; padding: 0; } .doc-card { border: none; box-shadow: none; padding: 0; } }
+    </style>
+</head>
+<body>
+    <div class="doc-card">
+        <a href="javascript:window.print()" class="print-btn">🖨️ PDF / 인쇄하기</a>
+        <div class="header-meta">
+            <h1>Momento 관리자 가이드 (Admin Guide)</h1>
+            <div class="meta-list">
+                <span class="meta-item"><strong>버전:</strong> v0.1.0</span>
+                <span class="meta-item"><strong>대상:</strong> 시스템 관리자, Security/DevOps 엔지니어</span>
+                <span class="meta-item"><strong>분류:</strong> 시스템 관리 매뉴얼</span>
+            </div>
+        </div>
+
+        <h2>1. 초기 환경 설정 & 부트스트랩</h2>
+        <p>Momento 프로세스는 오직 다음 <strong>3개의 표준 환경변수</strong>만 요구합니다.</p>
+        <pre><code>MOMENTO_POSTGRES_DSN=postgres://momento:password@localhost:5432/momento?sslmode=disable
+MOMENTO_BOOTSTRAP_ADMIN=admin@corporate.internal
+MOMENTO_BOOTSTRAP_ADMIN_PASSWORD=SuperSecretPassword123!</code></pre>
+        <div class="highlight-box">
+            <strong>설정 원칙:</strong> 그 밖의 모든 공개 URL, Keycloak 클라이언트 정보, 개인정보 차단 규칙, CIDR 대역은 DB에 보관되는 동적 관리자 설정입니다.
+        </div>
+
+        <h2>2. Keycloak OIDC SSO 및 RBAC 연동</h2>
+        <p>PKCE(S256)를 적용한 표준 Keycloak OIDC 연동 및 사용자 역할(RBAC) 매핑 가이드:</p>
+        <ul>
+            <li><code>Momento_Admin</code>: 전체 사이트 설정, PII 필터, API 키 및 감사 로그 접근 권한</li>
+            <li><code>Momento_Analyst</code>: 쿼리 빌더, 퍼널 및 경로 분석 조회 권한</li>
+            <li><code>Momento_Viewer</code>: 개요 및 실시간 대시보드 전용 조회 권한</li>
+        </ul>
+
+        <h2>3. 개인정보(PII) 자동 차단 & 보안 관리</h2>
+        <p>수집기(Collector)에 유입되는 이벤트의 속성 및 user_id에서 이메일, 주민번호, 전화번호 패턴을 자동 마스킹 및 차단합니다.</p>
+
+        <h2>4. CIDR 수집망 대역 이름 맵핑</h2>
+        <p>사내 C클래스 및 CIDR IP 대역을 특정 오피스, R&D 센터, VPN 망 이름으로 맵핑하여 사내 네트워크별 사용 현황을 분석할 수 있습니다.</p>
+
+        <h2>5. 감사 로그 (Audit Trail) 운영</h2>
+        <p>사이트 생성, PII 규칙 변경, API 키 생성 및 사용자 권한 변경 등 모든 관리자 행위는 수정 불가능한 감사 로그(Audit Logs)로 영구 기록됩니다.</p>
+    </div>
+</body>
+</html>

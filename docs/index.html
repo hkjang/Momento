@@ -164,6 +164,7 @@
                 <li><a href="#how-it-works">작동 방식</a></li>
                 <li><a href="#security">보안 & 인증</a></li>
                 <li><a href="#api">API & MCP</a></li>
+                <li><a href="#docs">문서 센터</a></li>
                 <li><a href="#deployment">배포 가이드</a></li>
                 <li><a href="#faq">FAQ</a></li>
             </ul>
@@ -476,6 +477,66 @@ gzip -dc momento-v0.1.0.tar.gz | docker load
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
   momento:v0.1.0</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Documentation & Report Center -->
+        <section class="section bg-dark" id="docs">
+            <div class="container text-white">
+                <h2 class="section-title text-center fade-up-element">공식 문서 & 보고서 센터</h2>
+                <p class="section-subtitle text-center fade-up-element" style="color: #94a3af">사내 역량 강화를 위한 역할별 매뉴얼, 경영진 보고서, 로드맵 및 분석 자료 세트</p>
+                
+                <div class="feature-grid">
+                    <div class="glass-panel fade-up-element">
+                        <h3>📊 경영진 종합 보고서</h3>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Momento 구축 성과, 벤더 비교표, 인프라 TCO 75% 절감 및 보안 효과 보고서</p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="EXECUTIVE_REPORT.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
+                            <a href="EXECUTIVE_REPORT.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
+                            <a href="EXECUTIVE_REPORT.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel fade-up-element">
+                        <h3>📘 사용자 가이드 (User Guide)</h3>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">JavaScript SDK 연동, identify/track 호출, 쿼리 빌더, 퍼널 및 경로 분석 매뉴얼</p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
+                            <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
+                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel fade-up-element">
+                        <h3>🔧 관리자 가이드 (Admin Guide)</h3>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC 역할 매핑, PII 자동 마스킹, CIDR 망 설정 및 감사 로그</p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
+                            <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
+                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel fade-up-element">
+                        <h3>🚀 중장기 로드맵 (Roadmap)</h3>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Phase 1 온프레미스 기반 구축부터 Phase 3 Analytics MCP 2.0 AI 연동 비전 플랜</p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="ROADMAP_PLAN.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
+                            <a href="ROADMAP_PLAN.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
+                            <a href="ROADMAP_PLAN.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel fade-up-element">
+                        <h3>👥 타겟 사용자군 분석</h3>
+                        <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">CISO 보안팀, PO 기획자, 개발자, 경영진 등 사내 직군별 페르소나 및 솔루션 시나리오</p>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <a href="USER_GROUPS_ANALYSIS.pdf" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📄 PDF 다운로드</a>
+                            <a href="USER_GROUPS_ANALYSIS.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 HTML 뷰어</a>
+                            <a href="USER_GROUPS_ANALYSIS.md" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📝 Markdown</a>
+                        </div>
                     </div>
                 </div>
             </div>
