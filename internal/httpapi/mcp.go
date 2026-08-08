@@ -65,12 +65,10 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 	}
 	var from, to time.Time
 	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" {
-		var err1, err2 error
-		from, err1 = time.Parse("2006-01-02", stringArg(call.Arguments, "from"))
-		to, err2 = time.Parse("2006-01-02", stringArg(call.Arguments, "to"))
-		to = to.Add(24 * time.Hour)
-		if err1 != nil || err2 != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText("from/to must use YYYY-MM-DD", true)))
+		var rangeErr error
+		from, to, rangeErr = s.explicitDateRange(r.Context(), siteID, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to"))
+		if rangeErr != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(rangeErr.Error(), true)))
 			return
 		}
 	}

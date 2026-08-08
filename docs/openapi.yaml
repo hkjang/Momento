@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.2.0
+  version: 0.3.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -30,7 +30,22 @@ paths:
       responses: {'200': {description: Site list}}
     post:
       summary: Create a site and issue its tracking key once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SiteMutation'}
       responses: {'201': {description: Site created}}
+  /api/v1/sites/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    patch:
+      summary: Update site timezone, engagement threshold, domains, and collection settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SiteMutation'}
+      responses: {'200': {description: Site updated}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/sites/{siteId}/overview:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
@@ -124,6 +139,10 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/QueryRequest'}
       responses: {'200': {description: Query rows}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/privacy/delete:
+    post:
+      summary: Delete analytics data and atomically reconcile inbox, dead letters, Raw Events, and Session summaries
+      responses: {'200': {description: Data deleted or property scrubbed}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/funnel:
     post:
       summary: Analyze an open or closed 2-10 step event funnel with segment and property conditions
@@ -166,6 +185,7 @@ components:
         session_id: {type: string, maxLength: 128}
         user_id: {type: string, maxLength: 128}
         user_properties: {type: object, additionalProperties: true}
+        context: {$ref: '#/components/schemas/EventContext'}
         events:
           type: array
           minItems: 1
@@ -178,6 +198,46 @@ components:
               name: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'}
               timestamp: {type: integer}
               properties: {type: object, additionalProperties: true}
+              context:
+                allOf:
+                  - {$ref: '#/components/schemas/EventContext'}
+                description: Event occurrence-time snapshot; overrides the request-level fallback context.
+    EventContext:
+      type: object
+      properties:
+        page:
+          type: object
+          properties:
+            url: {type: string, format: uri}
+            title: {type: string}
+            referrer: {type: string}
+        device:
+          type: object
+          properties:
+            type: {type: string}
+            browser: {type: string}
+            os: {type: string}
+            language: {type: string}
+            screen: {type: string}
+        traffic:
+          type: object
+          properties:
+            source: {type: string}
+            medium: {type: string}
+            campaign: {type: string}
+            term: {type: string}
+            content: {type: string}
+    SiteMutation:
+      type: object
+      required: [name, session_timeout_minutes, timezone, engagement_threshold_seconds]
+      properties:
+        name: {type: string}
+        service_name: {type: string}
+        allowed_domains: {type: array, items: {type: string}}
+        session_timeout_minutes: {type: integer, minimum: 1, maximum: 1440}
+        timezone: {type: string, examples: [Asia/Seoul]}
+        engagement_threshold_seconds: {type: integer, minimum: 1, maximum: 300, default: 10}
+        active: {type: boolean}
     QueryRequest:
       type: object
       required: [site_id, date_range, metrics]

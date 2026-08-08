@@ -8,8 +8,9 @@ RELEASE_NAME := momento-v$(RELEASE_VERSION)
 
 test:
 	go test ./cmd/... ./internal/...
-	cd sdk && npm run typecheck
-	cd web && npm run build
+	go vet ./cmd/... ./internal/...
+	cd sdk && npm run typecheck && npm test
+	cd web && npm run lint && npm run build
 
 build:
 	cd sdk && npm run build

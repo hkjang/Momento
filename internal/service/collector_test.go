@@ -29,12 +29,12 @@ func TestAnonymizeIP(t *testing.T) {
 }
 func TestSanitizeURL(t *testing.T) {
 	cfg := privacyConfig{MaskedParameters: []string{"token"}}
-	got := sanitizeURL("https://example.com/a?keep=1&token=secret", cfg)
+	got := sanitizeURL("https://example.com/a?keep=1&token=secret#access_token=private", cfg)
 	if got != "https://example.com/a?keep=1&token=%5BMASKED%5D" {
 		t.Fatalf("got %s", got)
 	}
 	cfg.StripQueryString = true
-	if got := sanitizeURL("https://example.com/a?x=1", cfg); got != "https://example.com/a" {
+	if got := sanitizeURL("https://example.com/a?x=1#employee", cfg); got != "https://example.com/a" {
 		t.Fatalf("got %s", got)
 	}
 }
@@ -74,6 +74,37 @@ func TestPrivacyAppliedBeforeDurableQueue(t *testing.T) {
 	}
 	if _, ok := req.Events[0].Properties["phone"]; ok {
 		t.Fatal("event PII persisted before queue")
+	}
+}
+
+func TestActiveEngagementMilliseconds(t *testing.T) {
+	tests := []struct {
+		event model.IncomingEvent
+		want  int64
+	}{
+		{event: model.IncomingEvent{Name: "click", Properties: map[string]any{"active_seconds": 15.0}}, want: 0},
+		{event: model.IncomingEvent{Name: "user_engagement", Properties: map[string]any{"active_seconds": 12.5}}, want: 12500},
+		{event: model.IncomingEvent{Name: "user_engagement", Properties: map[string]any{"active_seconds": "7"}}, want: 7000},
+		{event: model.IncomingEvent{Name: "user_engagement", Properties: map[string]any{"active_seconds": 99999.0}}, want: 3600000},
+		{event: model.IncomingEvent{Name: "user_engagement", Properties: map[string]any{"active_seconds": -1.0}}, want: 0},
+	}
+	for _, tt := range tests {
+		if got := activeEngagementMilliseconds(tt.event); got != tt.want {
+			t.Errorf("activeEngagementMilliseconds(%#v)=%d want %d", tt.event, got, tt.want)
+		}
+	}
+}
+
+func TestInteractionEvents(t *testing.T) {
+	for _, name := range []string{"click", "search", "form_submit", "conversion", "purchase", "error"} {
+		if !isInteractionEvent(name) {
+			t.Errorf("expected %s to be an interaction", name)
+		}
+	}
+	for _, name := range []string{"page_view", "user_engagement", "scroll"} {
+		if isInteractionEvent(name) {
+			t.Errorf("did not expect %s to be an interaction", name)
+		}
 	}
 }
 

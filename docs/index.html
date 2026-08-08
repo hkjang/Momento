@@ -473,12 +473,12 @@ docker compose up --build
                         <h4>📦 오프라인 번들 (.tar.gz)</h4>
                         <p>인터넷 통신이 완전히 차단된 사내 폐쇄망 환경을 위한 오프라인 Docker 이미지 아카이브를 제공합니다.</p>
 <pre><code># 릴리스 아카이브 로드
-gzip -dc momento-v0.2.0.tar.gz | docker load
+gzip -dc momento-v0.3.0.tar.gz | docker load
 
 # 폐쇄망 컨테이너 실행
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.2.0</code></pre>
+  momento-v0.3.0</code></pre>
                     </div>
                 </div>
             </div>
@@ -505,7 +505,7 @@ docker run -d -p 8080:8080 \
                         <h3>📘 사용자 가이드 (User Guide)</h3>
                         <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">JavaScript SDK 연동, identify/track 호출, 쿼리 빌더, 퍼널 및 경로 분석 매뉴얼</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.2 최신 문서</a>
+                            <a href="USER_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.3 최신 문서</a>
                             <a href="USER_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
                             <a href="USER_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>
@@ -515,7 +515,7 @@ docker run -d -p 8080:8080 \
                         <h3>🔧 관리자 가이드 (Admin Guide)</h3>
                         <p style="color: var(--text-muted); margin: 8px 0 16px; font-size: 0.9rem;">Keycloak OIDC SSO, RBAC 역할 매핑, 개인정보 필터, CIDR 망 설정 및 감사 로그</p>
                         <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.2 최신 문서</a>
+                            <a href="ADMIN_GUIDE.md" target="_blank" class="btn btn-primary" style="padding: 6px 14px; font-size: 0.82rem;">📝 v0.3 최신 문서</a>
                             <a href="ADMIN_GUIDE.pdf" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">📄 v0.1 PDF</a>
                             <a href="ADMIN_GUIDE.html" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.82rem;">🌐 v0.1 HTML</a>
                         </div>

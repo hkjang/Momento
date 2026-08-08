@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.2.0
+- **문서 버전**: v0.3.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -44,14 +44,15 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 
 ## 3. 개인정보 (PII) 필터 & URL 마스킹
 
-수집기(Durable Collector)는 저장 전 개인정보 정책을 적용합니다. 기본 정책은 개인정보로 지정된 Property key를 중첩 객체와 Item 배열까지 제거하며, URL Parameter는 관리자 목록에 따라 마스킹합니다.
+수집기(Durable Collector)는 Inbox에 저장하기 전 개인정보 정책을 적용합니다. 기본 정책은 개인정보로 지정된 Property key를 중첩 객체와 Item 배열까지 제거하며, URL Query String과 Fragment를 제거합니다. Query String 수집을 명시적으로 활성화한 경우에만 관리자 목록의 Parameter를 마스킹합니다.
 
 - **기본 차단 Property**: `email`, `phone`, `resident_number`
-- **기본 URL 마스킹 Parameter**: `token`, `password`, `email`
+- **기본 URL 정책**: Query String 및 Fragment 제거
+- **Query 수집 활성화 시 기본 마스킹 Parameter**: `token`, `password`, `email`
 - **IP 익명화**: IPv4 `/24`, IPv6 `/64`
 - **선택 정책**: User ID·User Agent 수집, Query String 제거, DNT, Visitor Profile
 
-> **관리자 제어**: 관리자 콘솔 `관리 ➔ 개인정보` 메뉴에서 차단 key와 URL Parameter를 변경할 수 있습니다. 값의 정규식 탐지는 제공하지 않으므로 SDK 연동 단계에서도 PII를 보내지 않아야 합니다.
+> **관리자 제어**: 관리자 콘솔 `관리 ➔ 개인정보` 메뉴에서 차단 key와 URL Parameter를 변경할 수 있습니다. SDK는 자동 DOM text 수집을 기본 비활성화하고 흔한 이메일·전화번호·주민번호 형태의 Error Message를 치환하지만, Custom Property 값까지 판별하지는 않으므로 연동 단계에서도 PII를 보내지 않아야 합니다.
 
 ---
 
@@ -85,3 +86,14 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 - `관리 ➔ 보존 정책`에서 Raw Event, Session 요약, Aggregation, Realtime, Debug/Dead Letter 보존기간을 사이트별로 지정합니다.
 - Raw Event와 Session 정리는 매시간 실행되며, Session은 Raw Event보다 오래 보존할 수 있도록 별도 요약 테이블에 저장됩니다.
 - `관리 ➔ 사용자 정의 차원`에서 User, Session, Event, Item Scope와 데이터 타입을 등록합니다. 활성 User/Session/Event 차원은 `custom.<name>`으로 Query와 Segment에서 사용할 수 있습니다.
+
+## 7. 사이트 Timezone과 참여 세션 기준
+
+- `관리 ➔ 사이트 ➔ 설정`에서 IANA Timezone(예: `Asia/Seoul`)과 참여 기준 시간(기본 10초)을 지정합니다.
+- Event Timestamp는 UTC로 저장되지만 날짜 범위, 일별 Trend, Query, Funnel, Export와 MCP는 Site Timezone의 자정 경계를 사용합니다.
+- 참여 세션은 `지속시간 ≥ 기준`, `Conversion 1회 이상`, `Page View 2회 이상`, `Active Engagement ≥ 기준` 중 하나를 충족하면 됩니다.
+- 기준 시간을 바꾸면 기존 Session 요약의 `engaged` 값도 같은 트랜잭션에서 즉시 다시 계산됩니다.
+
+## 8. 개인정보 삭제 일관성
+
+Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter 원본 payload를 먼저 정리하고 Raw Event를 삭제한 뒤 남은 Raw Event에서 Session 요약을 재생성합니다. Event Property 삭제도 처리 대기/Debug payload와 Raw Event에 함께 적용됩니다. 따라서 삭제된 데이터가 Worker 재시도로 복원되거나 Session 보고서에 잔존하지 않습니다.

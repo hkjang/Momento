@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
+	"github.com/hkjang/Momento/internal/model"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -163,7 +165,7 @@ func (s *Server) rotateMyKey(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id WHERE $1 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2) ORDER BY s.created_at`, p.Role, p.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.timezone,s.engagement_threshold_seconds,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id WHERE $1 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2) ORDER BY s.created_at`, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -172,13 +174,13 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id uuid.UUID
-		var key, name, service, prefix, serverPrefix, workspace, org string
+		var key, name, service, timezone, prefix, serverPrefix, workspace, org string
 		var domains []string
-		var timeout int
+		var timeout, engagementThreshold int
 		var active bool
 		var created time.Time
-		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &active, &prefix, &serverPrefix, &created, &workspace, &org); err == nil {
-			out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org})
+		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &timezone, &engagementThreshold, &active, &prefix, &serverPrefix, &created, &workspace, &org); err == nil {
+			out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "timezone": timezone, "engagement_threshold_seconds": engagementThreshold, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org})
 		}
 	}
 	writeJSON(w, 200, out)
@@ -193,6 +195,8 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		ServiceName    string   `json:"service_name"`
 		AllowedDomains []string `json:"allowed_domains"`
 		SessionTimeout int      `json:"session_timeout_minutes"`
+		Timezone       string   `json:"timezone"`
+		Engagement     int      `json:"engagement_threshold_seconds"`
 	}
 	if err := decodeJSON(r, &in, 64<<10); err != nil {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
@@ -205,13 +209,30 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 	if in.SessionTimeout == 0 {
 		in.SessionTimeout = 30
 	}
+	if in.Timezone == "" {
+		_ = s.DB.QueryRow(r.Context(), `SELECT coalesce(nullif(value->>'timezone',''),'Asia/Seoul') FROM settings WHERE key='general'`).Scan(&in.Timezone)
+		if in.Timezone == "" {
+			in.Timezone = "Asia/Seoul"
+		}
+	}
+	if _, err := time.LoadLocation(in.Timezone); err != nil {
+		writeError(w, 400, "INVALID_TIMEZONE", "timezone must be a valid IANA timezone")
+		return
+	}
+	if in.Engagement == 0 {
+		in.Engagement = 10
+	}
+	if in.Engagement < 1 || in.Engagement > 300 {
+		writeError(w, 400, "INVALID_ENGAGEMENT_THRESHOLD", "engagement threshold must be between 1 and 300 seconds")
+		return
+	}
 	plain, hash, prefix, _ := auth.NewToken("mom_track_", 24)
 	serverPlain, serverHash, serverPrefix, _ := auth.NewToken("mom_server_", 32)
 	var id uuid.UUID
 	var workspaceID uuid.UUID
 	err := s.DB.QueryRow(r.Context(), `SELECT id FROM workspaces ORDER BY created_at LIMIT 1`).Scan(&workspaceID)
 	if err == nil {
-		err = s.DB.QueryRow(r.Context(), `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,session_timeout_minutes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`, workspaceID, siteKey(), in.Name, in.ServiceName, hash, prefix, serverHash, serverPrefix, normalizeDomains(in.AllowedDomains), in.SessionTimeout).Scan(&id)
+		err = s.DB.QueryRow(r.Context(), `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,session_timeout_minutes,timezone,engagement_threshold_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, workspaceID, siteKey(), in.Name, in.ServiceName, hash, prefix, serverHash, serverPrefix, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Timezone, in.Engagement).Scan(&id)
 	}
 	if err != nil {
 		writeError(w, 500, "SITE_CREATE_FAILED", err.Error())
@@ -248,6 +269,8 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		ServiceName    string   `json:"service_name"`
 		AllowedDomains []string `json:"allowed_domains"`
 		SessionTimeout int      `json:"session_timeout_minutes"`
+		Timezone       string   `json:"timezone"`
+		Engagement     int      `json:"engagement_threshold_seconds"`
 		Active         *bool    `json:"active"`
 	}
 	if err := decodeJSON(r, &in, 64<<10); err != nil {
@@ -258,7 +281,31 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_TIMEOUT", "session timeout must be between 1 and 1440 minutes")
 		return
 	}
-	_, err = s.DB.Exec(r.Context(), `UPDATE sites SET name=$2,service_name=$3,allowed_domains=$4,session_timeout_minutes=$5,active=coalesce($6,active),updated_at=now() WHERE id=$1`, id, in.Name, in.ServiceName, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Active)
+	if _, err := time.LoadLocation(in.Timezone); err != nil {
+		writeError(w, 400, "INVALID_TIMEZONE", "timezone must be a valid IANA timezone")
+		return
+	}
+	if in.Engagement < 1 || in.Engagement > 300 {
+		writeError(w, 400, "INVALID_ENGAGEMENT_THRESHOLD", "engagement threshold must be between 1 and 300 seconds")
+		return
+	}
+	tx, err := s.DB.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "SITE_UPDATE_FAILED", err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+	result, err := tx.Exec(r.Context(), `UPDATE sites SET name=$2,service_name=$3,allowed_domains=$4,session_timeout_minutes=$5,timezone=$6,engagement_threshold_seconds=$7,active=coalesce($8,active),updated_at=now() WHERE id=$1`, id, in.Name, in.ServiceName, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Timezone, in.Engagement, in.Active)
+	if err == nil && result.RowsAffected() == 0 {
+		writeError(w, 404, "NOT_FOUND", "site not found")
+		return
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE sessions SET engaged=(extract(epoch FROM (last_event_at-started_at)) >= $2 OR conversion_count>0 OR page_views>=2 OR active_engagement_ms >= $2::bigint*1000),updated_at=now() WHERE site_id=$1`, id, in.Engagement)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil {
 		writeError(w, 500, "SITE_UPDATE_FAILED", err.Error())
 		return
@@ -728,39 +775,193 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	var tag pgconn.CommandTag
+	var deleteFrom, deleteTo time.Time
 	var err error
 	switch in.Mode {
-	case "site":
-		tag, err = s.DB.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1`, siteID)
-	case "visitor":
-		tag, err = s.DB.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND visitor_id=$2`, siteID, in.Value)
-	case "user_id":
-		tag, err = s.DB.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND user_id=$2`, siteID, in.Value)
+	case "site", "visitor", "user_id", "property":
 	case "period":
-		from, e1 := time.Parse("2006-01-02", in.From)
-		to, e2 := time.Parse("2006-01-02", in.To)
-		if e1 != nil || e2 != nil {
-			writeError(w, 400, "INVALID_RANGE", "from/to must use YYYY-MM-DD")
+		deleteFrom, deleteTo, err = s.explicitDateRange(r.Context(), siteID, in.From, in.To)
+		if err != nil {
+			writeError(w, 400, "INVALID_RANGE", err.Error())
 			return
 		}
-		tag, err = s.DB.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to.Add(24*time.Hour))
-	case "property":
-		if !eventNamePatternForProperty.MatchString(in.Value) {
-			writeError(w, 400, "INVALID_PROPERTY", "property name is invalid")
-			return
-		}
-		tag, err = s.DB.Exec(r.Context(), `UPDATE raw_events SET properties=properties-$2 WHERE site_id=$1 AND properties ? $2`, siteID, in.Value)
 	default:
 		writeError(w, 400, "INVALID_MODE", "mode must be site, visitor, user_id, period, or property")
 		return
+	}
+	if in.Mode == "property" && !eventNamePatternForProperty.MatchString(in.Value) {
+		writeError(w, 400, "INVALID_PROPERTY", "property name is invalid")
+		return
+	}
+	var tag pgconn.CommandTag
+	tx, err := s.DB.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "DELETE_FAILED", err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+	// The inbox also contains the original event payload for the debugger and
+	// retries. Scrub it before Raw Events so a worker already holding a row lock
+	// commits first and its newly written event is covered by the deletion.
+	if err := scrubQueuedAnalyticsData(r.Context(), tx, siteID, in.Mode, in.Value, deleteFrom, deleteTo); err != nil {
+		writeError(w, 500, "QUEUE_SCRUB_FAILED", err.Error())
+		return
+	}
+	switch in.Mode {
+	case "site":
+		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1`, siteID)
+	case "visitor":
+		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND visitor_id=$2`, siteID, in.Value)
+	case "user_id":
+		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND user_id=$2`, siteID, in.Value)
+	case "period":
+		tag, err = tx.Exec(r.Context(), `DELETE FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, deleteFrom, deleteTo)
+	case "property":
+		tag, err = tx.Exec(r.Context(), `UPDATE raw_events SET properties=properties-$2 WHERE site_id=$1 AND properties ? $2`, siteID, in.Value)
 	}
 	if err != nil {
 		writeError(w, 500, "DELETE_FAILED", err.Error())
 		return
 	}
+	if in.Mode != "property" {
+		if err := rebuildSiteSessions(r.Context(), tx, siteID); err != nil {
+			writeError(w, 500, "SESSION_REBUILD_FAILED", err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "DELETE_FAILED", err.Error())
+		return
+	}
 	s.audit(r.Context(), &p, "analytics.delete", "raw_event", in.SiteID, map[string]any{"mode": in.Mode, "value": in.Value, "affected": tag.RowsAffected()}, clientIP(r))
 	writeJSON(w, 200, map[string]any{"deleted_or_updated": tag.RowsAffected()})
+}
+
+func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, mode, value string, from, to time.Time) error {
+	if mode == "site" {
+		if _, err := tx.Exec(ctx, `DELETE FROM event_dead_letters WHERE site_id=$1`, siteID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM event_inbox WHERE site_id=$1`, siteID)
+		return err
+	}
+	if mode == "visitor" || mode == "user_id" {
+		field := "visitor_id"
+		if mode == "user_id" {
+			field = "user_id"
+		}
+		for _, table := range []string{"event_inbox", "event_dead_letters"} {
+			query := fmt.Sprintf(`DELETE FROM %s WHERE site_id=$1 AND payload->'request'->>$2=$3`, table)
+			if _, err := tx.Exec(ctx, query, siteID, field, value); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	type queuedPayload struct {
+		table   string
+		id      int64
+		payload []byte
+	}
+	records := []queuedPayload{}
+	for _, table := range []string{"event_inbox", "event_dead_letters"} {
+		query := fmt.Sprintf(`SELECT id,payload FROM %s WHERE site_id=$1 FOR UPDATE`, table)
+		rows, err := tx.Query(ctx, query, siteID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var record queuedPayload
+			record.table = table
+			if err := rows.Scan(&record.id, &record.payload); err != nil {
+				rows.Close()
+				return err
+			}
+			records = append(records, record)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+
+	now := time.Now()
+	for _, record := range records {
+		var payload model.InboxPayload
+		if err := json.Unmarshal(record.payload, &payload); err != nil {
+			// An unreadable payload cannot be proven free of the selected data.
+			query := fmt.Sprintf(`DELETE FROM %s WHERE id=$1`, record.table)
+			if _, deleteErr := tx.Exec(ctx, query, record.id); deleteErr != nil {
+				return deleteErr
+			}
+			continue
+		}
+		if mode == "period" {
+			kept := make([]model.IncomingEvent, 0, len(payload.Request.Events))
+			for _, event := range payload.Request.Events {
+				occurred := time.UnixMilli(event.Timestamp)
+				if event.Timestamp <= 0 || occurred.Before(now.AddDate(-5, 0, 0)) || occurred.After(now.Add(24*time.Hour)) {
+					occurred = now
+				}
+				if occurred.Before(from) || !occurred.Before(to) {
+					kept = append(kept, event)
+				}
+			}
+			payload.Request.Events = kept
+		} else if mode == "property" {
+			for index := range payload.Request.Events {
+				delete(payload.Request.Events[index].Properties, value)
+			}
+		}
+		if len(payload.Request.Events) == 0 {
+			query := fmt.Sprintf(`DELETE FROM %s WHERE id=$1`, record.table)
+			if _, err := tx.Exec(ctx, query, record.id); err != nil {
+				return err
+			}
+			continue
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		query := fmt.Sprintf(`UPDATE %s SET payload=$2 WHERE id=$1`, record.table)
+		if _, err := tx.Exec(ctx, query, record.id, body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rebuildSiteSessions(ctx context.Context, tx pgx.Tx, siteID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE site_id=$1`, siteID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `WITH aggregates AS (
+		SELECT
+			e.site_id,e.session_id,
+			(array_agg(e.visitor_id ORDER BY e.event_timestamp,e.id))[1] visitor_id,
+			(array_agg(e.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_id IS NOT NULL))[1] user_id,
+			min(e.event_timestamp) started_at,max(e.event_timestamp) last_event_at,
+			count(*) event_count,count(*) FILTER(WHERE e.event_name='page_view') page_views,
+			count(*) FILTER(WHERE e.is_conversion) conversion_count,
+			coalesce(sum(CASE WHEN e.event_name='user_engagement' AND coalesce(e.properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$' THEN least((e.properties->>'active_seconds')::numeric*1000,3600000) ELSE 0 END),0)::bigint active_engagement_ms,
+			count(*) FILTER(WHERE e.event_name='user_engagement') heartbeat_count,
+			count(*) FILTER(WHERE e.event_name IN ('click','outbound_click','file_download','search','login','sign_up','form_start','form_submit','conversion','purchase','add_to_cart','begin_checkout','error')) interaction_count,
+			(array_agg(e.page_url ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.event_name='page_view' AND e.page_url IS NOT NULL))[1] landing_page,
+			(array_agg(e.page_url ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.event_name='page_view' AND e.page_url IS NOT NULL))[1] exit_page,
+			(array_agg(e.source ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.source IS NOT NULL))[1] source,
+			(array_agg(e.medium ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.medium IS NOT NULL))[1] medium,
+			(array_agg(e.campaign ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.campaign IS NOT NULL))[1] campaign,
+			(array_agg(e.device_type ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.device_type IS NOT NULL))[1] device_type
+		FROM raw_events e WHERE e.site_id=$1 GROUP BY e.site_id,e.session_id
+	)
+	INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count)
+	SELECT a.site_id,a.session_id,a.visitor_id,a.user_id,a.started_at,a.last_event_at,a.event_count,a.page_views,a.conversion_count,
+		extract(epoch FROM (a.last_event_at-a.started_at)) >= site.engagement_threshold_seconds OR a.conversion_count>0 OR a.page_views>=2 OR a.active_engagement_ms>=site.engagement_threshold_seconds*1000,
+		a.landing_page,a.exit_page,a.source,a.medium,a.campaign,a.device_type,a.active_engagement_ms,a.heartbeat_count,a.interaction_count
+	FROM aggregates a JOIN sites site ON site.id=a.site_id`, siteID)
+	return err
 }
 
 func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {

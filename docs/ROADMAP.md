@@ -22,6 +22,16 @@
 - Ecommerce revenue, refund, transaction, product and commerce funnel reports
 - Privacy-controlled Visitor Timeline and Session reporting APIs
 
+## v0.3 — implemented
+
+- Event occurrence-time Context snapshot and first-touch acquisition preservation for SPA journeys
+- Fail-closed consent-required state even without browser storage; privacy-first DOM text and Error defaults
+- User/Session conversion rates and configurable engaged-session semantics
+- Site IANA Timezone applied consistently to API, UI, exports, deletion and MCP calendar ranges
+- Active engagement milliseconds, heartbeat count and interaction count in materialized Sessions
+- Worker savepoint isolation with durable retry/dead-letter bookkeeping
+- Queue-aware privacy deletion and Raw Event-driven Session reconciliation
+
 ## Next schema-compatible increments
 
 - Scheduled aggregate rebuild jobs and Parquet export

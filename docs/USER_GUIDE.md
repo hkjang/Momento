@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.2.0
+- **문서 버전**: v0.3.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
 
@@ -34,12 +34,24 @@ Momento는 사내 애플리케이션 및 인트라넷 환경에서 발생하는 
 | `data-site-id` | String | **필수** | 관리자 콘솔에서 생성한 사이트 고유 식별 키 |
 | `data-mode` | String | 선택 | `full`, `consent-required`, `cookieless`, `disabled` 중 선택 |
 | `data-debug` | Boolean | 선택 | `true`이면 브라우저 콘솔에 SDK 진단 로그 출력 |
+| `data-collect-element-text` | Boolean | 선택 | 버튼 문구 수집. 개인정보 최소화를 위해 기본값은 `false` |
 
 Collector endpoint는 `tracker.js`를 제공한 Origin의 `/collect/v1/events`로 자동 설정됩니다. Page View, SPA History 변경, 클릭, 스크롤, Form, Download, Outbound Link, Error와 Heartbeat는 기본 자동 수집됩니다.
 
----
+각 이벤트에는 `track()` 호출 순간의 URL, 제목, Referrer, Device와 최초 UTM Context가 snapshot으로 저장됩니다. 따라서 1초 배치 전송을 기다리는 동안 SPA Route가 바뀌어도 이전 페이지의 Click이 새 페이지로 잘못 분류되지 않습니다. SDK가 자동 수집하는 URL에서는 Query String과 Fragment를 제거합니다.
 
-### 2.2 사용자 및 부서 식별 (`analytics.identify`)
+### 2.2 Consent와 Cookieless
+
+| 모드 | 동의 전 | Visitor 저장 | 용도 |
+| :--- | :--- | :--- | :--- |
+| `disabled` | Event 없음 | 없음 | 추적 중지 |
+| `consent-required` | Event 없음 | 동의 후에만 저장 | 분석 동의가 필수인 환경 |
+| `cookieless` | Event 수집 | 영속 저장 없음 | 익명 분석 |
+| `full` | Event 수집 | 영속 Visitor/Session | 허용된 내부 분석 |
+
+`consent-required`는 `localStorage`가 차단된 브라우저에서도 안전하게 수집을 중지합니다. `analytics.consent.grant()`는 저장소가 없어도 현재 Page에서 유효하며, 동의를 기다리는 동안에도 최초 UTM은 유지합니다. `deny()`와 `revoke()`는 대기열·영속 식별자·Offline Queue를 정리합니다.
+
+### 2.3 사용자 및 부서 식별 (`analytics.identify`)
 
 로그인한 사용자의 사내 식별자와 부서/조직 체계 정보를 수집기에 전달합니다.
 
@@ -58,7 +70,7 @@ analytics.identify("EMP_2026_9012", {
 
 ---
 
-### 2.3 커스텀 이벤트 트래킹 (`analytics.track`)
+### 2.4 커스텀 이벤트 트래킹 (`analytics.track`)
 
 사용자의 특정 비즈니스 액션을 세밀하게 기록합니다.
 
@@ -81,7 +93,7 @@ analytics.track("file_downloaded", {
 
 ---
 
-### 2.4 SPA (Single Page Application) 라우트 변경 추적
+### 2.5 SPA (Single Page Application) 라우트 변경 추적
 
 React, Vue, Next.js 등 SPA 라우터 전환 시 페이지뷰를 수동 또는 자동 수집합니다.
 
@@ -94,7 +106,7 @@ router.on('routeChangeComplete', () => {
 
 ---
 
-### 2.5 오프라인 큐 & Beacon 재전송 메커니즘
+### 2.6 오프라인 큐 & Beacon 재전송 메커니즘
 
 - **Beacon API**: 브라우저 닫힘 또는 페이지 이동 시 이벤트 손실 방지를 위해 `navigator.sendBeacon`을 이용합니다.
 - **Offline Queue**: 사내 Wi-Fi/네트워크 유실 시 최근 이벤트를 `localStorage`에 보관하며, 네트워크 복구 시 자동으로 배치 재전송합니다.
@@ -102,6 +114,8 @@ router.on('routeChangeComplete', () => {
 ---
 
 ## 3. 고급 분석 기능 사용법
+
+Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의미합니다. API는 `conversion_users`, `conversion_sessions`, `user_conversion_rate`, `session_conversion_rate`를 모두 제공합니다. 날짜는 관리자에게 설정된 Site Timezone 기준이며, 저장 Timestamp 자체는 UTC입니다.
 
 ### 3.1 쿼리 빌더 (Query Builder)
 1. **필터링 조건**: 날짜 범위, 부서, 특정 이벤트명, 커스텀 속성(Key-Value) 조건 설정.

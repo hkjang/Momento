@@ -37,10 +37,10 @@ const labels: Record<string, string> = {
 export default function EcommercePage() {
   const { site } = useSite();
   const query = useQuery({
-    queryKey: ["ecommerce", site?.site_id],
+    queryKey: ["ecommerce", site?.site_id, site?.timezone],
     queryFn: () =>
       get<EcommerceData>(
-        `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery()}`,
+        `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(30, site!.timezone)}`,
       ),
     enabled: !!site,
   });

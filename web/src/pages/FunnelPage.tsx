@@ -15,7 +15,7 @@ import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
 import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { get, post, rangeQuery } from "../api/client";
+import { dateRangeValues, get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -75,8 +75,7 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
     mutationFn: () =>
       post<{ steps: Record<string, unknown>[] }>("/api/v1/funnel", {
         site_id: site!.site_id,
-        from: new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10),
-        to: new Date().toISOString().slice(0, 10),
+        ...dateRangeValues(30, site!.timezone),
         mode: funnelMode,
         within_minutes: withinMinutes,
         segment_id: segmentId || undefined,
@@ -96,18 +95,19 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       }),
   });
   const paths = useQuery({
-    queryKey: ["paths", site?.site_id],
+    queryKey: ["paths", site?.site_id, site?.timezone],
     queryFn: () =>
       get<Record<string, unknown>[]>(
-        `/api/v1/sites/${site!.site_id}/path?${rangeQuery()}`,
+        `/api/v1/sites/${site!.site_id}/path?${rangeQuery(30, site!.timezone)}`,
       ),
     enabled: !!site && mode === "path",
   });
   const runFunnel = funnel.mutate;
   const siteID = site?.site_id;
+  const siteTimezone = site?.timezone;
   useEffect(() => {
     if (siteID && mode === "funnel") runFunnel();
-  }, [siteID, mode, runFunnel]);
+  }, [siteID, siteTimezone, mode, runFunnel]);
   if (!site) return <NoSite />;
   const funnelFields = [
     ...builtInSegmentFields,

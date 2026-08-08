@@ -1,11 +1,12 @@
 {
   "name": "@momento-analytics/tracker",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --minify --target=es2018 --format=iife --outfile=dist/tracker.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.9",

@@ -13,8 +13,8 @@ Browser SDK / HTTP API
   → React Console
 ```
 
-Collector는 inbox commit 이후 `202 Accepted`를 반환합니다. 여러 Momento 컨테이너를 실행하면 `FOR UPDATE SKIP LOCKED`로 inbox 작업을 나누므로 Collector와 Worker를 함께 수평 확장할 수 있습니다. 중복 `event_id`는 `(site_id, event_id)` unique key로 제거합니다.
+Collector는 개인정보 필터가 적용된 Inbox commit 이후 `202 Accepted`를 반환합니다. 여러 Momento 컨테이너를 실행하면 `FOR UPDATE SKIP LOCKED`로 inbox 작업을 나누므로 Collector와 Worker를 함께 수평 확장할 수 있습니다. Worker는 작업마다 PostgreSQL savepoint를 두어 한 작업의 SQL 오류가 같은 batch의 정상 작업과 retry/dead-letter 기록을 중단하지 않게 합니다. 중복 `event_id`는 `(site_id, event_id)` unique key로 제거합니다.
 
-`raw_events`에서 Segment, Funnel, Ecommerce, Visitor Timeline을 계산하며, 허용된 Dimension Registry만 SQL 표현식으로 변환합니다. Segment 정의는 중첩 JSON AST로 저장되어 SQL 원문을 입력받지 않습니다. `sessions`는 Raw Event insert가 실제로 성공한 경우에만 동일 transaction에서 upsert되므로 SDK 재시도에 의해 합계가 중복되지 않습니다. 사이트별 보존정책은 Raw Event·Session·Debugger 데이터를 각각 정리합니다.
+`raw_events`에서 Segment, Funnel, Ecommerce, Visitor Timeline을 계산하며, 허용된 Dimension Registry만 SQL 표현식으로 변환합니다. Segment 정의는 중첩 JSON AST로 저장되어 SQL 원문을 입력받지 않습니다. `sessions`는 Raw Event insert가 실제로 성공한 경우에만 동일 transaction에서 upsert되므로 SDK 재시도에 의해 합계가 중복되지 않습니다. 세션에는 Active Engagement, Heartbeat, Interaction을 물리화하고 Site별 참여 기준을 적용합니다. Timestamp는 UTC로 저장하고 모든 Calendar Query는 Site의 IANA Timezone 경계로 변환합니다. 개인정보 삭제는 Inbox/Dead Letter, Raw Event와 Session 재생성을 하나의 transaction으로 묶습니다.
 
 수십억 건 고도화 단계에서는 `settings.storage.engine`을 전환점으로 사용해 Worker의 sink를 ClickHouse로 추가합니다. Metadata와 audit, user, settings, durable inbox는 PostgreSQL에 유지하고 Raw Event 및 aggregate만 ClickHouse에 둡니다.

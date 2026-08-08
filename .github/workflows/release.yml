@@ -24,9 +24,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ -f ".github/release-notes/${GITHUB_REF_NAME}.md" ]]; then
+            NOTES=(--notes-file ".github/release-notes/${GITHUB_REF_NAME}.md")
+          else
+            NOTES=(--generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "momento-${GITHUB_REF_NAME}.tar.gz" \
             "momento-${GITHUB_REF_NAME}.tar.gz.sha256" \
             --repo "$GITHUB_REPOSITORY" \
-            --generate-notes \
+            --title "Momento ${GITHUB_REF_NAME}" \
+            "${NOTES[@]}" \
             --verify-tag

@@ -22,7 +22,7 @@ import SegmentBuilder, {
   type SegmentNode,
 } from "../components/SegmentBuilder";
 import DataTable from "../components/DataTable";
-import { del, get, post, put } from "../api/client";
+import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import { useAuth } from "../contexts/AuthContext";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -98,12 +98,7 @@ export default function SegmentsPage() {
         "/api/v1/query",
         {
           site_id: site!.site_id,
-          date_range: {
-            from: new Date(Date.now() - 29 * 86400000)
-              .toISOString()
-              .slice(0, 10),
-            to: new Date().toISOString().slice(0, 10),
-          },
+          date_range: dateRangeValues(30, site!.timezone),
           dimensions: ["event.name"],
           metrics: ["events", "users", "sessions"],
           filters: [],

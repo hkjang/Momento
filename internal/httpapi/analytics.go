@@ -16,16 +16,32 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func dateRange(r *http.Request) (time.Time, time.Time, error) {
-	to := time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+func (s *Server) siteTimezone(ctx context.Context, siteID uuid.UUID) (string, *time.Location, error) {
+	var name string
+	if err := s.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&name); err != nil {
+		return "", nil, err
+	}
+	location, err := time.LoadLocation(name)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid site timezone %q", name)
+	}
+	return name, location, nil
+}
+
+func (s *Server) dateRange(r *http.Request, siteID uuid.UUID) (time.Time, time.Time, error) {
+	_, location, err := s.siteTimezone(r.Context(), siteID)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	now := time.Now().In(location)
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
 	from := to.AddDate(0, 0, -30)
 	parse := func(v string) (time.Time, error) {
 		if len(v) == 10 {
-			return time.Parse("2006-01-02", v)
+			return time.ParseInLocation("2006-01-02", v, location)
 		}
 		return time.Parse(time.RFC3339, v)
 	}
-	var err error
 	if v := r.URL.Query().Get("from"); v != "" {
 		from, err = parse(v)
 		if err != nil {
@@ -38,13 +54,46 @@ func dateRange(r *http.Request) (time.Time, time.Time, error) {
 			return from, to, err
 		}
 		if len(v) == 10 {
-			to = to.Add(24 * time.Hour)
+			to = to.AddDate(0, 0, 1)
 		}
 	}
 	if !from.Before(to) || to.Sub(from) > 3660*24*time.Hour {
 		return from, to, fmt.Errorf("date range must be positive and at most 10 years")
 	}
-	return from, to, nil
+	return from.UTC(), to.UTC(), nil
+}
+
+func (s *Server) explicitDateRange(ctx context.Context, siteID uuid.UUID, fromValue, toValue string) (time.Time, time.Time, error) {
+	_, location, err := s.siteTimezone(ctx, siteID)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	from, err := time.ParseInLocation("2006-01-02", fromValue, location)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("from/to must use YYYY-MM-DD")
+	}
+	to, err := time.ParseInLocation("2006-01-02", toValue, location)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("from/to must use YYYY-MM-DD")
+	}
+	to = to.AddDate(0, 0, 1)
+	if !from.Before(to) || to.Sub(from) > 3660*24*time.Hour {
+		return time.Time{}, time.Time{}, fmt.Errorf("date range must be positive and at most 10 years")
+	}
+	return from.UTC(), to.UTC(), nil
+}
+
+func previousDateRange(from, to time.Time, location *time.Location) (time.Time, time.Time) {
+	localFrom, localTo := from.In(location), to.In(location)
+	if localFrom.Hour() == 0 && localFrom.Minute() == 0 && localFrom.Second() == 0 && localFrom.Nanosecond() == 0 &&
+		localTo.Hour() == 0 && localTo.Minute() == 0 && localTo.Second() == 0 && localTo.Nanosecond() == 0 {
+		fromDate := time.Date(localFrom.Year(), localFrom.Month(), localFrom.Day(), 0, 0, 0, 0, time.UTC)
+		toDate := time.Date(localTo.Year(), localTo.Month(), localTo.Day(), 0, 0, 0, 0, time.UTC)
+		days := int(toDate.Sub(fromDate) / (24 * time.Hour))
+		return localFrom.AddDate(0, 0, -days).UTC(), from
+	}
+	duration := to.Sub(from)
+	return from.Add(-duration), from
 }
 func (s *Server) resolveSite(r *http.Request, param string) (uuid.UUID, error) {
 	key := chi.URLParam(r, param)
@@ -61,17 +110,44 @@ func (s *Server) resolveSiteKey(ctx context.Context, key string) (uuid.UUID, err
 }
 
 type metricSet struct {
-	Users, NewUsers, Sessions, PageViews, Events, Conversions   int64
-	EngagementRate, AvgSessionDuration, ConversionRate, Revenue float64
+	Users, NewUsers, Sessions, PageViews, Events, Conversions int64
+	ConversionUsers, ConversionSessions                       int64
+	EngagementRate, AvgSessionDuration, UserConversionRate    float64
+	SessionConversionRate, Revenue                            float64
 }
 
 func (s *Server) metrics(r *http.Request, siteID uuid.UUID, from, to time.Time) (metricSet, error) {
 	var m metricSet
-	err := s.DB.QueryRow(r.Context(), `WITH period AS (SELECT * FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3), sess AS (SELECT session_id,min(event_timestamp) mn,max(event_timestamp) mx,bool_or(event_name='user_engagement') engaged FROM period GROUP BY session_id), first_seen AS (SELECT visitor_id,min(event_timestamp) first_at FROM raw_events WHERE site_id=$1 GROUP BY visitor_id) SELECT count(DISTINCT coalesce(nullif(p.user_id,''),p.visitor_id)),(SELECT count(*) FROM first_seen WHERE first_at >= $2 AND first_at < $3),count(DISTINCT p.session_id),count(*) FILTER(WHERE p.event_name='page_view'),count(*),count(*) FILTER(WHERE p.is_conversion),coalesce((SELECT 100.0*count(*) FILTER(WHERE engaged)/nullif(count(*),0) FROM sess),0),coalesce((SELECT avg(extract(epoch from(mx-mn))) FROM sess),0),coalesce(100.0*count(*) FILTER(WHERE p.is_conversion)/nullif(count(*),0),0),coalesce(sum(CASE WHEN p.event_name='purchase' AND coalesce(p.properties->>'value',p.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(p.properties->>'value',p.properties->>'revenue')::numeric ELSE 0 END),0) FROM period p`, siteID, from, to).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.EngagementRate, &m.AvgSessionDuration, &m.ConversionRate, &m.Revenue)
+	err := s.DB.QueryRow(r.Context(), `WITH
+		cfg AS (SELECT engagement_threshold_seconds threshold FROM sites WHERE id=$1),
+		period AS (SELECT *,coalesce(nullif(user_id,''),visitor_id) entity FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3),
+		sess AS (
+			SELECT session_id,min(event_timestamp) mn,max(event_timestamp) mx,
+				count(*) FILTER(WHERE event_name='page_view') page_views,
+				count(*) FILTER(WHERE is_conversion) conversions,
+				coalesce(sum(CASE WHEN event_name='user_engagement' AND coalesce(properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$' THEN least((properties->>'active_seconds')::numeric*1000,3600000) ELSE 0 END),0) active_ms
+			FROM period GROUP BY session_id
+		),
+		first_seen AS (SELECT visitor_id,min(event_timestamp) first_at FROM raw_events WHERE site_id=$1 GROUP BY visitor_id)
+		SELECT
+			count(DISTINCT p.entity),
+			(SELECT count(*) FROM first_seen WHERE first_at >= $2 AND first_at < $3),
+			count(DISTINCT p.session_id),
+			count(*) FILTER(WHERE p.event_name='page_view'),
+			count(*),
+			count(*) FILTER(WHERE p.is_conversion),
+			count(DISTINCT p.entity) FILTER(WHERE p.is_conversion),
+			count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion),
+			coalesce((SELECT 100.0*count(*) FILTER(WHERE extract(epoch FROM (mx-mn)) >= cfg.threshold OR conversions>0 OR page_views>=2 OR active_ms>=cfg.threshold*1000)/nullif(count(*),0) FROM sess,cfg),0),
+			coalesce((SELECT avg(extract(epoch FROM (mx-mn))) FROM sess),0),
+			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
+			coalesce(100.0*count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.session_id),0),0),
+			coalesce(sum(CASE WHEN p.event_name='purchase' AND coalesce(p.properties->>'value',p.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(p.properties->>'value',p.properties->>'revenue')::numeric ELSE 0 END),0)
+		FROM period p`, siteID, from, to).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.ConversionSessions, &m.EngagementRate, &m.AvgSessionDuration, &m.UserConversionRate, &m.SessionConversionRate, &m.Revenue)
 	return m, err
 }
 func metricMap(m metricSet) map[string]any {
-	return map[string]any{"users": m.Users, "new_users": m.NewUsers, "sessions": m.Sessions, "page_views": m.PageViews, "events": m.Events, "engagement_rate": m.EngagementRate, "avg_session_duration": m.AvgSessionDuration, "conversions": m.Conversions, "conversion_rate": m.ConversionRate, "revenue": m.Revenue}
+	return map[string]any{"users": m.Users, "new_users": m.NewUsers, "sessions": m.Sessions, "page_views": m.PageViews, "events": m.Events, "engagement_rate": m.EngagementRate, "avg_session_duration": m.AvgSessionDuration, "conversions": m.Conversions, "conversion_users": m.ConversionUsers, "conversion_sessions": m.ConversionSessions, "conversion_rate": m.UserConversionRate, "user_conversion_rate": m.UserConversionRate, "session_conversion_rate": m.SessionConversionRate, "revenue": m.Revenue}
 }
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
@@ -79,7 +155,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -89,9 +165,14 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	duration := to.Sub(from)
-	previous, _ := s.metrics(r, siteID, from.Add(-duration), from)
-	rows, err := s.DB.Query(r.Context(), `SELECT date_trunc('day',event_timestamp) AS bucket,count(DISTINCT coalesce(nullif(user_id,''),visitor_id)),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to)
+	timezone, location, err := s.siteTimezone(r.Context(), siteID)
+	if err != nil {
+		writeError(w, 500, "INVALID_TIMEZONE", err.Error())
+		return
+	}
+	previousFrom, previousTo := previousDateRange(from, to, location)
+	previous, _ := s.metrics(r, siteID, previousFrom, previousTo)
+	rows, err := s.DB.Query(r.Context(), `SELECT to_char(event_timestamp AT TIME ZONE $4,'YYYY-MM-DD') AS bucket,count(DISTINCT coalesce(nullif(user_id,''),visitor_id)),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to, timezone)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -99,13 +180,13 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	trend := []map[string]any{}
 	for rows.Next() {
-		var day time.Time
+		var day string
 		var users, sessions, views, events, conversions int64
 		if rows.Scan(&day, &users, &sessions, &views, &events, &conversions) == nil {
-			trend = append(trend, map[string]any{"date": day.Format("2006-01-02"), "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
+			trend = append(trend, map[string]any{"date": day, "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"from": from, "to": to, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
+	writeJSON(w, 200, map[string]any{"from": from, "to": to, "timezone": timezone, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
 }
 
 func rowsToList(rows pgx.Rows, scan func() (map[string]any, error)) []map[string]any {
@@ -173,7 +254,7 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -198,7 +279,7 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -223,7 +304,7 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -263,7 +344,7 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -305,7 +386,7 @@ type queryRequest struct {
 	Limit int `json:"limit"`
 }
 
-var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id))", "sessions": "count(DISTINCT e.session_id)", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "revenue": "coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value','') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (e.properties->>'value')::numeric ELSE 0 END),0)"}
+var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id))", "sessions": "count(DISTINCT e.session_id)", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id)) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id)) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT coalesce(nullif(e.user_id,''),e.visitor_id)),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": "coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value','') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (e.properties->>'value')::numeric ELSE 0 END),0)"}
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	var in queryRequest
@@ -323,17 +404,11 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	from, err := time.Parse("2006-01-02", in.DateRange.From)
+	from, to, err := s.explicitDateRange(r.Context(), siteID, in.DateRange.From, in.DateRange.To)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", "from must use YYYY-MM-DD")
+		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	to, err := time.Parse("2006-01-02", in.DateRange.To)
-	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", "to must use YYYY-MM-DD")
-		return
-	}
-	to = to.Add(24 * time.Hour)
 	selects := []string{}
 	groups := []string{}
 	columns := []string{}
@@ -427,7 +502,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -525,11 +600,9 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	from, err1 := time.Parse("2006-01-02", in.From)
-	to, err2 := time.Parse("2006-01-02", in.To)
-	to = to.Add(24 * time.Hour)
-	if err1 != nil || err2 != nil {
-		writeError(w, 400, "INVALID_RANGE", "from/to must use YYYY-MM-DD")
+	from, to, err := s.explicitDateRange(r.Context(), siteID, in.From, in.To)
+	if err != nil {
+		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
 	if in.Mode == "" {
@@ -649,7 +722,7 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return

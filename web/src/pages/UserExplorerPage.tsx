@@ -45,18 +45,18 @@ export default function UserExplorerPage() {
   const [input, setInput] = useState("");
   const [visitor, setVisitor] = useState("");
   const recent = useQuery({
-    queryKey: ["visitor-suggestions", site?.site_id],
+    queryKey: ["visitor-suggestions", site?.site_id, site?.timezone],
     queryFn: () =>
       get<{ visitor_id: string; user_id?: string }[]>(
-        `/api/v1/sites/${site!.site_id}/visitors?${rangeQuery(30)}`,
+        `/api/v1/sites/${site!.site_id}/visitors?${rangeQuery(30, site!.timezone)}`,
       ),
     enabled: !!site,
   });
   const timeline = useQuery({
-    queryKey: ["visitor-timeline", site?.site_id, visitor],
+    queryKey: ["visitor-timeline", site?.site_id, site?.timezone, visitor],
     queryFn: () =>
       get<Timeline>(
-        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(visitor)}/timeline?${rangeQuery(365)}&limit=300`,
+        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(visitor)}/timeline?${rangeQuery(365, site!.timezone)}&limit=300`,
       ),
     enabled: !!site && !!visitor,
   });

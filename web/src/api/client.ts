@@ -13,6 +13,8 @@ export interface Site {
   service_name: string;
   allowed_domains: string[];
   session_timeout_minutes: number;
+  timezone: string;
+  engagement_threshold_seconds: number;
   active: boolean;
   tracking_key_prefix: string;
   server_api_key_prefix: string;
@@ -63,9 +65,38 @@ export const patch = <T>(url: string, body: unknown) =>
   api<T>(url, { method: "PATCH", body: JSON.stringify(body) });
 export const del = <T>(url: string) => api<T>(url, { method: "DELETE" });
 
-export function rangeQuery(days = 30) {
-  const to = new Date();
-  const from = new Date(to.getTime() - (days - 1) * 86400000);
-  const date = (d: Date) => d.toISOString().slice(0, 10);
-  return `from=${date(from)}&to=${date(to)}`;
+export function dateRangeValues(days = 30, timezone = "UTC") {
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+  } catch {
+    parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+  }
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value || 0);
+  const year = value("year");
+  const month = value("month");
+  const day = value("day");
+  const fromDate = new Date(Date.UTC(year, month - 1, day - (days - 1)));
+  const date = (dateValue: Date) =>
+    `${dateValue.getUTCFullYear()}-${String(dateValue.getUTCMonth() + 1).padStart(2, "0")}-${String(dateValue.getUTCDate()).padStart(2, "0")}`;
+  return {
+    from: date(fromDate),
+    to: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+  };
+}
+
+export function rangeQuery(days = 30, timezone = "UTC") {
+  const { from, to } = dateRangeValues(days, timezone);
+  return `from=${from}&to=${to}`;
 }

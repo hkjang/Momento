@@ -16,11 +16,11 @@
 
 ## 현재 제공 범위
 
-- JavaScript SDK: Page View, SPA route, custom event, identify, session/visitor, UTM, device, click/scroll/form/download/outbound/error/heartbeat, consent, cookieless, batch, Beacon, offline queue
-- Durable Collector: `POST /collect/v1/events`, domain/key 검증, 중복 제거, 개인정보 필터, PostgreSQL inbox 기반 비동기 적재
+- JavaScript SDK: Event 발생 시점 Context snapshot, Page View, SPA route, custom event, identify, session/visitor, first-touch UTM, device, click/scroll/form/download/outbound/error/heartbeat, fail-closed consent, cookieless, batch, Beacon, offline queue
+- Durable Collector: `POST /collect/v1/events`, domain/key 검증, 중복 제거, 개인정보 필터, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
 - 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, 사내 사용 현황, 저장형 Query Builder, 조건형 Open/Closed Funnel, Path, Ecommerce, User Timeline
 - 관리: Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, C 클래스/CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
-- 고급 분석: 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 물리화 Session 요약, 저장된 Exploration
+- 고급 분석: 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
 - 연동: REST/OpenAPI, Raw CSV/NDJSON export, Analytics MCP
 - 배포: 단일 non-root Docker image, PostgreSQL migration 자동 적용, tag 기반 offline `.tar.gz` GitHub Release
@@ -54,7 +54,7 @@ analytics.track("feature_use", {
 });
 ```
 
-이메일·전화번호·주민번호를 `user_id` 또는 property로 전달하지 마십시오. 기본 차단 property는 관리자 → 개인정보에서 변경할 수 있습니다.
+이메일·전화번호·주민번호를 `user_id` 또는 property로 전달하지 마십시오. SDK는 URL Query/Fragment를 전송하지 않고 자동 `element_text` 수집을 기본 비활성화하며, 서버도 기본적으로 Query String을 제거합니다. 차단 property와 정책은 관리자 → 개인정보에서 변경할 수 있습니다.
 
 ## 설정 원칙
 
@@ -77,7 +77,7 @@ cd ../web && npm install && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.2.0` 태그는 `momento-v0.2.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.3.0` 태그는 `momento-v0.3.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

@@ -28,9 +28,11 @@ export default function UsagePage() {
   const { site } = useSite();
   const [tab, setTab] = useState(0);
   const q = useQuery({
-    queryKey: ["usage", site?.site_id],
+    queryKey: ["usage", site?.site_id, site?.timezone],
     queryFn: () =>
-      get<Usage>(`/api/v1/sites/${site!.site_id}/usage?${rangeQuery()}`),
+      get<Usage>(
+        `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(30, site!.timezone)}`,
+      ),
     enabled: !!site,
   });
   if (!site) return <NoSite />;

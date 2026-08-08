@@ -1,7 +1,7 @@
 import { Box, Card, Chip, Stack, Typography } from "@mui/material";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
-import { get, post, rangeQuery } from "../api/client";
+import { dateRangeValues, get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable, { type Column } from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -54,18 +54,13 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
 export default function ReportPage({ kind }: { kind: Kind }) {
   const { site } = useSite();
   const q = useQuery({
-    queryKey: ["report", kind, site?.site_id],
+    queryKey: ["report", kind, site?.site_id, site?.timezone],
     queryFn: async () => {
       if (kind === "acquisition")
         return (
           await post<{ rows: Record<string, unknown>[] }>("/api/v1/query", {
             site_id: site!.site_id,
-            date_range: {
-              from: new Date(Date.now() - 29 * 86400000)
-                .toISOString()
-                .slice(0, 10),
-              to: new Date().toISOString().slice(0, 10),
-            },
+            date_range: dateRangeValues(30, site!.timezone),
             dimensions: [
               "traffic.source",
               "traffic.medium",
@@ -77,7 +72,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
           })
         ).rows;
       return get<Record<string, unknown>[]>(
-        `/api/v1/sites/${site!.site_id}/${kind}?${rangeQuery()}`,
+        `/api/v1/sites/${site!.site_id}/${kind}?${rangeQuery(30, site!.timezone)}`,
       );
     },
     enabled: !!site,

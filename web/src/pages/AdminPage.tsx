@@ -141,6 +141,9 @@ function SitesAdmin() {
   const [name, setName] = useState("");
   const [service, setService] = useState("");
   const [domains, setDomains] = useState("");
+  const [timezone, setTimezone] = useState("Asia/Seoul");
+  const [engagementThreshold, setEngagementThreshold] = useState(10);
+  const [editing, setEditing] = useState<Site | null>(null);
   const create = useMutation({
     mutationFn: () =>
       post<{ tracking_key: string; server_api_key: string }>("/api/v1/sites", {
@@ -151,6 +154,8 @@ function SitesAdmin() {
           .map((x) => x.trim())
           .filter(Boolean),
         session_timeout_minutes: 30,
+        timezone,
+        engagement_threshold_seconds: engagementThreshold,
       }),
     onSuccess: async (d) => {
       setSecret(
@@ -219,6 +224,13 @@ function SitesAdmin() {
                 </Typography>
               </Box>
               <Stack direction="row">
+                <Button
+                  size="small"
+                  startIcon={<EditOutlined />}
+                  onClick={() => setEditing(site)}
+                >
+                  설정
+                </Button>
                 <Button size="small" onClick={() => rotate.mutate(site.id)}>
                   Tracking 키 회전
                 </Button>
@@ -237,6 +249,11 @@ function SitesAdmin() {
               <Info
                 label="세션 만료"
                 value={`${site.session_timeout_minutes}분`}
+              />
+              <Info label="기준 시간대" value={site.timezone} />
+              <Info
+                label="참여 세션 기준"
+                value={`${site.engagement_threshold_seconds}초 또는 전환 또는 2 Page View`}
               />
               <Info
                 label="Tracking Key"
@@ -298,6 +315,20 @@ function SitesAdmin() {
               placeholder={"service.example.com\n*.intranet.example.com"}
               helperText="한 줄에 하나씩 입력하세요. 비워 두면 모든 Origin을 허용합니다."
             />
+            <TextField
+              label="IANA 시간대"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              placeholder="Asia/Seoul"
+              helperText="일별 집계와 날짜 범위의 기준입니다."
+            />
+            <TextField
+              label="참여 기준 시간(초)"
+              type="number"
+              value={engagementThreshold}
+              onChange={(e) => setEngagementThreshold(Number(e.target.value))}
+              slotProps={{ htmlInput: { min: 1, max: 300 } }}
+            />
             {create.error && (
               <Alert severity="error">{create.error.message}</Alert>
             )}
@@ -321,7 +352,117 @@ function SitesAdmin() {
           close={() => setSecret("")}
         />
       )}
+      {editing && (
+        <SiteSettingsDialog
+          site={editing}
+          close={() => setEditing(null)}
+          saved={async () => {
+            setEditing(null);
+            await qc.invalidateQueries({ queryKey: ["admin-sites"] });
+            await refresh();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function SiteSettingsDialog({
+  site,
+  close,
+  saved,
+}: {
+  site: Site;
+  close(): void;
+  saved(): Promise<void>;
+}) {
+  const [name, setName] = useState(site.name);
+  const [service, setService] = useState(site.service_name);
+  const [domains, setDomains] = useState(site.allowed_domains.join("\n"));
+  const [sessionTimeout, setSessionTimeout] = useState(
+    site.session_timeout_minutes,
+  );
+  const [timezone, setTimezone] = useState(site.timezone);
+  const [engagementThreshold, setEngagementThreshold] = useState(
+    site.engagement_threshold_seconds,
+  );
+  const update = useMutation({
+    mutationFn: () =>
+      patch(`/api/v1/sites/${site.id}`, {
+        name,
+        service_name: service,
+        allowed_domains: domains
+          .split(/[\n,]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        session_timeout_minutes: sessionTimeout,
+        timezone,
+        engagement_threshold_seconds: engagementThreshold,
+        active: site.active,
+      }),
+    onSuccess: saved,
+  });
+  return (
+    <Dialog open onClose={close} fullWidth maxWidth="sm">
+      <DialogTitle>사이트 분석 설정</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} pt={1}>
+          <TextField
+            label="사이트 이름"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+          <TextField
+            label="서비스 이름"
+            value={service}
+            onChange={(event) => setService(event.target.value)}
+          />
+          <TextField
+            label="허용 도메인"
+            multiline
+            minRows={3}
+            value={domains}
+            onChange={(event) => setDomains(event.target.value)}
+          />
+          <TextField
+            label="세션 만료(분)"
+            type="number"
+            value={sessionTimeout}
+            onChange={(event) => setSessionTimeout(Number(event.target.value))}
+            slotProps={{ htmlInput: { min: 1, max: 1440 } }}
+          />
+          <TextField
+            label="IANA 시간대"
+            value={timezone}
+            onChange={(event) => setTimezone(event.target.value)}
+            helperText="예: Asia/Seoul, America/New_York"
+          />
+          <TextField
+            label="참여 기준 시간(초)"
+            type="number"
+            value={engagementThreshold}
+            onChange={(event) =>
+              setEngagementThreshold(Number(event.target.value))
+            }
+            slotProps={{ htmlInput: { min: 1, max: 300 } }}
+            helperText="이 시간 이상이거나 전환이 있거나 Page View가 2회 이상이면 참여 세션입니다."
+          />
+          {update.error && (
+            <Alert severity="error">{update.error.message}</Alert>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={close}>취소</Button>
+        <Button
+          variant="contained"
+          onClick={() => update.mutate()}
+          disabled={!name || !timezone || update.isPending}
+        >
+          저장
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 }
 function Info({ label, value }: { label: string; value: string }) {

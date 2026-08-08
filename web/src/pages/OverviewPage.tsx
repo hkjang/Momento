@@ -20,10 +20,15 @@ interface Metrics {
   engagement_rate: number;
   avg_session_duration: number;
   conversions: number;
+  conversion_users: number;
+  conversion_sessions: number;
   conversion_rate: number;
+  user_conversion_rate: number;
+  session_conversion_rate: number;
   revenue: number;
 }
 interface Overview {
+  timezone: string;
   current: Metrics;
   previous: Metrics;
   trend: {
@@ -38,9 +43,11 @@ interface Overview {
 export default function OverviewPage() {
   const { site } = useSite();
   const q = useQuery({
-    queryKey: ["overview", site?.site_id],
+    queryKey: ["overview", site?.site_id, site?.timezone],
     queryFn: () =>
-      get<Overview>(`/api/v1/sites/${site!.site_id}/overview?${rangeQuery()}`),
+      get<Overview>(
+        `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(30, site!.timezone)}`,
+      ),
     enabled: !!site,
   });
   if (!site) return <NoSite />;
@@ -57,9 +64,9 @@ export default function OverviewPage() {
   return (
     <Stack spacing={2.5}>
       <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Chip label="최근 30일" variant="outlined" />
+        <Chip label={`최근 30일 · ${d.timezone}`} variant="outlined" />
         <Typography variant="caption" color="text.secondary">
-          10분 이내 집계 · Raw Event 기준
+          사이트 시간대 · Raw Event 기준
         </Typography>
       </Stack>
       <Box
@@ -177,9 +184,15 @@ export default function OverviewPage() {
             type="duration"
           />
           <MetricCard
-            label="전환율"
-            value={d.current.conversion_rate}
-            previous={d.previous.conversion_rate}
+            label="사용자 전환율"
+            value={d.current.user_conversion_rate}
+            previous={d.previous.user_conversion_rate}
+            type="percent"
+          />
+          <MetricCard
+            label="세션 전환율"
+            value={d.current.session_conversion_rate}
+            previous={d.previous.session_conversion_rate}
             type="percent"
           />
           <MetricCard

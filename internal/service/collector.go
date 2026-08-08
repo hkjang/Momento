@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,9 +164,13 @@ func (w Worker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = w.processBatch(ctx)
+			if err := w.processBatch(ctx); err != nil && ctx.Err() == nil {
+				slog.Error("event worker batch failed", "error", err)
+			}
 		case <-cleanup.C:
-			_ = w.cleanup(ctx)
+			if err := w.cleanup(ctx); err != nil && ctx.Err() == nil {
+				slog.Error("event worker cleanup failed", "error", err)
+			}
 		}
 	}
 }
@@ -195,22 +201,48 @@ func (w Worker) processBatch(ctx context.Context) error {
 		jobs = append(jobs, j)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	var privacy privacyConfig
 	var raw []byte
 	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='privacy'`).Scan(&raw); err == nil {
 		_ = json.Unmarshal(raw, &privacy)
 	}
 	for _, job := range jobs {
-		if err := w.processOne(ctx, tx, job.siteID, job.payload, privacy); err != nil {
-			if job.attempts >= 9 {
-				_, _ = tx.Exec(ctx, `INSERT INTO event_dead_letters(inbox_id,site_id,payload,error) VALUES($1,$2,$3,$4)`, job.id, job.siteID, job.payload, err.Error())
-				_, _ = tx.Exec(ctx, `UPDATE event_inbox SET attempts=attempts+1,last_error=$2,processed_at=now() WHERE id=$1`, job.id, err.Error())
-				continue
+		if _, err := tx.Exec(ctx, `SAVEPOINT momento_inbox_job`); err != nil {
+			return err
+		}
+		if processErr := w.processOne(ctx, tx, job.siteID, job.payload, privacy); processErr != nil {
+			// A PostgreSQL statement error aborts the current transaction until it is
+			// rolled back. Isolating every inbox job keeps the retry/dead-letter update
+			// writable and prevents one malformed event from blocking the whole batch.
+			if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT momento_inbox_job`); err != nil {
+				return fmt.Errorf("rollback failed inbox job %d: %w", job.id, err)
 			}
-			_, _ = tx.Exec(ctx, `UPDATE event_inbox SET attempts=attempts+1,last_error=$2,available_at=now()+least(interval '5 minutes', interval '1 second' * power(2,least(attempts,8))) WHERE id=$1`, job.id, err.Error())
+			if job.attempts >= 9 {
+				if _, err := tx.Exec(ctx, `INSERT INTO event_dead_letters(inbox_id,site_id,payload,error) VALUES($1,$2,$3,$4)`, job.id, job.siteID, job.payload, processErr.Error()); err != nil {
+					return fmt.Errorf("dead-letter inbox job %d: %w", job.id, err)
+				}
+				if _, err := tx.Exec(ctx, `UPDATE event_inbox SET attempts=attempts+1,last_error=$2,processed_at=now() WHERE id=$1`, job.id, processErr.Error()); err != nil {
+					return fmt.Errorf("finish dead-lettered inbox job %d: %w", job.id, err)
+				}
+			} else {
+				if _, err := tx.Exec(ctx, `UPDATE event_inbox SET attempts=attempts+1,last_error=$2,available_at=now()+least(interval '5 minutes', interval '1 second' * power(2,least(attempts,8))) WHERE id=$1`, job.id, processErr.Error()); err != nil {
+					return fmt.Errorf("schedule retry for inbox job %d: %w", job.id, err)
+				}
+			}
+			if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT momento_inbox_job`); err != nil {
+				return err
+			}
 			continue
 		}
-		_, _ = tx.Exec(ctx, `UPDATE event_inbox SET processed_at=now(),last_error=NULL WHERE id=$1`, job.id)
+		if _, err := tx.Exec(ctx, `RELEASE SAVEPOINT momento_inbox_job`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE event_inbox SET processed_at=now(),last_error=NULL WHERE id=$1`, job.id); err != nil {
+			return fmt.Errorf("finish inbox job %d: %w", job.id, err)
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -300,8 +332,11 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 	if event.Name == "page_view" && pageURL != "" {
 		page = pageURL
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type)
-		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6,$7,$8,$9,$9,nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''))
+	activeMS := activeEngagementMilliseconds(event)
+	heartbeat := boolInt(event.Name == "user_engagement")
+	interaction := boolInt(isInteractionEvent(event.Name))
+	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6::bigint,$7::bigint,($7::bigint>0 OR $6::bigint>=2 OR $13::bigint >= (SELECT engagement_threshold_seconds::bigint*1000 FROM sites WHERE id=$1)),$8,$8,nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),$13::bigint,$14::bigint,$15::bigint)
 		ON CONFLICT(site_id,session_id) DO UPDATE SET
 		visitor_id=excluded.visitor_id,
 		user_id=coalesce(excluded.user_id,sessions.user_id),
@@ -312,16 +347,59 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 		event_count=sessions.event_count+1,
 		page_views=sessions.page_views+excluded.page_views,
 		conversion_count=sessions.conversion_count+excluded.conversion_count,
-		engaged=sessions.engaged OR excluded.engaged,
+		active_engagement_ms=sessions.active_engagement_ms+excluded.active_engagement_ms,
+		heartbeat_count=sessions.heartbeat_count+excluded.heartbeat_count,
+		interaction_count=sessions.interaction_count+excluded.interaction_count,
+		engaged=(extract(epoch FROM (greatest(sessions.last_event_at,excluded.last_event_at)-least(sessions.started_at,excluded.started_at))) >= (SELECT engagement_threshold_seconds FROM sites WHERE id=$1)
+			OR sessions.conversion_count+excluded.conversion_count>0
+			OR sessions.page_views+excluded.page_views>=2
+			OR sessions.active_engagement_ms+excluded.active_engagement_ms >= (SELECT engagement_threshold_seconds*1000 FROM sites WHERE id=$1)),
 		source=coalesce(sessions.source,excluded.source),
 		medium=coalesce(sessions.medium,excluded.medium),
 		campaign=coalesce(sessions.campaign,excluded.campaign),
 		device_type=coalesce(sessions.device_type,excluded.device_type),
-		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), event.Name == "user_engagement", page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type)
+		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type, activeMS, heartbeat, interaction)
 	return err
 }
 
-func boolInt(value bool) int {
+func activeEngagementMilliseconds(event model.IncomingEvent) int64 {
+	if event.Name != "user_engagement" {
+		return 0
+	}
+	var seconds float64
+	switch value := event.Properties["active_seconds"].(type) {
+	case float64:
+		seconds = value
+	case float32:
+		seconds = float64(value)
+	case int:
+		seconds = float64(value)
+	case int64:
+		seconds = float64(value)
+	case json.Number:
+		seconds, _ = value.Float64()
+	case string:
+		seconds, _ = strconv.ParseFloat(value, 64)
+	}
+	if seconds < 0 {
+		return 0
+	}
+	if seconds > 3600 {
+		seconds = 3600
+	}
+	return int64(seconds * 1000)
+}
+
+func isInteractionEvent(name string) bool {
+	switch name {
+	case "click", "outbound_click", "file_download", "search", "login", "sign_up", "form_start", "form_submit", "conversion", "purchase", "add_to_cart", "begin_checkout", "error":
+		return true
+	default:
+		return false
+	}
+}
+
+func boolInt(value bool) int64 {
 	if value {
 		return 1
 	}
@@ -400,6 +478,9 @@ func sanitizeURL(raw string, privacy privacyConfig) string {
 	if err != nil {
 		return raw
 	}
+	// URL fragments frequently contain client-side route state and access tokens.
+	// They are never required for server-side page aggregation.
+	u.Fragment = ""
 	if privacy.StripQueryString {
 		u.RawQuery = ""
 		return u.String()

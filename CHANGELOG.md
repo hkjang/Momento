@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0
+
+- Captured page, device, and first-touch acquisition context at event occurrence time so SPA route changes cannot rewrite queued event context.
+- Made `consent-required` fail closed even when browser storage is unavailable, while preserving an in-memory consent grant and the original acquisition context.
+- Changed automatic DOM text collection to opt-in, sanitized common PII patterns in browser error messages, and removed query strings and fragments from SDK URLs by default.
+- Changed the server privacy baseline to strip URL query strings before the durable inbox write.
+- Added user and session conversion counts/rates; retained `conversion_rate` as a compatibility alias for user conversion rate.
+- Defined engaged sessions as threshold duration, a conversion, two page views, or sufficient active engagement, and materialized active milliseconds, heartbeat count, and interaction count.
+- Added per-site IANA timezone and engagement-threshold settings with an administrator editor and immediate Session summary reconciliation.
+- Applied site-local calendar boundaries to dashboard, reports, Query, Funnel, exports, privacy deletion, and MCP date ranges.
+- Isolated Worker inbox jobs with PostgreSQL savepoints so a failed event cannot abort retry/dead-letter bookkeeping or block valid jobs in the same batch.
+- Made privacy deletion atomically scrub Inbox/Dead Letter payloads, update Raw Events, and rebuild Session summaries.
+
 ## v0.2.0
 
 - Added nested AND/OR Segment Registry with personal and shared ownership.

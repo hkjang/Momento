@@ -18,7 +18,7 @@ import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
 import SaveRounded from "@mui/icons-material/SaveRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { del, get, post, put } from "../api/client";
+import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { NoSite } from "../components/States";
@@ -44,6 +44,10 @@ const metrics = [
   "sessions",
   "page_views",
   "conversions",
+  "conversion_users",
+  "conversion_sessions",
+  "user_conversion_rate",
+  "session_conversion_rate",
   "revenue",
 ];
 export default function ExplorerPage() {
@@ -92,12 +96,7 @@ export default function ExplorerPage() {
         "/api/v1/query",
         {
           site_id: site!.site_id,
-          date_range: {
-            from: new Date(Date.now() - 29 * 86400000)
-              .toISOString()
-              .slice(0, 10),
-            to: new Date().toISOString().slice(0, 10),
-          },
+          date_range: dateRangeValues(30, site!.timezone),
           dimensions: dims,
           metrics: mets,
           filters: [],

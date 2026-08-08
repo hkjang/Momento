@@ -86,12 +86,12 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT session_id,visitor_id,user_id,started_at,last_event_at,extract(epoch from(last_event_at-started_at))::double precision,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type FROM sessions WHERE site_id=$1 AND last_event_at >= $2 AND last_event_at < $3 ORDER BY last_event_at DESC LIMIT 500`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `SELECT session_id,visitor_id,user_id,started_at,last_event_at,extract(epoch from(last_event_at-started_at))::double precision,event_count,page_views,conversion_count,engaged,active_engagement_ms,heartbeat_count,interaction_count,landing_page,exit_page,source,medium,campaign,device_type FROM sessions WHERE site_id=$1 AND last_event_at >= $2 AND last_event_at < $3 ORDER BY last_event_at DESC LIMIT 500`, siteID, from, to)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -101,10 +101,10 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		var userID, landing, exitPage, source, medium, campaign, device *string
 		var started, last time.Time
 		var duration float64
-		var events, pageViews, conversions int64
+		var events, pageViews, conversions, activeMS, heartbeats, interactions int64
 		var engaged bool
-		err := rows.Scan(&sessionID, &visitorID, &userID, &started, &last, &duration, &events, &pageViews, &conversions, &engaged, &landing, &exitPage, &source, &medium, &campaign, &device)
-		return map[string]any{"session_id": sessionID, "visitor_id": visitorID, "user_id": userID, "started_at": started, "last_event_at": last, "duration_seconds": duration, "events": events, "page_views": pageViews, "conversions": conversions, "engaged": engaged, "landing_page": landing, "exit_page": exitPage, "source": source, "medium": medium, "campaign": campaign, "device_type": device}, err
+		err := rows.Scan(&sessionID, &visitorID, &userID, &started, &last, &duration, &events, &pageViews, &conversions, &engaged, &activeMS, &heartbeats, &interactions, &landing, &exitPage, &source, &medium, &campaign, &device)
+		return map[string]any{"session_id": sessionID, "visitor_id": visitorID, "user_id": userID, "started_at": started, "last_event_at": last, "duration_seconds": duration, "events": events, "page_views": pageViews, "conversions": conversions, "engaged": engaged, "active_engagement_ms": activeMS, "heartbeat_count": heartbeats, "interaction_count": interactions, "landing_page": landing, "exit_page": exitPage, "source": source, "medium": medium, "campaign": campaign, "device_type": device}, err
 	})
 	writeJSON(w, 200, out)
 }
@@ -125,7 +125,7 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_VISITOR", "visitor id is required")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
@@ -177,7 +177,7 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	from, to, err := dateRange(r)
+	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
