@@ -64,7 +64,7 @@ cd ../web && npm install && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 이미지만 `momento-image-<version>-linux-amd64.tar.gz`로 내보내 Release에 첨부합니다. 소스 번들 또는 온라인 설치 스크립트는 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.1.0` 태그는 `momento-v0.1.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

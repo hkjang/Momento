@@ -3,6 +3,8 @@
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+RELEASE_VERSION := $(patsubst v%,%,$(VERSION))
+RELEASE_NAME := momento-v$(RELEASE_VERSION)
 
 test:
 	go test ./cmd/... ./internal/...
@@ -22,6 +24,7 @@ dev:
 docker:
 	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t momento:$(VERSION) .
 
-release-image: docker
-	docker save momento:$(VERSION) | gzip -9 > momento-image-$(VERSION)-linux-amd64.tar.gz
-	sha256sum momento-image-$(VERSION)-linux-amd64.tar.gz > momento-image-$(VERSION)-linux-amd64.tar.gz.sha256
+release-image:
+	docker build --build-arg VERSION=$(RELEASE_VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_TIME=$(BUILD_TIME) -t $(RELEASE_NAME) .
+	docker save $(RELEASE_NAME) | gzip -9 > $(RELEASE_NAME).tar.gz
+	sha256sum $(RELEASE_NAME).tar.gz > $(RELEASE_NAME).tar.gz.sha256

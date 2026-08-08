@@ -15,18 +15,18 @@ jobs:
             --build-arg VERSION="${GITHUB_REF_NAME#v}" \
             --build-arg COMMIT="${GITHUB_SHA::12}" \
             --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t "momento:${GITHUB_REF_NAME#v}" .
+            -t "momento-${GITHUB_REF_NAME}" .
       - name: Export offline image only
         run: |
-          docker save "momento:${GITHUB_REF_NAME#v}" | gzip -9 > "momento-image-${GITHUB_REF_NAME#v}-linux-amd64.tar.gz"
-          sha256sum "momento-image-${GITHUB_REF_NAME#v}-linux-amd64.tar.gz" > "momento-image-${GITHUB_REF_NAME#v}-linux-amd64.tar.gz.sha256"
+          docker save "momento-${GITHUB_REF_NAME}" | gzip -9 > "momento-${GITHUB_REF_NAME}.tar.gz"
+          sha256sum "momento-${GITHUB_REF_NAME}.tar.gz" > "momento-${GITHUB_REF_NAME}.tar.gz.sha256"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "momento-image-${GITHUB_REF_NAME#v}-linux-amd64.tar.gz" \
-            "momento-image-${GITHUB_REF_NAME#v}-linux-amd64.tar.gz.sha256" \
+            "momento-${GITHUB_REF_NAME}.tar.gz" \
+            "momento-${GITHUB_REF_NAME}.tar.gz.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --generate-notes \
             --verify-tag
