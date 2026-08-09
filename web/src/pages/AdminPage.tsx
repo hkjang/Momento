@@ -14,69 +14,512 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
   MenuItem,
   Stack,
-  Tab,
-  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
 import AddRounded from "@mui/icons-material/AddRounded";
+import AccountTreeRounded from "@mui/icons-material/AccountTreeRounded";
+import AdminPanelSettingsRounded from "@mui/icons-material/AdminPanelSettingsRounded";
+import BugReportRounded from "@mui/icons-material/BugReportRounded";
+import ChevronRightRounded from "@mui/icons-material/ChevronRightRounded";
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
+import HomeRounded from "@mui/icons-material/HomeRounded";
 import KeyRounded from "@mui/icons-material/KeyRounded";
+import LanRounded from "@mui/icons-material/LanRounded";
+import PeopleAltRounded from "@mui/icons-material/PeopleAltRounded";
 import SaveRounded from "@mui/icons-material/SaveRounded";
+import SchemaRounded from "@mui/icons-material/SchemaRounded";
+import SecurityRounded from "@mui/icons-material/SecurityRounded";
+import SettingsRounded from "@mui/icons-material/SettingsRounded";
+import StorageRounded from "@mui/icons-material/StorageRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { del, get, patch, post, put, type Site } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
 
-const adminTabs = [
-  "사이트",
-  "SSO · 일반",
-  "개인정보",
-  "보존 정책",
-  "네트워크 망",
-  "사용자 · 권한",
-  "이벤트 스키마",
-  "사용자 정의 차원",
-  "Tracking Debugger",
-  "감사 로그",
-];
+const adminSections = [
+  {
+    id: "overview",
+    label: "관리 홈",
+    description: "운영 상태와 빠른 작업",
+    group: "관리 센터",
+    icon: <HomeRounded />,
+  },
+  {
+    id: "sites",
+    label: "사이트",
+    description: "수집 경계와 Tracking Key",
+    group: "서비스 설정",
+    icon: <StorageRounded />,
+  },
+  {
+    id: "settings",
+    label: "SSO · 일반",
+    description: "Keycloak과 공통 보안 설정",
+    group: "서비스 설정",
+    icon: <SettingsRounded />,
+  },
+  {
+    id: "privacy",
+    label: "개인정보",
+    description: "PII와 최소 수집 정책",
+    group: "보안 · 데이터",
+    icon: <SecurityRounded />,
+  },
+  {
+    id: "retention",
+    label: "보존 정책",
+    description: "Raw Event와 집계 보존",
+    group: "보안 · 데이터",
+    icon: <FactCheckRounded />,
+  },
+  {
+    id: "networks",
+    label: "네트워크 망",
+    description: "CIDR 기반 사내망 분류",
+    group: "보안 · 데이터",
+    icon: <LanRounded />,
+  },
+  {
+    id: "users",
+    label: "사용자 · 권한",
+    description: "RBAC와 Workspace 권한",
+    group: "접근 제어",
+    icon: <PeopleAltRounded />,
+  },
+  {
+    id: "schemas",
+    label: "이벤트 스키마",
+    description: "Event Contract와 전환",
+    group: "Tracking 설계",
+    icon: <SchemaRounded />,
+  },
+  {
+    id: "dimensions",
+    label: "사용자 정의 차원",
+    description: "User·Session·Event Scope",
+    group: "Tracking 설계",
+    icon: <AccountTreeRounded />,
+  },
+  {
+    id: "debugger",
+    label: "Tracking Debugger",
+    description: "수집 이벤트와 오류 확인",
+    group: "운영 도구",
+    icon: <BugReportRounded />,
+  },
+  {
+    id: "audit",
+    label: "감사 로그",
+    description: "관리자 작업 추적",
+    group: "운영 도구",
+    icon: <AdminPanelSettingsRounded />,
+  },
+] as const;
+
 export default function AdminPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("section") || "overview";
+  const section = adminSections.some((item) => item.id === requested)
+    ? requested
+    : "overview";
+  const active = adminSections.find((item) => item.id === section)!;
   if (user?.role === "analyst" || user?.role === "viewer")
     return <Alert severity="warning">관리자 권한이 필요합니다.</Alert>;
+  const selectSection = (id: string) => {
+    if (id === "overview") setParams({});
+    else setParams({ section: id });
+  };
+  const content =
+    section === "sites" ? (
+      <SitesAdmin />
+    ) : section === "settings" ? (
+      <SettingsAdmin groups={["general", "oidc", "storage", "security"]} />
+    ) : section === "privacy" ? (
+      <PrivacyAdmin />
+    ) : section === "retention" ? (
+      <RetentionAdmin />
+    ) : section === "networks" ? (
+      <NetworksAdmin />
+    ) : section === "users" ? (
+      <UsersAdmin />
+    ) : section === "schemas" ? (
+      <SchemasAdmin />
+    ) : section === "dimensions" ? (
+      <DimensionsAdmin />
+    ) : section === "debugger" ? (
+      <DebuggerAdmin />
+    ) : section === "audit" ? (
+      <AuditAdmin />
+    ) : (
+      <AdminOverview />
+    );
+
   return (
-    <Stack spacing={2}>
-      <Card sx={{ px: 1 }}>
-        <Tabs
-          value={tab}
-          onChange={(_, v) => setTab(v)}
-          variant="scrollable"
-          scrollButtons="auto"
+    <Stack spacing={2.5}>
+      <TextField
+        select
+        label="관리 메뉴"
+        value={section}
+        onChange={(event) => selectSection(event.target.value)}
+        sx={{ display: { xs: "flex", md: "none" } }}
+      >
+        {adminSections.map((item) => (
+          <MenuItem key={item.id} value={item.id}>
+            {item.label} · {item.description}
+          </MenuItem>
+        ))}
+      </TextField>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "minmax(0,1fr)",
+            md: "248px minmax(0,1fr)",
+          },
+          gap: 2.5,
+          alignItems: "start",
+        }}
+      >
+        <Card
+          component="aside"
+          sx={{
+            display: { xs: "none", md: "block" },
+            p: 1.25,
+            position: "sticky",
+            top: 92,
+            maxHeight: "calc(100vh - 116px)",
+            overflowY: "auto",
+          }}
         >
-          {adminTabs.map((x) => (
-            <Tab key={x} label={x} />
-          ))}
-        </Tabs>
+          {[...new Set(adminSections.map((item) => item.group))].map(
+            (group) => (
+              <Box key={group} sx={{ mb: 1.2 }}>
+                <Typography
+                  variant="overline"
+                  color="text.secondary"
+                  sx={{
+                    px: 1.25,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: ".08em",
+                  }}
+                >
+                  {group}
+                </Typography>
+                <List disablePadding>
+                  {adminSections
+                    .filter((item) => item.group === group)
+                    .map((item) => (
+                      <ListItemButton
+                        key={item.id}
+                        selected={section === item.id}
+                        onClick={() => selectSection(item.id)}
+                        sx={{
+                          borderRadius: 2,
+                          mb: 0.25,
+                          alignItems: "flex-start",
+                          "&.Mui-selected": {
+                            bgcolor: "#EEEEFF",
+                            color: "primary.dark",
+                          },
+                        }}
+                      >
+                        <ListItemIcon
+                          sx={{
+                            minWidth: 36,
+                            color: "inherit",
+                            mt: 0.25,
+                            "& svg": { fontSize: 19 },
+                          }}
+                        >
+                          {item.icon}
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={item.label}
+                          secondary={item.description}
+                          primaryTypographyProps={{
+                            fontSize: 13.5,
+                            fontWeight: 700,
+                          }}
+                          secondaryTypographyProps={{
+                            fontSize: 10.5,
+                            lineHeight: 1.35,
+                          }}
+                        />
+                      </ListItemButton>
+                    ))}
+                </List>
+              </Box>
+            ),
+          )}
+        </Card>
+        <Box minWidth={0}>
+          {section !== "overview" && (
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              justifyContent="space-between"
+              alignItems={{ xs: "flex-start", sm: "center" }}
+              gap={1}
+              sx={{ mb: 2 }}
+            >
+              <Box>
+                <Stack direction="row" gap={1} alignItems="center">
+                  <Box sx={{ color: "primary.main", display: "flex" }}>
+                    {active.icon}
+                  </Box>
+                  <Typography variant="h6">{active.label}</Typography>
+                </Stack>
+                <Typography variant="body2" color="text.secondary" mt={0.3}>
+                  {active.description}
+                </Typography>
+              </Box>
+              <Chip
+                size="small"
+                label="변경 사항은 감사 로그에 기록됩니다"
+                variant="outlined"
+              />
+            </Stack>
+          )}
+          {content}
+        </Box>
+      </Box>
+    </Stack>
+  );
+}
+
+function AdminOverview() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const { sites, site, environments, environment } = useSite();
+  const summary = [
+    {
+      label: "등록 사이트",
+      value: sites.length,
+      detail: `${sites.filter((item) => item.active).length}개 수집 중`,
+    },
+    {
+      label: "현재 환경",
+      value: environment.toUpperCase(),
+      detail: `${environments.length}개 환경 등록`,
+    },
+    {
+      label: "기준 시간대",
+      value: site?.timezone || "—",
+      detail: "일별 집계 기준",
+    },
+    {
+      label: "내 권한",
+      value: user?.role.replaceAll("_", " ") || "—",
+      detail: user?.organization_name || "Momento",
+    },
+  ];
+  const quickActions = [
+    {
+      title: "새 사이트와 SDK 연결",
+      description: "수집 경계, 허용 도메인과 Tracking Key를 구성합니다.",
+      to: "/admin?section=sites",
+      color: "#5B5CE2",
+    },
+    {
+      title: "Keycloak SSO 구성",
+      description: "Issuer, Client ID와 Claim Mapping을 설정합니다.",
+      to: "/admin?section=settings",
+      color: "#0F9F8F",
+    },
+    {
+      title: "Tracking 계약 설계",
+      description: "Event Contract와 Custom Dimension을 등록합니다.",
+      to: "/admin/governance",
+      color: "#C47A0A",
+    },
+    {
+      title: "데이터 품질 확인",
+      description: "PII, 지연, 중복과 Cardinality 위험을 확인합니다.",
+      to: "/data-quality",
+      color: "#D14A50",
+    },
+  ];
+  const platform = [
+    {
+      label: "Analytics Engineering",
+      description: "Metric · Goal · Query Cost · Aggregate",
+      to: "/admin/analytics-engineering",
+    },
+    {
+      label: "Feature Flag · Lab",
+      description: "실험 계약과 Variant 관리",
+      to: "/admin/product-lab",
+    },
+    {
+      label: "Privacy Requests",
+      description: "삭제와 Export 승인 Workflow",
+      to: "/admin/privacy-requests",
+    },
+    {
+      label: "Report · Action",
+      description: "Scheduled Report와 Webhook",
+      to: "/admin/automation",
+    },
+  ];
+  return (
+    <Stack spacing={2.5}>
+      <Card className="admin-hero" sx={{ p: { xs: 2.5, md: 3.25 } }}>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          justifyContent="space-between"
+          gap={2}
+        >
+          <Box maxWidth={700}>
+            <Chip
+              size="small"
+              label="ADMIN CONTROL PLANE"
+              sx={{ mb: 1.5, bgcolor: "rgba(255,255,255,.14)", color: "white" }}
+            />
+            <Typography variant="h5" color="white">
+              데이터 수집부터 거버넌스까지 한곳에서 운영하세요.
+            </Typography>
+            <Typography color="rgba(255,255,255,.72)" variant="body2" mt={1}>
+              자주 사용하는 작업은 바로 시작하고, 위험한 변경은 상태와 영향
+              범위를 확인한 뒤 실행할 수 있습니다.
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            color="inherit"
+            startIcon={<AddRounded />}
+            onClick={() => navigate("/admin?section=sites")}
+            sx={{
+              alignSelf: { xs: "flex-start", md: "center" },
+              color: "primary.dark",
+              bgcolor: "white",
+            }}
+          >
+            사이트 추가
+          </Button>
+        </Stack>
       </Card>
-      {tab === 0 && <SitesAdmin />}
-      {tab === 1 && (
-        <SettingsAdmin groups={["general", "oidc", "storage", "security"]} />
-      )}{" "}
-      {tab === 2 && <PrivacyAdmin />}
-      {tab === 3 && <RetentionAdmin />}
-      {tab === 4 && <NetworksAdmin />}
-      {tab === 5 && <UsersAdmin />}
-      {tab === 6 && <SchemasAdmin />}
-      {tab === 7 && <DimensionsAdmin />}
-      {tab === 8 && <DebuggerAdmin />}
-      {tab === 9 && <AuditAdmin />}
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2,minmax(0,1fr))",
+            xl: "repeat(4,minmax(0,1fr))",
+          },
+          gap: 2,
+        }}
+      >
+        {summary.map((item) => (
+          <Card key={item.label} sx={{ p: 2.2 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              fontWeight={700}
+            >
+              {item.label}
+            </Typography>
+            <Typography
+              fontSize={{ xs: 20, md: 25 }}
+              fontWeight={760}
+              mt={0.6}
+              noWrap
+            >
+              {item.value}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {item.detail}
+            </Typography>
+          </Card>
+        ))}
+      </Box>
+      <Box>
+        <Typography variant="h6">빠른 작업</Typography>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          운영 빈도가 높은 설정과 점검을 바로 시작합니다.
+        </Typography>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", lg: "repeat(2,minmax(0,1fr))" },
+            gap: 1.5,
+          }}
+        >
+          {quickActions.map((item) => (
+            <Card
+              key={item.title}
+              component="button"
+              className="action-card"
+              onClick={() => navigate(item.to)}
+              sx={{ p: 2.2, textAlign: "left", cursor: "pointer" }}
+            >
+              <Stack direction="row" gap={1.5} alignItems="center">
+                <Box
+                  sx={{
+                    width: 10,
+                    height: 44,
+                    borderRadius: 2,
+                    bgcolor: item.color,
+                  }}
+                />
+                <Box flex={1}>
+                  <Typography fontWeight={720}>{item.title}</Typography>
+                  <Typography variant="body2" color="text.secondary" mt={0.25}>
+                    {item.description}
+                  </Typography>
+                </Box>
+                <ChevronRightRounded color="action" />
+              </Stack>
+            </Card>
+          ))}
+        </Box>
+      </Box>
+      <Box>
+        <Typography variant="h6">고급 운영</Typography>
+        <Typography variant="body2" color="text.secondary" mb={1.5}>
+          분석 엔지니어링과 개인정보 Workflow를 독립된 작업 공간에서 관리합니다.
+        </Typography>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", md: "repeat(2,minmax(0,1fr))" },
+            gap: 1.5,
+          }}
+        >
+          {platform.map((item) => (
+            <ListItemButton
+              key={item.to}
+              onClick={() => navigate(item.to)}
+              sx={{
+                bgcolor: "background.paper",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 2.5,
+                py: 1.6,
+              }}
+            >
+              <ListItemText
+                primary={item.label}
+                secondary={item.description}
+                primaryTypographyProps={{ fontWeight: 700 }}
+              />
+              <ChevronRightRounded color="action" />
+            </ListItemButton>
+          ))}
+        </Box>
+      </Box>
     </Stack>
   );
 }

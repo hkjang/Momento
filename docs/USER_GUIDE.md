@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.6.0
+- **문서 버전**: v0.7.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
 
@@ -207,3 +207,11 @@ print(dept_stats)
 ## 6. 개인정보 요청 Workflow
 
 관리자는 Privacy Requests에서 삭제 또는 Export 요청을 먼저 생성하고 별도의 승인 동작으로 실행합니다. User ID 삭제는 Identity Graph에 연결된 Visitor까지 포함하며, 기간 삭제는 Site Timezone 경계를 사용합니다. 요청자·승인자·결과 건수·상태는 Audit와 요청 이력에 남습니다. 승인 완료된 Export는 이벤트·사용자·세션 속성을 포함한 전체 NDJSON으로 내려받을 수 있습니다.
+
+## 7. Console 탐색과 표 활용
+
+- 좌측 메뉴는 모니터링, 웹 분석, 제품 분석, 탐색·실험, 경험·AI로 묶여 있으며 현재 화면이 속한 그룹만 자동으로 펼쳐집니다.
+- `Ctrl+K` 또는 macOS의 `Cmd+K`를 누르면 화면, 분석 기능, 관리자 설정을 이름으로 검색해 바로 이동할 수 있습니다. 일반 사용자는 권한이 없는 관리자 명령을 볼 수 없습니다.
+- 상단 Breadcrumb와 Site·Environment Context를 확인하면 현재 분석 범위를 놓치지 않을 수 있습니다.
+- 데이터 표는 행 검색, 페이지당 행 수 변경과 CSV 내보내기를 공통으로 지원합니다. CSV는 현재 검색 결과를 UTF-8 BOM 형식으로 저장합니다.
+- 모바일에서는 Sidebar 대신 Drawer와 축약된 Site Selector를 사용하며, 넓은 표는 가로 스크롤로 열 손실 없이 확인합니다.
