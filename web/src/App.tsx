@@ -17,6 +17,8 @@ import EcommercePage from "./pages/EcommercePage";
 import UserExplorerPage from "./pages/UserExplorerPage";
 import PlatformAnalyticsPage from "./pages/PlatformAnalyticsPage";
 import PlatformAdminPage from "./pages/PlatformAdminPage";
+import EnterpriseAnalyticsPage from "./pages/EnterpriseAnalyticsPage";
+import EnterpriseAdminPage from "./pages/EnterpriseAdminPage";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -54,8 +56,18 @@ export default function App() {
           <Route path="/insights" element={<PlatformAnalyticsPage mode="insights" />} />
           <Route path="/ai-analytics" element={<PlatformAnalyticsPage mode="ai" />} />
           <Route path="/data-quality" element={<PlatformAnalyticsPage mode="quality" />} />
+		  <Route path="/workspace" element={<EnterpriseAnalyticsPage mode="workspace" />} />
+		  <Route path="/features" element={<EnterpriseAnalyticsPage mode="features" />} />
+		  <Route path="/search-analytics" element={<EnterpriseAnalyticsPage mode="search" />} />
+		  <Route path="/frustration" element={<EnterpriseAnalyticsPage mode="frustration" />} />
+		  <Route path="/experiments" element={<EnterpriseAnalyticsPage mode="experiments" />} />
+		  <Route path="/goals" element={<EnterpriseAnalyticsPage mode="goals" />} />
+		  <Route path="/change-calendar" element={<EnterpriseAnalyticsPage mode="calendar" />} />
           <Route path="/admin/governance" element={<PlatformAdminPage mode="governance" />} />
           <Route path="/admin/automation" element={<PlatformAdminPage mode="automation" />} />
+		  <Route path="/admin/analytics-engineering" element={<EnterpriseAdminPage mode="engineering" />} />
+		  <Route path="/admin/privacy-requests" element={<EnterpriseAdminPage mode="privacy" />} />
+		  <Route path="/admin/product-lab" element={<EnterpriseAdminPage mode="product" />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

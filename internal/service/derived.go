@@ -2,10 +2,30 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// RebuildEnvironmentDateRange reconciles site-local daily aggregates from Raw
+// Events. It is used for late-arriving events and administrator backfills while
+// keeping Raw Events immutable.
+func RebuildEnvironmentDateRange(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, environment string, from, to time.Time) error {
+	for _, table := range []string{"daily_site_sessions", "daily_site_visitors", "daily_site_metrics"} {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date <= $4::date`, siteID, environment, from, to); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, rebuildRangeDailyMetricsSQL, siteID, environment, from, to); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, rebuildRangeDailyVisitorsSQL, siteID, environment, from, to); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, rebuildRangeDailySessionsSQL, siteID, environment, from, to)
+	return err
+}
 
 // RebuildSiteDerivedData restores every mutable aggregate from Raw Events.
 // Raw Events remain the source of truth for privacy deletion, retention, and
@@ -82,7 +102,16 @@ SELECT site_id,visitor_id,session_id,
 	min(event_timestamp),max(event_timestamp)
 FROM raw_events WHERE site_id=$1 GROUP BY site_id,visitor_id,session_id`
 
-const rebuildSessionsSQL = `WITH aggregates AS (
+const rebuildSessionsSQL = `WITH property_entries AS (
+	SELECT DISTINCT ON(e.site_id,e.environment,e.session_id,p.key)
+		e.site_id,e.environment,e.session_id,p.key,p.value
+	FROM raw_events e CROSS JOIN LATERAL jsonb_each(e.session_properties) p
+	WHERE e.site_id=$1
+	ORDER BY e.site_id,e.environment,e.session_id,p.key,e.event_timestamp DESC,e.id DESC
+), property_sets AS (
+	SELECT site_id,environment,session_id,jsonb_object_agg(key,value) session_properties
+	FROM property_entries GROUP BY site_id,environment,session_id
+), aggregates AS (
 	SELECT e.site_id,e.environment,e.session_id,
 		(array_agg(e.visitor_id ORDER BY e.event_timestamp,e.id))[1] visitor_id,
 		(array_agg(e.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_id IS NOT NULL))[1] user_id,
@@ -100,11 +129,12 @@ const rebuildSessionsSQL = `WITH aggregates AS (
 		(array_agg(e.device_type ORDER BY e.event_timestamp,e.id) FILTER(WHERE e.device_type IS NOT NULL))[1] device_type
 	FROM raw_events e WHERE e.site_id=$1 GROUP BY e.site_id,e.environment,e.session_id
 )
-INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count,environment)
+INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count,environment,session_properties)
 SELECT a.site_id,a.session_id,a.visitor_id,a.user_id,a.started_at,a.last_event_at,a.event_count,a.page_views,a.conversion_count,
 	extract(epoch FROM (a.last_event_at-a.started_at)) >= site.engagement_threshold_seconds OR a.conversion_count>0 OR a.page_views>=2 OR a.active_engagement_ms>=site.engagement_threshold_seconds*1000,
-	a.landing_page,a.exit_page,a.source,a.medium,a.campaign,a.device_type,a.active_engagement_ms,a.heartbeat_count,a.interaction_count,a.environment
-FROM aggregates a JOIN sites site ON site.id=a.site_id`
+	a.landing_page,a.exit_page,a.source,a.medium,a.campaign,a.device_type,a.active_engagement_ms,a.heartbeat_count,a.interaction_count,a.environment,coalesce(p.session_properties,'{}'::jsonb)
+FROM aggregates a JOIN sites site ON site.id=a.site_id
+LEFT JOIN property_sets p ON p.site_id=a.site_id AND p.environment=a.environment AND p.session_id=a.session_id`
 
 const rebuildDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
 SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,count(*),
@@ -130,3 +160,31 @@ SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment
 FROM raw_events e JOIN sites s ON s.id=e.site_id
 LEFT JOIN visitor_identities i ON i.site_id=e.site_id AND i.visitor_id=e.visitor_id
 WHERE e.site_id=$1 GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.session_id`
+
+const rebuildRangeDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,count(*),
+	count(*) FILTER(WHERE e.event_name='page_view'),count(*) FILTER(WHERE e.is_conversion),
+	coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value',e.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(e.properties->>'value',e.properties->>'revenue')::numeric ELSE 0 END),0)
+FROM raw_events e JOIN sites s ON s.id=e.site_id
+WHERE e.site_id=$1 AND e.environment=$2 AND (e.event_timestamp AT TIME ZONE s.timezone)::date >= $3::date AND (e.event_timestamp AT TIME ZONE s.timezone)::date <= $4::date
+GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment`
+
+const rebuildRangeDailyVisitorsSQL = `INSERT INTO daily_site_visitors(site_id,event_date,environment,visitor_id,user_id,first_seen,last_seen,event_count,conversion_count,user_properties)
+SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.visitor_id,
+	coalesce(i.user_id,(array_agg(e.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_id IS NOT NULL))[1]),
+	min(e.event_timestamp),max(e.event_timestamp),count(*),count(*) FILTER(WHERE e.is_conversion),
+	coalesce((array_agg(e.user_properties ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_properties <> '{}'::jsonb))[1],'{}'::jsonb)
+FROM raw_events e JOIN sites s ON s.id=e.site_id
+LEFT JOIN visitor_identities i ON i.site_id=e.site_id AND i.visitor_id=e.visitor_id
+WHERE e.site_id=$1 AND e.environment=$2 AND (e.event_timestamp AT TIME ZONE s.timezone)::date >= $3::date AND (e.event_timestamp AT TIME ZONE s.timezone)::date <= $4::date
+GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.visitor_id,i.user_id`
+
+const rebuildRangeDailySessionsSQL = `INSERT INTO daily_site_sessions(site_id,event_date,environment,session_id,visitor_id,user_id,first_seen,last_seen)
+SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.session_id,
+	(array_agg(e.visitor_id ORDER BY e.event_timestamp,e.id))[1],
+	coalesce((array_agg(i.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE i.user_id IS NOT NULL))[1],(array_agg(e.user_id ORDER BY e.event_timestamp DESC,e.id DESC) FILTER(WHERE e.user_id IS NOT NULL))[1]),
+	min(e.event_timestamp),max(e.event_timestamp)
+FROM raw_events e JOIN sites s ON s.id=e.site_id
+LEFT JOIN visitor_identities i ON i.site_id=e.site_id AND i.visitor_id=e.visitor_id
+WHERE e.site_id=$1 AND e.environment=$2 AND (e.event_timestamp AT TIME ZONE s.timezone)::date >= $3::date AND (e.event_timestamp AT TIME ZONE s.timezone)::date <= $4::date
+GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.session_id`

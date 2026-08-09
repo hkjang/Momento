@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -257,17 +258,28 @@ func parsePositiveInt(raw string) (int, error) {
 
 type semanticDefinition struct {
 	Type             string              `json:"type"`
+	Metric           string              `json:"metric,omitempty"`
 	EventName        string              `json:"event_name,omitempty"`
 	Conversion       *bool               `json:"conversion,omitempty"`
 	Property         string              `json:"property,omitempty"`
 	FallbackProperty string              `json:"fallback_property,omitempty"`
+	TrafficClass     string              `json:"traffic_class,omitempty"`
+	MinOccurrences   int                 `json:"min_occurrences,omitempty"`
+	Filters          []semanticFilter    `json:"filters,omitempty"`
 	Numerator        *semanticDefinition `json:"numerator,omitempty"`
 	Denominator      *semanticDefinition `json:"denominator,omitempty"`
 }
 
+type semanticFilter struct {
+	Property string `json:"property"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+}
+
 func validateSemanticDefinition(def semanticDefinition, depth int) error {
-	if depth > 3 {
-		return fmt.Errorf("metric definition nesting is limited to 3")
+	if depth > 5 {
+		return fmt.Errorf("metric definition nesting is limited to 5")
 	}
 	if def.EventName != "" && (!eventNamePatternForProperty.MatchString(def.EventName) || len(def.EventName) > 64) {
 		return fmt.Errorf("invalid event_name")
@@ -277,6 +289,29 @@ func validateSemanticDefinition(def semanticDefinition, depth int) error {
 	}
 	if def.FallbackProperty != "" && !eventNamePatternForProperty.MatchString(def.FallbackProperty) {
 		return fmt.Errorf("invalid fallback_property")
+	}
+	if def.TrafficClass != "" && !map[string]bool{"normal": true, "internal_traffic": true, "known_bot": true, "monitoring": true, "suspicious": true}[def.TrafficClass] {
+		return fmt.Errorf("invalid traffic_class")
+	}
+	if def.MinOccurrences < 0 || def.MinOccurrences > 1000000 {
+		return fmt.Errorf("min_occurrences must be between 0 and 1000000")
+	}
+	for _, filter := range def.Filters {
+		if !eventNamePatternForProperty.MatchString(filter.Property) {
+			return fmt.Errorf("invalid filter property")
+		}
+		if !map[string]bool{"eq": true, "neq": true, "exists": true, "not_exists": true, "in": true}[filter.Operator] {
+			return fmt.Errorf("unsupported filter operator")
+		}
+		if filter.Scope != "" && filter.Scope != "event" && filter.Scope != "user" && filter.Scope != "session" {
+			return fmt.Errorf("filter scope must be event, user or session")
+		}
+		if filter.Operator == "in" {
+			values, ok := filter.Value.([]any)
+			if !ok || len(values) == 0 || len(values) > 100 {
+				return fmt.Errorf("in filter requires 1 to 100 values")
+			}
+		}
 	}
 	switch def.Type {
 	case "count", "unique_users", "unique_sessions":
@@ -294,9 +329,46 @@ func validateSemanticDefinition(def semanticDefinition, depth int) error {
 			return err
 		}
 		return validateSemanticDefinition(*def.Denominator, depth+1)
+	case "metric_ref":
+		if !registryNamePattern.MatchString(def.Metric) {
+			return fmt.Errorf("metric_ref requires a valid metric")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported metric type")
 	}
+}
+
+func (s *Server) validateMetricReferences(ctx context.Context, siteID uuid.UUID, metricName string, def semanticDefinition, seen map[string]bool, depth int) error {
+	if depth > 5 {
+		return fmt.Errorf("metric reference nesting is limited to 5")
+	}
+	if def.Type == "ratio" {
+		if err := s.validateMetricReferences(ctx, siteID, metricName, *def.Numerator, seen, depth+1); err != nil {
+			return err
+		}
+		return s.validateMetricReferences(ctx, siteID, metricName, *def.Denominator, seen, depth+1)
+	}
+	if def.Type != "metric_ref" {
+		return nil
+	}
+	if def.Metric == metricName || seen[def.Metric] {
+		return fmt.Errorf("metric reference cycle detected at %s", def.Metric)
+	}
+	var raw []byte
+	if err := s.DB.QueryRow(ctx, `SELECT definition FROM semantic_metrics WHERE site_id=$1 AND name=$2 AND status='active'`, siteID, def.Metric).Scan(&raw); err != nil {
+		return fmt.Errorf("referenced metric %q not found", def.Metric)
+	}
+	var referenced semanticDefinition
+	if err := json.Unmarshal(raw, &referenced); err != nil {
+		return fmt.Errorf("referenced metric %q has an invalid definition", def.Metric)
+	}
+	nextSeen := make(map[string]bool, len(seen)+1)
+	for name, value := range seen {
+		nextSeen[name] = value
+	}
+	nextSeen[def.Metric] = true
+	return s.validateMetricReferences(ctx, siteID, metricName, referenced, nextSeen, depth+1)
 }
 
 func (s *Server) listSemanticMetrics(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +377,7 @@ func (s *Server) listSemanticMetrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT id,name,label,description,definition,format,unit,definition_version,status,created_at,updated_at FROM semantic_metrics WHERE site_id=$1 ORDER BY name`, siteID)
+	rows, err := s.DB.Query(r.Context(), `SELECT id,name,label,description,definition,format,unit,definition_version,status,owner,entity_scope,tags,created_at,updated_at FROM semantic_metrics WHERE site_id=$1 ORDER BY name`, siteID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -314,14 +386,15 @@ func (s *Server) listSemanticMetrics(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id uuid.UUID
-		var name, label, description, format, unit, status string
+		var name, label, description, format, unit, status, owner, entityScope string
+		var tags []string
 		var definition []byte
 		var version int
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &label, &description, &definition, &format, &unit, &version, &status, &created, &updated) == nil {
+		if rows.Scan(&id, &name, &label, &description, &definition, &format, &unit, &version, &status, &owner, &entityScope, &tags, &created, &updated) == nil {
 			var value any
 			_ = json.Unmarshal(definition, &value)
-			out = append(out, map[string]any{"id": id, "name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "definition_version": version, "status": status, "created_at": created, "updated_at": updated})
+			out = append(out, map[string]any{"id": id, "name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "definition_version": version, "status": status, "owner": owner, "entity_scope": entityScope, "tags": tags, "created_at": created, "updated_at": updated})
 		}
 	}
 	writeJSON(w, 200, out)
@@ -342,6 +415,9 @@ func (s *Server) saveSemanticMetric(w http.ResponseWriter, r *http.Request) {
 		Format      string             `json:"format"`
 		Unit        string             `json:"unit"`
 		Status      string             `json:"status"`
+		Owner       string             `json:"owner"`
+		EntityScope string             `json:"entity_scope"`
+		Tags        []string           `json:"tags"`
 	}
 	if err := decodeJSON(r, &in, 128<<10); err != nil {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
@@ -353,6 +429,10 @@ func (s *Server) saveSemanticMetric(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateSemanticDefinition(in.Definition, 1); err != nil {
 		writeError(w, 400, "INVALID_METRIC_DEFINITION", err.Error())
+		return
+	}
+	if err := s.validateMetricReferences(r.Context(), siteID, in.Name, in.Definition, map[string]bool{in.Name: true}, 1); err != nil {
+		writeError(w, 400, "INVALID_METRIC_REFERENCE", err.Error())
 		return
 	}
 	if in.Format == "" {
@@ -369,12 +449,32 @@ func (s *Server) saveSemanticMetric(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_STATUS", "status must be active or deprecated")
 		return
 	}
+	if in.EntityScope == "" {
+		in.EntityScope = "event"
+	}
+	if !map[string]bool{"event": true, "session": true, "user": true, "item": true}[in.EntityScope] {
+		writeError(w, 400, "INVALID_SCOPE", "entity_scope must be event, session, user or item")
+		return
+	}
+	if len(in.Tags) > 20 {
+		writeError(w, 400, "INVALID_TAGS", "at most 20 tags are allowed")
+		return
+	}
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
+	for _, tag := range in.Tags {
+		if strings.TrimSpace(tag) == "" || len(tag) > 64 {
+			writeError(w, 400, "INVALID_TAGS", "tags must be non-empty and at most 64 characters")
+			return
+		}
+	}
 	definition, _ := json.Marshal(in.Definition)
 	var id uuid.UUID
 	var version int
-	err = s.DB.QueryRow(r.Context(), `INSERT INTO semantic_metrics(site_id,name,label,description,definition,format,unit,status,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT(site_id,name) DO UPDATE SET label=excluded.label,description=excluded.description,definition=excluded.definition,format=excluded.format,unit=excluded.unit,status=excluded.status,definition_version=semantic_metrics.definition_version+1,updated_at=now()
-		RETURNING id,definition_version`, siteID, in.Name, in.Label, in.Description, definition, in.Format, in.Unit, in.Status, p.ID).Scan(&id, &version)
+	err = s.DB.QueryRow(r.Context(), `INSERT INTO semantic_metrics(site_id,name,label,description,definition,format,unit,status,owner,entity_scope,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		ON CONFLICT(site_id,name) DO UPDATE SET label=excluded.label,description=excluded.description,definition=excluded.definition,format=excluded.format,unit=excluded.unit,status=excluded.status,owner=excluded.owner,entity_scope=excluded.entity_scope,tags=excluded.tags,definition_version=semantic_metrics.definition_version+1,updated_at=now()
+		RETURNING id,definition_version`, siteID, in.Name, in.Label, in.Description, definition, in.Format, in.Unit, in.Status, in.Owner, in.EntityScope, in.Tags, p.ID).Scan(&id, &version)
 	if err != nil {
 		writeError(w, 500, "METRIC_SAVE_FAILED", err.Error())
 		return
@@ -420,15 +520,31 @@ func (s *Server) evaluateSemanticMetric(r *http.Request, siteID uuid.UUID, envir
 		return 0, err
 	}
 	if def.Type == "ratio" {
-		numerator, err := s.evaluateSemanticMetric(r, siteID, environment, from, to, *def.Numerator, depth+1)
+		numeratorDefinition := *def.Numerator
+		denominatorDefinition := *def.Denominator
+		numeratorDefinition.Filters = append(numeratorDefinition.Filters, def.Filters...)
+		denominatorDefinition.Filters = append(denominatorDefinition.Filters, def.Filters...)
+		numerator, err := s.evaluateSemanticMetric(r, siteID, environment, from, to, numeratorDefinition, depth+1)
 		if err != nil {
 			return 0, err
 		}
-		denominator, err := s.evaluateSemanticMetric(r, siteID, environment, from, to, *def.Denominator, depth+1)
+		denominator, err := s.evaluateSemanticMetric(r, siteID, environment, from, to, denominatorDefinition, depth+1)
 		if err != nil || denominator == 0 {
 			return 0, err
 		}
 		return numerator / denominator * 100, nil
+	}
+	if def.Type == "metric_ref" {
+		var raw []byte
+		if err := s.DB.QueryRow(r.Context(), `SELECT definition FROM semantic_metrics WHERE site_id=$1 AND name=$2 AND status='active'`, siteID, def.Metric).Scan(&raw); err != nil {
+			return 0, fmt.Errorf("referenced metric %q not found", def.Metric)
+		}
+		var referenced semanticDefinition
+		if err := json.Unmarshal(raw, &referenced); err != nil {
+			return 0, err
+		}
+		referenced.Filters = append(referenced.Filters, def.Filters...)
+		return s.evaluateSemanticMetric(r, siteID, environment, from, to, referenced, depth+1)
 	}
 	where := `site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND environment=$4`
 	args := []any{siteID, from, to, environment}
@@ -439,6 +555,51 @@ func (s *Server) evaluateSemanticMetric(r *http.Request, siteID uuid.UUID, envir
 	if def.Conversion != nil {
 		args = append(args, *def.Conversion)
 		where += fmt.Sprintf(" AND is_conversion=$%d", len(args))
+	}
+	if def.TrafficClass != "" {
+		args = append(args, def.TrafficClass)
+		where += fmt.Sprintf(" AND traffic_class=$%d", len(args))
+	}
+	for _, filter := range def.Filters {
+		args = append(args, filter.Property)
+		propertyPosition := len(args)
+		propertySource := "properties"
+		switch filter.Scope {
+		case "user":
+			propertySource = "canonical_user_properties"
+		case "session":
+			propertySource = `(SELECT sm.session_properties FROM sessions sm WHERE sm.site_id=analytics_events.site_id AND sm.environment=analytics_events.environment AND sm.session_id=analytics_events.session_id LIMIT 1)`
+		}
+		switch filter.Operator {
+		case "exists":
+			where += fmt.Sprintf(" AND %s ? $%d", propertySource, propertyPosition)
+		case "not_exists":
+			where += fmt.Sprintf(" AND NOT %s ? $%d", propertySource, propertyPosition)
+		case "eq", "neq":
+			args = append(args, fmt.Sprint(filter.Value))
+			op := "="
+			if filter.Operator == "neq" {
+				op = "<>"
+			}
+			where += fmt.Sprintf(" AND %s->>$%d %s $%d", propertySource, propertyPosition, op, len(args))
+		case "in":
+			values := []string{}
+			for _, value := range filter.Value.([]any) {
+				values = append(values, fmt.Sprint(value))
+			}
+			args = append(args, values)
+			where += fmt.Sprintf(" AND %s->>$%d=ANY($%d)", propertySource, propertyPosition, len(args))
+		}
+	}
+	if def.MinOccurrences > 1 && (def.Type == "unique_users" || def.Type == "unique_sessions") {
+		groupField := "entity_id"
+		if def.Type == "unique_sessions" {
+			groupField = "session_id"
+		}
+		args = append(args, def.MinOccurrences)
+		var value float64
+		err := s.DB.QueryRow(r.Context(), `SELECT count(*)::double precision FROM (SELECT `+groupField+` FROM analytics_events WHERE `+where+` GROUP BY `+groupField+` HAVING count(*) >= $`+fmt.Sprint(len(args))+`) repeated`, args...).Scan(&value)
+		return value, err
 	}
 	expression := "count(*)::double precision"
 	switch def.Type {
@@ -478,9 +639,9 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	_, location, _ := s.siteTimezone(r.Context(), siteID)
 	dateFrom := from.In(location).Format("2006-01-02")
 	dateTo := to.In(location).Format("2006-01-02")
-	var received, accepted, duplicates, warnings, rejected, late, missingUser, missingFeature, unknownNetwork, piiBlocked, cardinality int64
-	err = s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(late_events),0),coalesce(sum(missing_user_id),0),coalesce(sum(missing_feature),0),coalesce(sum(unknown_network),0),coalesce(sum(pii_blocked),0),coalesce(sum(cardinality_violations),0)
-		FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date`, siteID, environment, dateFrom, dateTo).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &late, &missingUser, &missingFeature, &unknownNetwork, &piiBlocked, &cardinality)
+	var received, accepted, duplicates, warnings, rejected, late, missingUser, missingFeature, unknownNetwork, piiBlocked, piiDetected, cardinality int64
+	err = s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(late_events),0),coalesce(sum(missing_user_id),0),coalesce(sum(missing_feature),0),coalesce(sum(unknown_network),0),coalesce(sum(pii_blocked),0),coalesce(sum(pii_detected),0),coalesce(sum(cardinality_violations),0)
+		FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date`, siteID, environment, dateFrom, dateTo).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &late, &missingUser, &missingFeature, &unknownNetwork, &piiBlocked, &piiDetected, &cardinality)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -494,7 +655,9 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	var pending, deadLetters int64
 	_ = s.DB.QueryRow(r.Context(), `SELECT count(*),coalesce(extract(epoch FROM(now()-min(received_at))),0) FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &inboxLag)
 	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at >= $2 AND failed_at < $3`, siteID, from, to).Scan(&deadLetters)
-	cardinalityRows, _ := s.DB.Query(r.Context(), `SELECT dimension,count(*) FROM data_quality_dimension_values WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY dimension ORDER BY count(*) DESC`, siteID, environment, dateFrom, dateTo)
+	var cardinalityLimit int64
+	_ = s.DB.QueryRow(r.Context(), `SELECT cardinality_limit FROM site_environments WHERE site_id=$1 AND name=$2`, siteID, environment).Scan(&cardinalityLimit)
+	cardinalityRows, _ := s.DB.Query(r.Context(), `SELECT dimension,count(DISTINCT value_hash) FROM data_quality_dimension_values WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY dimension ORDER BY count(DISTINCT value_hash) DESC`, siteID, environment, dateFrom, dateTo)
 	cardinalities := []map[string]any{}
 	if cardinalityRows != nil {
 		defer cardinalityRows.Close()
@@ -502,7 +665,19 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 			var dimension string
 			var count int64
 			if cardinalityRows.Scan(&dimension, &count) == nil {
-				cardinalities = append(cardinalities, map[string]any{"dimension": dimension, "distinct_values": count})
+				level := "low"
+				ratio := float64(0)
+				if cardinalityLimit > 0 {
+					ratio = float64(count) / float64(cardinalityLimit)
+				}
+				if ratio >= 1 {
+					level = "extreme"
+				} else if ratio >= .75 {
+					level = "high"
+				} else if ratio >= .25 {
+					level = "medium"
+				}
+				cardinalities = append(cardinalities, map[string]any{"dimension": dimension, "distinct_values": count, "limit": cardinalityLimit, "level": level, "query_builder_allowed": level != "extreme"})
 			}
 		}
 	}
@@ -521,7 +696,7 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"health_score": score, "environment": environment, "collector": map[string]any{"received": received, "accepted": accepted, "pending": pending, "inbox_lag_seconds": inboxLag, "dead_letters": deadLetters}, "quality": map[string]any{"duplicates": duplicates, "warnings": warnings, "rejected": rejected, "late_events": late, "missing_user_id": missingUser, "missing_feature": missingFeature, "unknown_network": unknownNetwork, "pii_blocked": piiBlocked, "cardinality_violations": cardinality}, "cardinalities": cardinalities, "issues": issues})
+	writeJSON(w, 200, map[string]any{"health_score": score, "environment": environment, "collector": map[string]any{"received": received, "accepted": accepted, "pending": pending, "inbox_lag_seconds": inboxLag, "dead_letters": deadLetters}, "quality": map[string]any{"duplicates": duplicates, "warnings": warnings, "rejected": rejected, "late_events": late, "missing_user_id": missingUser, "missing_feature": missingFeature, "unknown_network": unknownNetwork, "pii_blocked": piiBlocked, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "cardinalities": cardinalities, "issues": issues})
 }
 
 func minFloat(a, b float64) float64 {

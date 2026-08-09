@@ -24,6 +24,12 @@ Content-Type: application/json
 - `analyze_experience`: Web Vitals P75, Error와 영향 사용자 분석
 - `analyze_ai_operations`: Model·Provider·Agent·MCP Server·Tool별 호출, 지연, Token 분석
 - `inspect_data_quality`: 수집·중복·계약·PII·Cardinality 품질 분석
+- `get_workspace_rollup`: Workspace 전체 서비스와 교차 사이트 SSO 사용자 Roll-Up
+- `get_feature_scores`: Feature Adoption·재사용·전환과 Dead Feature 후보
+- `analyze_search`: 검색량·Zero Result·CTR·성공률
+- `analyze_frustration`: Rage/Dead Click·재시도·오류·느린 상호작용 신호
+- `get_metric_goals`: Semantic Metric 목표와 관리 범위
+- `get_event_catalog`: Event Owner·Contract Version·Volume·Last Seen
 - `ask_analytics`: 외부 LLM 호출 없는 오프라인 한국어/영어 Analytics 질의
 
 초기화 예제:

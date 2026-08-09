@@ -17,15 +17,16 @@
 ## 현재 제공 범위
 
 - JavaScript SDK: Event 발생 시점 Context snapshot, DEV/STG/PRD, Event Contract version, Release context, Page View/SPA/custom event, identify, session/visitor, first-touch UTM, click/form/error, Core Web Vitals·Resource Error RUM, fail-closed consent, cookieless, batch, Beacon, offline queue
-- Durable Collector: `POST /collect/v1/events`, 환경별 계약 `allow/warn/reject`, domain/key 검증, 중복 제거, 개인정보 필터, Cardinality Guard, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
-- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Cohort/Retention, Business Journey, Feature Adoption, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
+- Durable Collector: `POST /collect/v1/events`, 환경별 계약 `allow/warn/reject`, domain/key 검증, 중복 제거, 수집 전 값 기반 PII Detect/Mask/Reject, Cardinality Guard, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
+- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
-- 거버넌스: 버전형 Event Contract, Semantic Metric Registry, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
+- 거버넌스: 버전형 Event Contract와 CI 검증, Formula 지원 Semantic Metric Registry, Metric Goal, Event Catalog·Lineage, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
 - 관리: Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, C 클래스/CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
-- 고급 분석: 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
+- 고급 분석: Exact/Fast/Preview Query Cost Guard, 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
-- AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 13개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
+- AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 19개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
 - Action: 보안 Host Allowlist 기반 Scheduled Report와 Segment 집계를 Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent로 전달
+- 운영: Late Event 자동 재집계, Aggregate Manager, Change Calendar, Feature Flag/Experiment Registry, 승인형 개인정보 요청 Workflow
 - 배포: 단일 non-root Docker image, PostgreSQL migration 자동 적용, tag 기반 offline `.tar.gz` GitHub Release
 
 ## 빠른 시작
@@ -56,6 +57,11 @@ analytics.identify("INTERNAL_USER_001", {
   organization: "Technology"
 });
 
+analytics.setSessionProperties({
+  login_status: "authenticated",
+  workflow: "approval"
+});
+
 analytics.track("feature_use", {
   service: "intranet",
   feature: "document_search",
@@ -63,7 +69,7 @@ analytics.track("feature_use", {
 });
 ```
 
-이메일·전화번호·주민번호를 `user_id` 또는 property로 전달하지 마십시오. SDK는 URL Query/Fragment를 전송하지 않고 자동 `element_text` 수집을 기본 비활성화하며, 서버도 기본적으로 Query String을 제거합니다. 차단 property와 정책은 관리자 → 개인정보에서 변경할 수 있습니다.
+이메일·전화번호·주민번호를 `user_id` 또는 property로 전달하지 마십시오. SDK는 URL Query/Fragment를 전송하지 않고 자동 `element_text` 수집을 기본 비활성화하며, 서버도 기본적으로 Query String을 제거하고 값 기반 PII 정책을 Inbox 저장 전에 적용합니다. 차단 property와 정책은 관리자 → 개인정보에서 변경할 수 있습니다.
 
 ## 설정 원칙
 
@@ -86,7 +92,7 @@ cd ../web && npm install && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.5.0` 태그는 `momento-v0.5.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.6.0` 태그는 `momento-v0.6.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

@@ -1,7 +1,9 @@
 package service
 
 import (
+	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/hkjang/Momento/internal/model"
@@ -91,6 +93,31 @@ func TestPrivacyAppliedBeforeDurableQueue(t *testing.T) {
 	}
 	if _, ok := req.Events[0].Properties["phone"]; ok {
 		t.Fatal("event PII persisted before queue")
+	}
+}
+
+func TestProtectPIIBeforeDurableQueue(t *testing.T) {
+	req := model.CollectRequest{
+		UserProperties:    map[string]any{"contact": "user@example.com"},
+		SessionProperties: map[string]any{"operator_phone": "010-2222-3333"},
+		Context:           model.EventContext{Page: model.PageContext{Title: "010-1234-5678 고객"}},
+		Events: []model.IncomingEvent{{Name: "error", Properties: map[string]any{
+			"message": "Authorization: Bearer secret-token-value-12345",
+			"card":    "4111 1111 1111 1111",
+		}}},
+	}
+	count, kinds := protectPII(&req, "mask")
+	if count != 5 || len(kinds) != 4 {
+		t.Fatalf("unexpected detection count=%d kinds=%v", count, kinds)
+	}
+	if req.UserProperties["contact"] != "[MASKED_EMAIL]" || req.Context.Page.Title != "[MASKED_PHONE] 고객" {
+		t.Fatalf("PII was not masked: %#v", req)
+	}
+	if req.SessionProperties["operator_phone"] != "[MASKED_PHONE]" {
+		t.Fatalf("session PII was not masked: %#v", req.SessionProperties)
+	}
+	if strings.Contains(fmt.Sprint(req.Events[0].Properties), "secret-token") || strings.Contains(fmt.Sprint(req.Events[0].Properties), "4111") {
+		t.Fatalf("credential or card survived masking: %#v", req.Events[0].Properties)
 	}
 }
 

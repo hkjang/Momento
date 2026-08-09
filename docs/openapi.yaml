@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.5.0
+  version: 0.6.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -181,6 +181,11 @@ paths:
     post:
       summary: Activate an immutable event contract version
       responses: {'200': {description: Contract activated}}
+  /api/v1/sites/{siteId}/event-contracts/validate:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    post:
+      summary: Validate up to 1000 event payloads for CI without collecting them
+      responses: {'200': {description: Contract validation result}}
   /api/v1/sites/{siteId}/semantic-metrics:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
@@ -197,6 +202,50 @@ paths:
     get:
       summary: Evaluate a registered semantic metric
       responses: {'200': {description: Metric value and definition version}}
+  /api/v1/sites/{siteId}/metric-goals:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List Semantic Metric goals
+      responses: {'200': {description: Goal definitions}}
+    post:
+      summary: Create or update a period and organization-scoped Metric goal
+      responses: {'200': {description: Goal saved}}
+  /api/v1/sites/{siteId}/metric-goals/evaluate:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Evaluate all active Metric goals
+      responses: {'200': {description: Goal values and achievement}}
+  /api/v1/sites/{siteId}/query-policy:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Read Exact/Fast/Preview cost and sampling policy
+      responses: {'200': {description: Query policy}}
+    put:
+      summary: Update Query Cost Guard and sampling policy
+      responses: {'200': {description: Query policy updated}}
+  /api/v1/sites/{siteId}/query-audit:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List recent Query Mode, Complexity, duration and outcome audit records
+      responses: {'200': {description: Query Audit}}
+  /api/v1/sites/{siteId}/aggregate-jobs:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List automatic Late Event and administrator rebuild jobs
+      responses: {'200': {description: Aggregate jobs}}
+    post:
+      summary: Request a date-range or full Raw Event rebuild
+      responses: {'202': {description: Rebuild queued}}
+  /api/v1/sites/{siteId}/catalog:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Event contract catalog with owner, usage health and consumers
+      responses: {'200': {description: Event catalog}}
+  /api/v1/sites/{siteId}/lineage:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Event to Metric to Goal lineage graph
+      responses: {'200': {description: Lineage nodes and edges}}
   /api/v1/sites/{siteId}/data-quality:
     parameters:
       - {$ref: '#/components/parameters/SiteId'}
@@ -232,7 +281,87 @@ paths:
       - {$ref: '#/components/parameters/Environment'}
     get:
       summary: Organization, department and feature adoption
-      responses: {'200': {description: Adoption, repeat use and dormant users}}
+      responses: {'200': {description: 'Adoption, repeat use and dormant users'}}
+  /api/v1/sites/{siteId}/workspace-rollup:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Workspace service Roll-Up and deterministic cross-site SSO users
+      responses: {'200': {description: Workspace and Service Score report}}
+  /api/v1/sites/{siteId}/workspace-journeys:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List personal and shared Cross-Site Journeys
+      responses: {'200': {description: Workspace Journeys}}
+    post:
+      summary: Save a 2-12 step Cross-Site Journey
+      responses: {'200': {description: Workspace Journey saved}}
+  /api/v1/sites/{siteId}/workspace-journeys/analyze:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    post:
+      summary: Analyze a deterministic SSO Journey across Workspace Sites
+      responses: {'200': {description: Cross-Site conversion and elapsed time}}
+  /api/v1/sites/{siteId}/feature-intelligence:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Feature Score, Adoption, trend and Dead Feature candidates
+      responses: {'200': {description: Feature Intelligence}}
+  /api/v1/sites/{siteId}/search-analytics:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Search Zero Result, CTR, refinement, exit and success
+      responses: {'200': {description: Search Analytics}}
+  /api/v1/sites/{siteId}/frustration:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Privacy-preserving Frustration signals without Session Replay
+      responses: {'200': {description: Frustration Analytics}}
+  /api/v1/sites/{siteId}/feature-flags:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List Feature Flag metadata and Variants
+      responses: {'200': {description: Feature Flags}}
+    post:
+      summary: Create or update a Feature Flag
+      responses: {'200': {description: Feature Flag saved}}
+  /api/v1/sites/{siteId}/experiments:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List governed Experiments
+      responses: {'200': {description: Experiments}}
+    post:
+      summary: Create or update an Experiment with a Semantic primary metric
+      responses: {'200': {description: Experiment saved}}
+  /api/v1/sites/{siteId}/experiments/{id}/analysis:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: Variant metric, Lift and confidence analysis
+      responses: {'200': {description: Experiment analysis}}
+  /api/v1/sites/{siteId}/annotations:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List Site and Workspace Change Calendar annotations
+      responses: {'200': {description: Annotations}}
+    post:
+      summary: Create or update a Change Calendar annotation
+      responses: {'200': {description: Annotation saved}}
+  /api/v1/sites/{siteId}/privacy-requests:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List audited Privacy Requests
+      responses: {'200': {description: Privacy Requests}}
+    post:
+      summary: Create a delete or export authorization request
+      responses: {'201': {description: Privacy Request created}}
+  /api/v1/sites/{siteId}/privacy-requests/{id}/decision:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: Approve and execute or reject a pending Privacy Request
+      responses: {'200': {description: Privacy Request decision}}
+  /api/v1/sites/{siteId}/privacy-requests/{id}/export:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    get:
+      summary: Download the authorized completed Privacy Request as NDJSON
+      responses: {'200': {description: Audited NDJSON export}}
   /api/v1/sites/{siteId}/experience:
     parameters:
       - {$ref: '#/components/parameters/SiteId'}
@@ -258,7 +387,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     post:
       summary: Ask Korean or English analytics questions with the offline semantic parser
-      responses: {'200': {description: Interpreted intent, answer and evidence}}
+      responses: {'200': {description: 'Interpreted intent, answer and evidence'}}
   /api/v1/sites/{siteId}/delivery-channels:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
@@ -324,6 +453,10 @@ components:
         session_id: {type: string, maxLength: 128}
         user_id: {type: string, maxLength: 128}
         user_properties: {type: object, additionalProperties: true}
+        session_properties:
+          type: object
+          additionalProperties: true
+          description: Session-scoped properties merged by event time; available to session-scope dimensions.
         context: {$ref: '#/components/schemas/EventContext'}
         events:
           type: array
@@ -338,6 +471,10 @@ components:
               timestamp: {type: integer}
               contract_version: {type: integer, minimum: 1, default: 1}
               properties: {type: object, additionalProperties: true}
+              session_properties:
+                type: object
+                additionalProperties: true
+                description: Occurrence-time session property snapshot; overrides the request-level fallback.
               context:
                 allOf:
                   - {$ref: '#/components/schemas/EventContext'}
@@ -384,6 +521,7 @@ components:
       properties:
         site_id: {type: string}
         environment: {type: string, default: prd}
+        mode: {type: string, enum: [exact, fast, preview], default: exact}
         date_range:
           type: object
           required: [from, to]

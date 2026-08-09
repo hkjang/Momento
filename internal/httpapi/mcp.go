@@ -3,10 +3,12 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/version"
 )
@@ -50,6 +52,12 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"name": "analyze_experience", "description": "Web Vitals와 오류 영향을 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "analyze_ai_operations", "description": "AI 모델·Agent·MCP·Tool의 호출, 성공률, 지연, 토큰과 비용을 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]string{"type": "string"}, "group_by": map[string]any{"type": "string", "enum": []string{"model", "provider", "agent", "mcp_server", "tool"}}, "from": map[string]string{"type": "string"}, "to": map[string]string{"type": "string"}}, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "inspect_data_quality", "description": "수집 지연, 중복, 계약 경고, PII 차단과 Cardinality 위반을 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "get_workspace_rollup", "description": "Workspace의 전사 서비스 사용량과 교차 사이트 고유 SSO 사용자를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "get_feature_scores", "description": "기능별 Adoption, 재사용, 전환, 오류, Dead Feature 후보를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "analyze_search", "description": "검색량, Zero Result, CTR, 재검색과 성공률을 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "analyze_frustration", "description": "Rage Click, Dead Click, 오류, 재시도 등 Frustration 신호를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "get_metric_goals", "description": "Semantic Metric에 연결된 목표와 현재 달성 상태를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}}, "required": []string{"site_id"}}},
+			map[string]any{"name": "get_event_catalog", "description": "이벤트 계약의 소유자, 버전, 최근 사용량과 상태를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}}, "required": []string{"site_id"}}},
 			map[string]any{"name": "ask_analytics", "description": "완전 오프라인 Semantic Parser로 한국어·영어 분석 질문에 답합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]string{"type": "string"}, "question": map[string]string{"type": "string"}}, "required": []string{"site_id", "question"}}},
 		}
 		writeJSON(w, 200, rpcResult(req.ID, map[string]any{"tools": tools}))
@@ -75,7 +83,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		return
 	}
 	var from, to time.Time
-	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" || call.Name == "query_semantic_metric" || call.Name == "analyze_retention" || call.Name == "analyze_feature_adoption" || call.Name == "analyze_experience" || call.Name == "analyze_ai_operations" || call.Name == "inspect_data_quality" {
+	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" || call.Name == "query_semantic_metric" || call.Name == "analyze_retention" || call.Name == "analyze_feature_adoption" || call.Name == "analyze_experience" || call.Name == "analyze_ai_operations" || call.Name == "inspect_data_quality" || call.Name == "get_workspace_rollup" || call.Name == "get_feature_scores" || call.Name == "analyze_search" || call.Name == "analyze_frustration" {
 		var rangeErr error
 		from, to, rangeErr = s.explicitDateRange(r.Context(), siteID, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to"))
 		if rangeErr != nil {
@@ -300,13 +308,122 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "inspect_data_quality":
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
-		var received, accepted, duplicates, warnings, rejected, pii, cardinality int64
-		err := s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(pii_blocked),0),coalesce(sum(cardinality_violations),0) FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date <= $4::date`, siteID, environment, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to")).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &pii, &cardinality)
+		var received, accepted, duplicates, warnings, rejected, pii, piiDetected, cardinality int64
+		err := s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(pii_blocked),0),coalesce(sum(pii_detected),0),coalesce(sum(cardinality_violations),0) FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date <= $4::date`, siteID, environment, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to")).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &pii, &piiDetected, &cardinality)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
 		}
-		body, _ := json.MarshalIndent(map[string]any{"received": received, "accepted": accepted, "duplicates": duplicates, "warnings": warnings, "rejected": rejected, "pii_blocked": pii, "cardinality_violations": cardinality}, "", "  ")
+		body, _ := json.MarshalIndent(map[string]any{"received": received, "accepted": accepted, "duplicates": duplicates, "warnings": warnings, "rejected": rejected, "pii_blocked": pii, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "get_workspace_rollup":
+		var workspaceID uuid.UUID
+		if err := s.DB.QueryRow(r.Context(), `SELECT workspace_id FROM sites WHERE id=$1`, siteID).Scan(&workspaceID); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		rows, err := s.DB.Query(r.Context(), `SELECT s.site_key,s.name,s.service_name,count(e.event_id),count(DISTINCT CASE WHEN e.canonical_user_id IS NOT NULL THEN 'u:'||e.canonical_user_id ELSE 's:'||e.site_id::text||':v:'||e.visitor_id END),count(DISTINCT e.session_id),count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion) FROM sites s LEFT JOIN analytics_events e ON e.site_id=s.id AND e.environment=$4 AND e.event_timestamp >= $2 AND e.event_timestamp < $3 WHERE s.workspace_id=$1 AND s.active GROUP BY s.id ORDER BY 5 DESC`, workspaceID, from, to, environment)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var key, name, serviceName string
+			var events, users, sessions, conversions int64
+			if rows.Scan(&key, &name, &serviceName, &events, &users, &sessions, &conversions) == nil {
+				out = append(out, map[string]any{"site_id": key, "site_name": name, "service": serviceName, "events": events, "users": users, "sessions": sessions, "conversion_users": conversions})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "get_feature_scores":
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		rows, err := s.DB.Query(r.Context(), `WITH u AS (SELECT properties->>'feature' feature,entity_id,count(*) events,bool_or(is_conversion) converted FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1,2) SELECT feature,count(*) users,sum(events),count(*) FILTER(WHERE events>=2),count(*) FILTER(WHERE converted) FROM u GROUP BY feature ORDER BY users DESC LIMIT 100`, siteID, from, to, environment)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var feature string
+			var users, events, repeats, converted int64
+			if rows.Scan(&feature, &users, &events, &repeats, &converted) == nil {
+				out = append(out, map[string]any{"feature": feature, "users": users, "events": events, "repeat_users": repeats, "repeat_rate": percent(repeats, users), "conversion_rate": percent(converted, users), "dead_feature_candidate": users < 10 && percent(repeats, users) < 10})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "analyze_search":
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		var searches, users, zero, clicks, successes int64
+		err := s.DB.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_success') FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&searches, &users, &zero, &clicks, &successes)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		body, _ := json.MarshalIndent(map[string]any{"searches": searches, "users": users, "zero_results": zero, "zero_result_rate": math.Min(100, percent(zero, searches)), "clicks": clicks, "search_ctr": math.Min(100, percent(clicks, searches)), "successes": successes, "success_rate": math.Min(100, percent(successes, searches))}, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "analyze_frustration":
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		signals := []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "error", "resource_error"}
+		rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY event_name ORDER BY count(*) DESC`, siteID, from, to, environment, signals)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var signal string
+			var count, users, sessions int64
+			if rows.Scan(&signal, &count, &users, &sessions) == nil {
+				out = append(out, map[string]any{"signal": signal, "count": count, "users": users, "sessions": sessions})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "get_metric_goals":
+		rows, err := s.DB.Query(r.Context(), `SELECT g.name,g.metric_name,g.target_value,g.comparator,g.period,g.environment,g.organization,g.department,g.owner,g.active FROM metric_goals g WHERE g.site_id=$1 ORDER BY g.active DESC,g.name`, siteID)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var name, metric, comparator, period, environment, org, dept, owner string
+			var target float64
+			var active bool
+			if rows.Scan(&name, &metric, &target, &comparator, &period, &environment, &org, &dept, &owner, &active) == nil {
+				out = append(out, map[string]any{"name": name, "metric": metric, "target": target, "comparator": comparator, "period": period, "environment": environment, "organization": org, "department": dept, "owner": owner, "active": active})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "get_event_catalog":
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		rows, err := s.DB.Query(r.Context(), `SELECT d.name,d.description,d.owner,d.current_version,d.deprecated,count(e.event_id),max(e.event_timestamp) FROM event_definitions d LEFT JOIN raw_events e ON e.site_id=d.site_id AND e.event_name=d.name AND e.environment=$2 WHERE d.site_id=$1 GROUP BY d.name,d.description,d.owner,d.current_version,d.deprecated ORDER BY d.name`, siteID, environment)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var name, description, owner string
+			var version int
+			var deprecated bool
+			var volume int64
+			var last *time.Time
+			if rows.Scan(&name, &description, &owner, &version, &deprecated, &volume, &last) == nil {
+				out = append(out, map[string]any{"event": name, "description": description, "owner": owner, "version": version, "deprecated": deprecated, "volume": volume, "last_seen": last})
+			}
+		}
+		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "ask_analytics":
 		question := strings.ToLower(stringArg(call.Arguments, "question"))

@@ -56,6 +56,7 @@ export default function ExplorerPage() {
   const [dims, setDims] = useState<string[]>(["event.name"]);
   const [mets, setMets] = useState<string[]>(["events", "users"]);
   const [segmentId, setSegmentId] = useState("");
+	const [queryMode, setQueryMode] = useState<"exact" | "fast" | "preview">("exact");
   const [reportId, setReportId] = useState("");
   const [reportName, setReportName] = useState("");
   const segments = useQuery({
@@ -92,7 +93,7 @@ export default function ExplorerPage() {
   });
   const mutation = useMutation({
     mutationFn: () =>
-      post<{ rows: Record<string, unknown>[]; columns: string[] }>(
+		post<{ rows: Record<string, unknown>[]; columns: string[]; query: { mode: string; complexity_score: number; sample_percent: number; execution: string; exact: boolean; estimated_error_percent?: number } }>(
         "/api/v1/query",
         {
           site_id: site!.site_id,
@@ -102,6 +103,7 @@ export default function ExplorerPage() {
           metrics: mets,
           filters: [],
           segment_id: segmentId || undefined,
+					mode: queryMode,
           limit: 200,
         },
       ),
@@ -215,7 +217,7 @@ export default function ExplorerPage() {
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 220px auto" },
+			gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 220px 140px auto" },
             gap: 2,
             alignItems: "center",
           }}
@@ -248,6 +250,11 @@ export default function ExplorerPage() {
               ))}
             </Select>
           </FormControl>
+			<TextField select size="small" label="Query Mode" value={queryMode} onChange={(event) => setQueryMode(event.target.value as typeof queryMode)}>
+				<MenuItem value="exact">Exact · 100%</MenuItem>
+				<MenuItem value="fast">Fast · 10%</MenuItem>
+				<MenuItem value="preview">Preview · 1%</MenuItem>
+			</TextField>
           <TextField
             select
             size="small"
@@ -306,7 +313,13 @@ export default function ExplorerPage() {
         </Alert>
       )}
       {mutation.data ? (
-        <DataTable
+		<Stack spacing={1.5}>
+			<Alert severity={mutation.data.query.exact ? "success" : "warning"}>
+				{mutation.data.query.exact ? "전체 Raw Event를 정확 계산했습니다." : `${mutation.data.query.sample_percent}% 결정적 표본 결과입니다.`}
+				{" · "}Complexity {mutation.data.query.complexity_score} · {mutation.data.query.execution}
+				{mutation.data.query.estimated_error_percent ? ` · 추정 오차 ±${mutation.data.query.estimated_error_percent}%` : ""}
+			</Alert>
+			<DataTable
           columns={mutation.data.columns.map((key) => ({
             key,
             label: key,
@@ -314,6 +327,7 @@ export default function ExplorerPage() {
           }))}
           rows={mutation.data.rows}
         />
+		</Stack>
       ) : (
         <Card sx={{ p: 7, textAlign: "center" }}>
           <Typography color="text.secondary">

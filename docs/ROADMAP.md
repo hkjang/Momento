@@ -58,10 +58,22 @@
 - Allowlisted Scheduled Report and Segment Action delivery to HTTP-based enterprise channels
 - 13-tool Analytics MCP surface
 
+## v0.6 — implemented
+
+- Formula/Reference/Scoped Filter 기반 Semantic Metric과 Metric Goal Framework
+- Exact/Fast/Preview Sampling, Query Complexity/Cost Policy와 Query Audit
+- 수집 전 값 기반 PII Detect/Warn/Mask/Reject 및 Privacy Request 승인 Workflow
+- Late Event 자동 재집계와 Aggregate Manager
+- Event Contract CI 검사, Event Catalog, Owner와 Data Lineage
+- Workspace Roll-Up과 SSO 기반 Cross-Site Business Journey
+- Service/Feature Score, Dead Feature, Search와 Frustration Analytics
+- Feature Flag/Experiment Registry, Variant Lift와 Confidence
+- Change Calendar Annotation과 19-tool Analytics MCP surface
+
 ## Next schema-compatible increments
 
 - First/last/last-non-direct attribution and enterprise channel classification
-- Scheduled aggregate validation/rebuild jobs and Parquet export
+- PostgreSQL 월별 Partition 전환과 Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation
 - Mobile/server SDK packages, statistical anomaly detection and governed external LLM diagnosis

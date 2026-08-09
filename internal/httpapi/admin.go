@@ -242,6 +242,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.DB.Exec(r.Context(), `INSERT INTO retention_policies(site_id) VALUES($1) ON CONFLICT(site_id) DO NOTHING`, id)
 	_, _ = s.DB.Exec(r.Context(), `INSERT INTO site_environments(site_id,name,label,contract_mode,cardinality_limit) VALUES
 		($1,'dev','Development','allow',50000),($1,'stg','Staging','warn',25000),($1,'prd','Production','warn',10000) ON CONFLICT DO NOTHING`, id)
+	_, _ = s.DB.Exec(r.Context(), `INSERT INTO query_policies(site_id) VALUES($1) ON CONFLICT DO NOTHING`, id)
 	_, _ = s.DB.Exec(r.Context(), `INSERT INTO semantic_metrics(site_id,name,label,description,definition,format) VALUES
 		($1,'events','Events','수집된 이벤트 수','{"type":"count"}','number'),
 		($1,'users','Users','Canonical 사용자 수','{"type":"unique_users"}','number'),

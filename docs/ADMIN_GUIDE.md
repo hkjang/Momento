@@ -119,6 +119,7 @@ Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter �
 
 - Semantic Metric은 관리자 정의 SQL을 받지 않고 허용된 JSON AST만 저장합니다.
 - 수정 시 Version이 증가하고 REST/Query/MCP가 동일한 정의를 사용합니다.
+- Session Scope Filter는 SDK/HTTP Event 발생 시점의 `session_properties`를 사용하며 Raw Event 전체 재빌드에서도 최신 Event 값 우선으로 복원됩니다.
 - Data Quality는 Received, Accepted, Duplicate, Late, Reject, Contract Warning, Missing User/Feature, Unknown Network, PII Blocked, Dead Letter, Cardinality를 표시합니다.
 - Cardinality 원문은 저장하지 않으며 SHA-256 digest로 Daily Distinct만 계산합니다.
 
@@ -131,3 +132,30 @@ Scheduled Report를 사용하려면 먼저 관리자 설정 `automation`에서 �
 - Channel Header 값은 저장 후 API에서 다시 노출하지 않습니다.
 - Segment Delivery는 기본적으로 Aggregate만 전송하고 `max_entity_ids=0`입니다.
 - 실행 결과는 Delivery Run과 Audit Log에서 확인합니다.
+
+## 13. Analytics Engineering
+
+- Formula Metric Builder는 Numerator/Denominator, 집계, Event, 최소 사용 횟수를 허용된 AST로 저장합니다. Metric마다 Owner, Entity Scope와 Tag를 지정하십시오.
+- Goal Framework는 Metric, 목표값, `gte/lte`, 일/주/월/분기, Environment, 조직·부서 범위를 관리합니다.
+- Query Policy는 Exact 최대 기간, Complexity 상한, Guarded 실행 기준과 Fast/Preview 표본 비율을 Site별로 제한합니다.
+- Event Contract CI endpoint는 배포 전 미등록 Event, Version, Required Property, Deprecated 계약을 검사합니다.
+- Event Catalog와 Lineage는 Event → Metric → Goal 사용 관계, Owner, First/Last Seen과 Volume을 표시합니다.
+
+## 14. Aggregate와 Late Event 운영
+
+Event가 수신 시각보다 한 시간 이상 과거이면 Momento는 Site Timezone의 해당 날짜에 `late_event` 재집계 Job을 한 건만 생성합니다. Maintenance Worker는 Raw Event를 기준으로 Site/Visitor/Session 일별 집계를 다시 계산합니다. 관리자는 Analytics Engineering에서 367일 이하 Date Range 또는 Full Rebuild를 요청할 수 있습니다.
+
+## 15. 값 기반 PII와 Privacy Request
+
+- `privacy.pii_detection_mode`는 `detect`, `warn`, `mask`, `reject` 중 하나입니다. 기본값은 `mask`입니다.
+- Email, 한국 전화번호, 주민번호 형태, Luhn 검증 카드번호, Bearer/JWT Credential을 Inbox commit 전에 검사합니다.
+- Data Quality Issue에는 Detector 종류만 기록하고 일치한 원문은 저장하지 않습니다.
+- Privacy Request는 요청과 승인을 분리합니다. 승인 실행과 영향 건수는 Audit Log에 남습니다.
+- 승인된 Export는 임의 행 제한 없이 NDJSON을 streaming하며 사용자·세션 속성도 포함합니다.
+
+## 16. Workspace와 Experiment 운영
+
+- Workspace Roll-Up과 Cross-Site Journey는 SSO User ID만 Site 간 결합합니다. 익명 ID는 Site 범위를 벗어나 결합하지 않습니다.
+- Feature Flag는 2~20개 Variant를 등록할 수 있습니다.
+- Experiment에는 `experiment_id`, `variant`, Primary Semantic Metric을 지정합니다. 첫 Variant가 Control이며 Lift와 두 비율 정규 근사 Confidence를 제공합니다.
+- Change Calendar에 Release, Deployment, Incident, Campaign, Training, Feature Flag와 조직 변경을 기록하면 분석 시점의 원인 후보를 보존할 수 있습니다.

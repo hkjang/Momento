@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.5.0
+- **문서 버전**: v0.6.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
 
@@ -73,7 +73,7 @@ analytics.identify("EMP_2026_9012", {
 ```
 
 > ⚠️ **보안 수칙 (Security Policy)**:  
-> 이메일 주소, 전화번호, 주민등록번호, 카드번호 등 개인식별정보(PII)는 `user_id` 또는 속성으로 전달하지 마십시오. 수집기는 관리자가 지정한 Property key를 제거하고 URL Parameter를 마스킹하지만, 값 자체를 정규식으로 판별하지는 않습니다.
+> 이메일 주소, 전화번호, 주민등록번호, 카드번호 등 개인식별정보(PII)는 `user_id` 또는 속성으로 전달하지 마십시오. 수집기는 관리자가 지정한 Property key 제거와 URL 정책에 더해 값 기반 PII 탐지·마스킹을 Inbox 저장 전에 수행하지만, 애플리케이션의 최소 수집 책임을 대신하지는 않습니다.
 
 ---
 
@@ -95,6 +95,15 @@ analytics.track("file_downloaded", {
   file_name: "Q2_Financial_Report.pdf",
   file_size_mb: 14.2,
   download_source: "Intranet_Notice"
+});
+```
+
+세션 동안 유지할 로그인 상태나 업무 흐름은 Event Property와 구분해 설정할 수 있습니다. 값은 각 Event 발생 시점에 snapshot되므로 배치 전송이나 Raw Event 재집계 후에도 Session Scope Dimension이 동일합니다.
+
+```javascript
+analytics.setSessionProperties({
+  login_status: "authenticated",
+  workflow: "approval"
 });
 ```
 
@@ -158,6 +167,19 @@ SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vi
 
 `ai_prompt`, `ai_response`, `ai_model_call`, `ai_tool_call`, `ai_agent_run`, `ai_mcp_call`을 사용하고 `model`, `provider`, `agent`, `mcp_server`, `tool`, `success`, `latency_ms`, `input_tokens`, `output_tokens`, `cost`, `fallback_model`을 Property로 전달합니다. 실제 Prompt/Response 원문은 개인정보와 기밀정보 위험 때문에 기본 분석 규격에 포함하지 않는 것을 권장합니다.
 
+### 3.9 Workspace, Feature, Search와 Frustration
+
+- Workspace Roll-Up은 같은 Workspace의 Site를 합쳐 서비스별 사용자·Event·Session·Service Score를 비교합니다. 같은 SSO `user_id`는 Site를 넘어 한 명으로 계산하고 익명 Visitor는 Site별로 격리합니다.
+- Feature Intelligence는 `feature` Property를 기준으로 Adoption, Repeat, Conversion, Error, 기간 추세와 Dead Feature 후보를 계산합니다.
+- Search Analytics는 `search`, `search_result`, `search_click`, `search_no_result`, `search_refine`, `search_exit`, `search_success` 표준 Event를 사용합니다.
+- Frustration Analytics는 Replay를 저장하지 않고 `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`과 오류 Event만으로 막힘을 추정합니다.
+
+### 3.10 Experiment와 Goal
+
+- Experiment Event에는 `experiment_id`와 `variant` Property를 함께 전송합니다. 등록한 Semantic Metric을 Variant별로 계산하고 첫 Variant를 Control로 사용해 Lift와 Confidence를 제공합니다.
+- Goal 화면은 일/주/월/분기 Metric 목표의 현재값, 진행률과 달성 여부를 Site Timezone 기준으로 표시합니다.
+- Change Calendar는 배포, Release, 장애, 캠페인, 교육, Feature Flag와 조직 변경을 분석 기간에 함께 표시합니다.
+
 ---
 
 ## 4. BI 연동 & 데이터 내보내기 (Export)
@@ -175,3 +197,13 @@ df = pd.read_json('momento_events_20260808.ndjson', lines=True)
 dept_stats = df.groupby('department')['event_name'].value_counts()
 print(dept_stats)
 ```
+
+## 5. Query Mode와 비용 보호
+
+- `Exact`는 Raw Event 100%를 계산합니다. 관리자가 정한 최대 기간과 Complexity를 넘으면 실행 전에 거부됩니다.
+- `Fast`와 `Preview`는 Event ID의 결정적 Hash로 관리자 설정 비율을 표본화합니다. 같은 입력은 같은 표본을 사용합니다.
+- 결과에는 Query Mode, Complexity Score, Sample Percent, 실행 분류와 보수적인 예상 오차 안내가 포함됩니다.
+
+## 6. 개인정보 요청 Workflow
+
+관리자는 Privacy Requests에서 삭제 또는 Export 요청을 먼저 생성하고 별도의 승인 동작으로 실행합니다. User ID 삭제는 Identity Graph에 연결된 Visitor까지 포함하며, 기간 삭제는 Site Timezone 경계를 사용합니다. 요청자·승인자·결과 건수·상태는 Audit와 요청 이력에 남습니다. 승인 완료된 Export는 이벤트·사용자·세션 속성을 포함한 전체 NDJSON으로 내려받을 수 있습니다.

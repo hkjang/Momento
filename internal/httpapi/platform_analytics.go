@@ -112,6 +112,7 @@ func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
 type journeyStep struct {
 	Name    string `json:"name"`
 	Event   string `json:"event"`
+	SiteID  string `json:"site_id,omitempty"`
 	Service string `json:"service,omitempty"`
 	Feature string `json:"feature,omitempty"`
 }

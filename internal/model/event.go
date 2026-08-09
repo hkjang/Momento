@@ -3,26 +3,28 @@ package model
 import "encoding/json"
 
 type CollectRequest struct {
-	SiteID         string          `json:"site_id"`
-	Environment    string          `json:"environment,omitempty"`
-	TrackingKey    string          `json:"tracking_key,omitempty"`
-	VisitorID      string          `json:"visitor_id"`
-	SessionID      string          `json:"session_id"`
-	UserID         string          `json:"user_id,omitempty"`
-	UserProperties map[string]any  `json:"user_properties,omitempty"`
-	Context        EventContext    `json:"context,omitempty"`
-	Events         []IncomingEvent `json:"events"`
+	SiteID            string          `json:"site_id"`
+	Environment       string          `json:"environment,omitempty"`
+	TrackingKey       string          `json:"tracking_key,omitempty"`
+	VisitorID         string          `json:"visitor_id"`
+	SessionID         string          `json:"session_id"`
+	UserID            string          `json:"user_id,omitempty"`
+	UserProperties    map[string]any  `json:"user_properties,omitempty"`
+	SessionProperties map[string]any  `json:"session_properties,omitempty"`
+	Context           EventContext    `json:"context,omitempty"`
+	Events            []IncomingEvent `json:"events"`
 }
 
 type IncomingEvent struct {
-	ID              string           `json:"id,omitempty"`
-	Name            string           `json:"name"`
-	Timestamp       int64            `json:"timestamp"`
-	Properties      map[string]any   `json:"properties,omitempty"`
-	Items           []map[string]any `json:"items,omitempty"`
-	Context         *EventContext    `json:"context,omitempty"`
-	Debug           bool             `json:"debug,omitempty"`
-	ContractVersion int              `json:"contract_version,omitempty"`
+	ID                string           `json:"id,omitempty"`
+	Name              string           `json:"name"`
+	Timestamp         int64            `json:"timestamp"`
+	Properties        map[string]any   `json:"properties,omitempty"`
+	SessionProperties map[string]any   `json:"session_properties,omitempty"`
+	Items             []map[string]any `json:"items,omitempty"`
+	Context           *EventContext    `json:"context,omitempty"`
+	Debug             bool             `json:"debug,omitempty"`
+	ContractVersion   int              `json:"contract_version,omitempty"`
 }
 
 type EventContext struct {
@@ -58,6 +60,7 @@ type InboxPayload struct {
 	UserAgent      string         `json:"user_agent"`
 	ReceivedUnix   int64          `json:"received_unix"`
 	PrivacyBlocked int            `json:"privacy_blocked,omitempty"`
+	PIIDetected    int            `json:"pii_detected,omitempty"`
 }
 
 func (p InboxPayload) JSON() ([]byte, error) { return json.Marshal(p) }

@@ -25,6 +25,11 @@ var eventNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 var environmentPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 var knownBotPattern = regexp.MustCompile(`(?i)(bot\b|crawler|spider|slurp|bingpreview|headlesschrome)`)
 var monitoringPattern = regexp.MustCompile(`(?i)(uptime|pingdom|healthcheck|monitoring|prometheus)`)
+var emailPIIPattern = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
+var phonePIIPattern = regexp.MustCompile(`(?:\+?82[- ]?)?0?1[016789][- ]?\d{3,4}[- ]?\d{4}`)
+var residentPIIPattern = regexp.MustCompile(`\b\d{6}[- ]?[1-8]\d{6}\b`)
+var cardPIIPattern = regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`)
+var tokenPIIPattern = regexp.MustCompile(`(?i)(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,})`)
 
 type SiteForCollect struct {
 	ID             uuid.UUID
@@ -48,6 +53,9 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 	}
 	if len(req.VisitorID) > 128 || len(req.SessionID) > 128 || len(req.UserID) > 128 {
 		return 0, errors.New("identifier is too long")
+	}
+	if len(req.SessionProperties) > 100 || len(req.UserProperties) > 100 {
+		return 0, errors.New("user_properties and session_properties accept at most 100 properties")
 	}
 	if !environmentPattern.MatchString(req.Environment) {
 		return 0, errors.New("invalid environment")
@@ -160,8 +168,13 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 	var privacy privacyConfig
 	_ = json.Unmarshal(site.PrivacyRaw, &privacy)
 	privacyBlocked := countPrivacyBlocked(req, privacy.BlockedProperties)
+	piiDetected, piiKinds := protectPII(&req, privacy.PIIDetectionMode)
+	if piiDetected > 0 && privacy.PIIDetectionMode == "reject" {
+		s.recordPIIRejection(ctx, site, req.Environment, req.Events, piiKinds)
+		return 0, errors.New("PII detected by privacy policy")
+	}
 	applyPrivacyBeforeQueue(&req, &clientIP, &userAgent, privacy)
-	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli(), PrivacyBlocked: privacyBlocked}
+	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli(), PrivacyBlocked: privacyBlocked, PIIDetected: piiDetected}
 	body, err := payload.JSON()
 	if err != nil {
 		return 0, err
@@ -214,6 +227,19 @@ func (s CollectorService) recordQualityRejection(ctx context.Context, site SiteF
 	_, _ = s.DB.Exec(ctx, `INSERT INTO data_quality_issues(site_id,environment,event_name,code,severity,message,sample) VALUES($1,$2,$3,'CONTRACT_REJECTED','error',$4,$5)`, site.ID, environment, event.Name, strings.Join(warnings, "; "), sample)
 }
 
+func (s CollectorService) recordPIIRejection(ctx context.Context, site SiteForCollect, environment string, events []model.IncomingEvent, kinds []string) {
+	date := time.Now()
+	if location, err := time.LoadLocation(site.Timezone); err == nil {
+		date = date.In(location)
+	}
+	for _, event := range events {
+		_, _ = s.DB.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,received,rejected,pii_detected) VALUES($1,$2,$3,$4,1,1,1)
+			ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET received=data_quality_daily.received+1,rejected=data_quality_daily.rejected+1,pii_detected=data_quality_daily.pii_detected+1,updated_at=now()`, site.ID, date.Format("2006-01-02"), environment, event.Name)
+	}
+	sample, _ := json.Marshal(map[string]any{"detected_types": kinds})
+	_, _ = s.DB.Exec(ctx, `INSERT INTO data_quality_issues(site_id,environment,code,severity,message,sample) VALUES($1,$2,'PII_REJECTED','error','Event rejected by the PII policy',$3)`, site.ID, environment, sample)
+}
+
 func originAllowed(origin string, allowed []string) bool {
 	if len(allowed) == 0 {
 		return true
@@ -243,6 +269,7 @@ type privacyConfig struct {
 	CollectUserID     bool     `json:"collect_user_id"`
 	DoNotTrack        bool     `json:"do_not_track"`
 	BlockedProperties []string `json:"blocked_properties"`
+	PIIDetectionMode  string   `json:"pii_detection_mode"`
 }
 
 type Worker struct{ DB *pgxpool.Pool }
@@ -395,6 +422,11 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 			ctxValue = *event.Context
 		}
 		props := filteredProperties(event.Properties, privacy.BlockedProperties)
+		sessionProps := p.Request.SessionProperties
+		if event.SessionProperties != nil {
+			sessionProps = event.SessionProperties
+		}
+		sessionProps = filteredProperties(sessionProps, privacy.BlockedProperties)
 		if len(event.Items) > 0 {
 			items := make([]map[string]any, 0, len(event.Items))
 			for _, item := range event.Items {
@@ -420,9 +452,10 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 		}
 		propsJSON, _ := json.Marshal(props)
 		userJSON, _ := json.Marshal(userProps)
-		result, err := tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,is_conversion,is_internal,traffic_class,environment,contract_version)
-			VALUES($1,$2,$3,$4,$5,$6,nullif($7,''),nullif($8,''),nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''),nullif($14,''),nullif($15,''),nullif($16,''),nullif($17,''),nullif($18,''),nullif($19,''),$20,$21,$22,$23,$24,$25,$26,$27,$28)
-			ON CONFLICT(site_id,event_id) DO NOTHING`, eventID, siteID, event.Name, eventTime, p.Request.VisitorID, p.Request.SessionID, userID, pageURL, ctxValue.Page.Title, ctxValue.Page.Referrer, ctxValue.Traffic.Source, ctxValue.Traffic.Medium, ctxValue.Traffic.Campaign, ctxValue.Device.Type, ctxValue.Device.Browser, ctxValue.Device.OS, ctxValue.Device.Language, ctxValue.Device.Screen, userAgent, nullableIP(ip), networkName, propsJSON, userJSON, conversion, internal, trafficClass, p.Request.Environment, event.ContractVersion)
+		sessionJSON, _ := json.Marshal(sessionProps)
+		result, err := tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,session_properties,is_conversion,is_internal,traffic_class,environment,contract_version)
+			VALUES($1,$2,$3,$4,$5,$6,nullif($7,''),nullif($8,''),nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''),nullif($14,''),nullif($15,''),nullif($16,''),nullif($17,''),nullif($18,''),nullif($19,''),$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+			ON CONFLICT(site_id,event_id) DO NOTHING`, eventID, siteID, event.Name, eventTime, p.Request.VisitorID, p.Request.SessionID, userID, pageURL, ctxValue.Page.Title, ctxValue.Page.Referrer, ctxValue.Traffic.Source, ctxValue.Traffic.Medium, ctxValue.Traffic.Campaign, ctxValue.Device.Type, ctxValue.Device.Browser, ctxValue.Device.OS, ctxValue.Device.Language, ctxValue.Device.Screen, userAgent, nullableIP(ip), networkName, propsJSON, userJSON, sessionJSON, conversion, internal, trafficClass, p.Request.Environment, event.ContractVersion)
 		if err != nil {
 			return err
 		}
@@ -431,6 +464,7 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 				return err
 			}
 			p.PrivacyBlocked = 0
+			p.PIIDetected = 0
 			if err := recordCardinality(ctx, tx, siteID, p.Request.Environment, eventTime, location, event, pageURL, networkName, cardinalityLimit); err != nil {
 				return err
 			}
@@ -451,7 +485,7 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 					return err
 				}
 			}
-			if err := updateSession(ctx, tx, siteID, p.Request, event, eventTime, canonicalUserID, pageURL, ctxValue, conversion); err != nil {
+			if err := updateSession(ctx, tx, siteID, p.Request, event, eventTime, canonicalUserID, pageURL, ctxValue, sessionProps, conversion); err != nil {
 				return err
 			}
 			if err := updateVisitorSession(ctx, tx, siteID, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, eventTime); err != nil {
@@ -602,7 +636,7 @@ func eventRevenue(event model.IncomingEvent) float64 {
 	return 0
 }
 
-func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request model.CollectRequest, event model.IncomingEvent, eventTime time.Time, userID, pageURL string, eventContext model.EventContext, conversion bool) error {
+func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request model.CollectRequest, event model.IncomingEvent, eventTime time.Time, userID, pageURL string, eventContext model.EventContext, sessionProperties map[string]any, conversion bool) error {
 	var page any
 	if event.Name == "page_view" && pageURL != "" {
 		page = pageURL
@@ -610,8 +644,9 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 	activeMS := activeEngagementMilliseconds(event)
 	heartbeat := boolInt(event.Name == "user_engagement")
 	interaction := boolInt(isInteractionEvent(event.Name))
-	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count,environment)
-		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6::bigint,$7::bigint,($7::bigint>0 OR $6::bigint>=2 OR $13::bigint >= (SELECT engagement_threshold_seconds::bigint*1000 FROM sites WHERE id=$1)),$8,$8,nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),$13::bigint,$14::bigint,$15::bigint,$16)
+	sessionJSON, _ := json.Marshal(sessionProperties)
+	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count,environment,session_properties)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6::bigint,$7::bigint,($7::bigint>0 OR $6::bigint>=2 OR $13::bigint >= (SELECT engagement_threshold_seconds::bigint*1000 FROM sites WHERE id=$1)),$8,$8,nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),$13::bigint,$14::bigint,$15::bigint,$16,$17)
 		ON CONFLICT(site_id,environment,session_id) DO UPDATE SET
 		visitor_id=excluded.visitor_id,
 		user_id=coalesce(excluded.user_id,sessions.user_id),
@@ -634,14 +669,15 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 		campaign=coalesce(sessions.campaign,excluded.campaign),
 		device_type=coalesce(sessions.device_type,excluded.device_type),
 		environment=CASE WHEN excluded.last_event_at>=sessions.last_event_at THEN excluded.environment ELSE sessions.environment END,
-		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type, activeMS, heartbeat, interaction, request.Environment)
+		session_properties=CASE WHEN excluded.last_event_at>=sessions.last_event_at THEN sessions.session_properties || excluded.session_properties ELSE excluded.session_properties || sessions.session_properties END,
+		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type, activeMS, heartbeat, interaction, request.Environment, sessionJSON)
 	return err
 }
 
 func recordAcceptedQuality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, p model.InboxPayload, event model.IncomingEvent, eventTime time.Time, location *time.Location, userID, networkName string) error {
 	local := eventTime.In(location)
 	late := int64(0)
-	if p.ReceivedUnix > 0 && time.UnixMilli(p.ReceivedUnix).Sub(eventTime).Abs() > time.Hour {
+	if p.ReceivedUnix > 0 && time.UnixMilli(p.ReceivedUnix).Sub(eventTime) > time.Hour {
 		late = 1
 	}
 	missingUser, missingFeature, unknownNetwork := int64(0), int64(0), int64(0)
@@ -654,8 +690,14 @@ func recordAcceptedQuality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, p m
 	if networkName == "External / Unclassified" {
 		unknownNetwork = 1
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,accepted,late_events,missing_user_id,missing_feature,unknown_network,pii_blocked)
-		VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET accepted=data_quality_daily.accepted+1,late_events=data_quality_daily.late_events+excluded.late_events,missing_user_id=data_quality_daily.missing_user_id+excluded.missing_user_id,missing_feature=data_quality_daily.missing_feature+excluded.missing_feature,unknown_network=data_quality_daily.unknown_network+excluded.unknown_network,pii_blocked=data_quality_daily.pii_blocked+excluded.pii_blocked,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name, late, missingUser, missingFeature, unknownNetwork, p.PrivacyBlocked)
+	_, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,accepted,late_events,missing_user_id,missing_feature,unknown_network,pii_blocked,pii_detected)
+		VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET accepted=data_quality_daily.accepted+1,late_events=data_quality_daily.late_events+excluded.late_events,missing_user_id=data_quality_daily.missing_user_id+excluded.missing_user_id,missing_feature=data_quality_daily.missing_feature+excluded.missing_feature,unknown_network=data_quality_daily.unknown_network+excluded.unknown_network,pii_blocked=data_quality_daily.pii_blocked+excluded.pii_blocked,pii_detected=data_quality_daily.pii_detected+excluded.pii_detected,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name, late, missingUser, missingFeature, unknownNetwork, p.PrivacyBlocked, p.PIIDetected)
+	if err != nil || late == 0 {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO aggregate_jobs(site_id,environment,job_type,date_from,date_to,reason)
+		VALUES($1,$2,'late_event',$3::date,$3::date,'event arrived more than one hour late')
+		ON CONFLICT(site_id,environment,date_from) WHERE job_type='late_event' AND status IN ('pending','running') DO NOTHING`, siteID, p.Request.Environment, local.Format("2006-01-02"))
 	return err
 }
 
@@ -763,8 +805,10 @@ func countPrivacyBlocked(req model.CollectRequest, blocked []string) int {
 		blockedSet[strings.ToLower(strings.TrimSpace(key))] = true
 	}
 	count := countBlockedProperties(req.UserProperties, blockedSet)
+	count += countBlockedProperties(req.SessionProperties, blockedSet)
 	for _, event := range req.Events {
 		count += countBlockedProperties(event.Properties, blockedSet)
+		count += countBlockedProperties(event.SessionProperties, blockedSet)
 		for _, item := range event.Items {
 			count += countBlockedProperties(item, blockedSet)
 		}
@@ -792,15 +836,144 @@ func countBlockedProperties(properties map[string]any, blocked map[string]bool) 
 	}
 	return count
 }
+
+// protectPII inspects values before the durable inbox write. It intentionally
+// returns only detector categories, never the matching value.
+func protectPII(req *model.CollectRequest, configuredMode string) (int, []string) {
+	mode := strings.ToLower(strings.TrimSpace(configuredMode))
+	switch mode {
+	case "detect", "warn", "mask", "reject":
+	default:
+		mode = "mask"
+	}
+	count := 0
+	kinds := map[string]bool{}
+	visit := func(value any) any { return value }
+	visit = func(value any) any {
+		switch current := value.(type) {
+		case map[string]any:
+			for key, nested := range current {
+				current[key] = visit(nested)
+			}
+			return current
+		case []any:
+			for i := range current {
+				current[i] = visit(current[i])
+			}
+			return current
+		case []map[string]any:
+			for i := range current {
+				current[i] = visit(current[i]).(map[string]any)
+			}
+			return current
+		case string:
+			masked, found := maskPIIString(current)
+			for _, kind := range found {
+				count++
+				kinds[kind] = true
+			}
+			if mode == "mask" {
+				return masked
+			}
+		}
+		return value
+	}
+	req.UserProperties, _ = visit(req.UserProperties).(map[string]any)
+	req.SessionProperties, _ = visit(req.SessionProperties).(map[string]any)
+	for i := range req.Events {
+		req.Events[i].Properties, _ = visit(req.Events[i].Properties).(map[string]any)
+		req.Events[i].SessionProperties, _ = visit(req.Events[i].SessionProperties).(map[string]any)
+		req.Events[i].Items, _ = visit(req.Events[i].Items).([]map[string]any)
+	}
+	contextStrings := []*string{&req.Context.Page.URL, &req.Context.Page.Title, &req.Context.Page.Referrer}
+	for i := range req.Events {
+		if req.Events[i].Context != nil {
+			contextStrings = append(contextStrings, &req.Events[i].Context.Page.URL, &req.Events[i].Context.Page.Title, &req.Events[i].Context.Page.Referrer)
+		}
+	}
+	for _, target := range contextStrings {
+		masked, found := maskPIIString(*target)
+		for _, kind := range found {
+			count++
+			kinds[kind] = true
+		}
+		if mode == "mask" {
+			*target = masked
+		}
+	}
+	labels := make([]string, 0, len(kinds))
+	for _, kind := range []string{"email", "phone", "resident_number", "payment_card", "credential"} {
+		if kinds[kind] {
+			labels = append(labels, kind)
+		}
+	}
+	if count > 0 && mode == "warn" {
+		for i := range req.Events {
+			if req.Events[i].Properties == nil {
+				req.Events[i].Properties = map[string]any{}
+			}
+			req.Events[i].Properties["_momento_pii_warnings"] = labels
+		}
+	}
+	return count, labels
+}
+
+func maskPIIString(value string) (string, []string) {
+	found := []string{}
+	replace := func(pattern *regexp.Regexp, kind string, current string) string {
+		if pattern.MatchString(current) {
+			found = append(found, kind)
+			return pattern.ReplaceAllString(current, "[MASKED_"+strings.ToUpper(kind)+"]")
+		}
+		return current
+	}
+	value = replace(emailPIIPattern, "email", value)
+	value = replace(residentPIIPattern, "resident_number", value)
+	value = cardPIIPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+		digits := strings.NewReplacer(" ", "", "-", "").Replace(candidate)
+		if !validLuhn(digits) {
+			return candidate
+		}
+		found = append(found, "payment_card")
+		return "[MASKED_PAYMENT_CARD]"
+	})
+	value = replace(phonePIIPattern, "phone", value)
+	value = replace(tokenPIIPattern, "credential", value)
+	return value, found
+}
+
+func validLuhn(digits string) bool {
+	if len(digits) < 13 || len(digits) > 19 {
+		return false
+	}
+	sum, parity := 0, len(digits)%2
+	for i := range digits {
+		if digits[i] < '0' || digits[i] > '9' {
+			return false
+		}
+		digit := int(digits[i] - '0')
+		if i%2 == parity {
+			digit *= 2
+			if digit > 9 {
+				digit -= 9
+			}
+		}
+		sum += digit
+	}
+	return sum%10 == 0
+}
+
 func applyPrivacyBeforeQueue(req *model.CollectRequest, clientIP, userAgent *string, privacy privacyConfig) {
 	if !privacy.CollectUserID {
 		req.UserID = ""
 	}
 	req.UserProperties = filteredProperties(req.UserProperties, privacy.BlockedProperties)
+	req.SessionProperties = filteredProperties(req.SessionProperties, privacy.BlockedProperties)
 	req.Context.Page.URL = sanitizeURL(req.Context.Page.URL, privacy)
 	req.Context.Page.Referrer = sanitizeURL(req.Context.Page.Referrer, privacy)
 	for i := range req.Events {
 		req.Events[i].Properties = filteredProperties(req.Events[i].Properties, privacy.BlockedProperties)
+		req.Events[i].SessionProperties = filteredProperties(req.Events[i].SessionProperties, privacy.BlockedProperties)
 		items := make([]map[string]any, 0, len(req.Events[i].Items))
 		for _, item := range req.Events[i].Items {
 			items = append(items, filteredProperties(item, privacy.BlockedProperties))

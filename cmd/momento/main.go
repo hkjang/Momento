@@ -54,6 +54,8 @@ func main() {
 	go worker.Run(ctx)
 	automation := service.Automation{DB: db, Logger: logger}
 	go automation.Run(ctx)
+	maintenance := service.Maintenance{DB: db, Logger: logger}
+	go maintenance.Run(ctx)
 	server := &http.Server{Addr: ":8080", Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
 		logger.Info("Momento started", "version", version.Version, "address", server.Addr)

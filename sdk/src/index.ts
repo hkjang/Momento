@@ -35,6 +35,7 @@ export interface MomentoOptions {
   releaseVersion?: string;
   gitSha?: string;
   deploymentId?: string;
+  sessionProperties?: Properties;
 }
 
 interface QueuedEvent {
@@ -42,6 +43,7 @@ interface QueuedEvent {
   name: string;
   timestamp: number;
   properties: Properties;
+  session_properties: Properties;
   context?: EventContext;
   debug?: boolean;
   contract_version: number;
@@ -136,6 +138,8 @@ export class MomentoTracker {
   private lastEventAt = 0;
   private userId = "";
   private userProperties: Properties = {};
+  private sessionProperties: Properties = {};
+  private defaultSessionProperties: Properties = {};
   private queue: QueuedEvent[] = [];
   private timer?: number;
   private debugEnabled = false;
@@ -168,6 +172,8 @@ export class MomentoTracker {
       endpoint: options.endpoint.replace(/\/$/, ""),
     };
     this.debugEnabled = !!this.options.debug;
+    this.defaultSessionProperties = { ...(options.sessionProperties || {}) };
+    this.sessionProperties = { ...this.defaultSessionProperties };
     this.migrateLegacyStorage();
     this.consentState = this.readConsentState();
     this.loadIdentity();
@@ -195,6 +201,11 @@ export class MomentoTracker {
     this.userProperties = { ...this.userProperties, ...properties };
   }
 
+  setSessionProperties(properties: Properties = {}) {
+    this.sessionProperties = { ...this.sessionProperties, ...properties };
+    this.persistSession();
+  }
+
   track(name: string, properties: Properties = {}) {
     if (!this.canTrack()) return;
     this.ensureSession();
@@ -204,6 +215,7 @@ export class MomentoTracker {
       name,
       timestamp,
       properties: { ...properties, ...this.releaseContext() },
+      session_properties: { ...this.sessionProperties },
       context: this.context(),
       debug: this.debugEnabled,
       contract_version: this.options?.contractVersion || 1,
@@ -225,6 +237,7 @@ export class MomentoTracker {
       session_id: this.sessionId,
       user_id: this.userId || undefined,
       user_properties: this.userProperties,
+      session_properties: this.sessionProperties,
       context: events[0]?.context || this.context(),
       events,
     });
@@ -384,15 +397,21 @@ export class MomentoTracker {
           s.traffic && typeof s.traffic === "object"
             ? s.traffic
             : acquisitionFallback();
+        this.sessionProperties =
+          s.properties && typeof s.properties === "object"
+            ? { ...this.defaultSessionProperties, ...s.properties }
+            : { ...this.defaultSessionProperties };
       } catch {
         this.sessionId = id();
         this.lastEventAt = 0;
         this.acquisition = acquisitionFallback();
+        this.sessionProperties = { ...this.defaultSessionProperties };
       }
     } else {
       this.sessionId = id();
       this.lastEventAt = 0;
       this.acquisition = acquisitionFallback();
+      this.sessionProperties = { ...this.defaultSessionProperties };
     }
     this.ensureSession(preserveAcquisition ? acquisitionFallback() : undefined);
   }
@@ -404,12 +423,14 @@ export class MomentoTracker {
       this.sessionId = id();
       this.lastEventAt = timestamp;
       this.acquisition = acquisition || this.detectTraffic();
+      this.sessionProperties = { ...this.defaultSessionProperties };
       if (this.canTrack())
         this.queue.push({
           id: id(),
           name: "session_start",
           timestamp,
           properties: this.releaseContext(),
+          session_properties: { ...this.sessionProperties },
           context: this.context(),
           debug: this.debugEnabled,
           contract_version: this.options?.contractVersion || 1,
@@ -424,6 +445,7 @@ export class MomentoTracker {
           id: this.sessionId,
           last: this.lastEventAt,
           traffic: this.acquisition,
+          properties: this.sessionProperties,
         }),
       );
     }

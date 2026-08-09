@@ -116,6 +116,24 @@ func (s *Server) Handler() http.Handler {
 		api.Get("/api/v1/sites/{siteID}/semantic-metrics", s.listSemanticMetrics)
 		api.Post("/api/v1/sites/{siteID}/semantic-metrics", s.admin(s.saveSemanticMetric))
 		api.Get("/api/v1/sites/{siteID}/semantic-metrics/{name}/query", s.querySemanticMetric)
+		api.Get("/api/v1/sites/{siteID}/metric-goals", s.listMetricGoals)
+		api.Post("/api/v1/sites/{siteID}/metric-goals", s.admin(s.saveMetricGoal))
+		api.Get("/api/v1/sites/{siteID}/metric-goals/evaluate", s.evaluateMetricGoals)
+		api.Get("/api/v1/sites/{siteID}/query-policy", s.admin(s.getQueryPolicy))
+		api.Put("/api/v1/sites/{siteID}/query-policy", s.admin(s.putQueryPolicy))
+		api.Get("/api/v1/sites/{siteID}/query-audit", s.admin(s.listQueryAudit))
+		api.Get("/api/v1/sites/{siteID}/aggregate-jobs", s.admin(s.listAggregateJobs))
+		api.Post("/api/v1/sites/{siteID}/aggregate-jobs", s.admin(s.createAggregateJob))
+		api.Get("/api/v1/sites/{siteID}/annotations", s.listAnnotations)
+		api.Post("/api/v1/sites/{siteID}/annotations", s.admin(s.saveAnnotation))
+		api.Delete("/api/v1/sites/{siteID}/annotations/{id}", s.admin(s.deleteAnnotation))
+		api.Post("/api/v1/sites/{siteID}/event-contracts/validate", s.validateEventContractCI)
+		api.Get("/api/v1/sites/{siteID}/catalog", s.eventCatalog)
+		api.Get("/api/v1/sites/{siteID}/lineage", s.dataLineage)
+		api.Get("/api/v1/sites/{siteID}/privacy-requests", s.admin(s.listPrivacyRequests))
+		api.Post("/api/v1/sites/{siteID}/privacy-requests", s.admin(s.createPrivacyRequest))
+		api.Post("/api/v1/sites/{siteID}/privacy-requests/{id}/decision", s.admin(s.decidePrivacyRequest))
+		api.Get("/api/v1/sites/{siteID}/privacy-requests/{id}/export", s.admin(s.exportPrivacyRequest))
 		api.Get("/api/v1/sites/{siteID}/data-quality", s.dataQualityReport)
 		api.Get("/api/v1/sites/{siteID}/cohort", s.cohortReport)
 		api.Get("/api/v1/sites/{siteID}/journeys", s.listBusinessJourneys)
@@ -126,6 +144,18 @@ func (s *Server) Handler() http.Handler {
 		api.Post("/api/v1/sites/{siteID}/adoption-targets", s.admin(s.saveAdoptionTarget))
 		api.Delete("/api/v1/sites/{siteID}/adoption-targets/{id}", s.admin(s.deleteAdoptionTarget))
 		api.Get("/api/v1/sites/{siteID}/adoption", s.adoptionReport)
+		api.Get("/api/v1/sites/{siteID}/workspace-rollup", s.workspaceRollup)
+		api.Get("/api/v1/sites/{siteID}/workspace-journeys", s.listWorkspaceJourneys)
+		api.Post("/api/v1/sites/{siteID}/workspace-journeys", s.sessionOnly(s.saveWorkspaceJourney))
+		api.Post("/api/v1/sites/{siteID}/workspace-journeys/analyze", s.analyzeWorkspaceJourney)
+		api.Get("/api/v1/sites/{siteID}/feature-intelligence", s.featureIntelligence)
+		api.Get("/api/v1/sites/{siteID}/search-analytics", s.searchAnalytics)
+		api.Get("/api/v1/sites/{siteID}/frustration", s.frustrationAnalytics)
+		api.Get("/api/v1/sites/{siteID}/feature-flags", s.listFeatureFlags)
+		api.Post("/api/v1/sites/{siteID}/feature-flags", s.admin(s.saveFeatureFlag))
+		api.Get("/api/v1/sites/{siteID}/experiments", s.listExperiments)
+		api.Post("/api/v1/sites/{siteID}/experiments", s.admin(s.saveExperiment))
+		api.Get("/api/v1/sites/{siteID}/experiments/{id}/analysis", s.analyzeExperiment)
 		api.Get("/api/v1/sites/{siteID}/experience", s.experienceReport)
 		api.Get("/api/v1/sites/{siteID}/ai-analytics", s.aiAnalyticsReport)
 		api.Get("/api/v1/sites/{siteID}/insights", s.insightsReport)
@@ -304,6 +334,10 @@ func (s *Server) collect(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.Contains(err.Error(), "schema validation") {
 			code = "SCHEMA_ERROR"
+			status = 422
+		}
+		if strings.Contains(err.Error(), "PII detected") {
+			code = "PII_DETECTED"
 			status = 422
 		}
 		writeError(w, status, code, err.Error())

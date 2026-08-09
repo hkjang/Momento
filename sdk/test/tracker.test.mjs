@@ -76,7 +76,9 @@ test("captures page and acquisition context when each event occurs", async () =>
     contractVersion: 3,
     releaseVersion: "v2.4.1",
     gitSha: "abc123",
+    sessionProperties: { login_status: "anonymous" },
   });
+  tracker.setSessionProperties({ login_status: "authenticated", workflow: "approval" });
   tracker.track("click", { button: "from-a" });
 
   setGlobal(
@@ -100,6 +102,10 @@ test("captures page and acquisition context when each event occurs", async () =>
   assert.equal(clicks[0].contract_version, 3);
   assert.equal(clicks[0].properties.release_version, "v2.4.1");
   assert.equal(clicks[0].properties.git_sha, "abc123");
+  assert.deepEqual(deliveries[0].session_properties, {
+    login_status: "authenticated",
+    workflow: "approval",
+  });
   tracker.consent.deny();
 });
 

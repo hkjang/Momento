@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -437,6 +438,7 @@ type queryRequest struct {
 	Environment string       `json:"environment,omitempty"`
 	SegmentID   string       `json:"segment_id,omitempty"`
 	Segment     *segmentNode `json:"segment,omitempty"`
+	Mode        string       `json:"mode,omitempty"`
 	DateRange   struct {
 		From string `json:"from"`
 		To   string `json:"to"`
@@ -477,6 +479,20 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	if !environmentNamePattern.MatchString(in.Environment) {
 		in.Environment = "prd"
 	}
+	plan, planError := s.planAnalyticsQuery(r.Context(), siteID, in, from, to)
+	if planError != "" {
+		s.createQueryAudit(r.Context(), siteID, in.Environment, in, from, to, plan, "rejected", planError)
+		writeError(w, 422, "QUERY_COST_LIMIT", planError)
+		return
+	}
+	started := time.Now()
+	auditID := s.createQueryAudit(r.Context(), siteID, in.Environment, in, from, to, plan, "running", "")
+	auditComplete := false
+	defer func() {
+		if !auditComplete {
+			s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", "query validation or execution stopped")
+		}
+	}()
 	semanticCount := 0
 	for _, metric := range in.Metrics {
 		if strings.HasPrefix(metric, "semantic.") {
@@ -509,13 +525,17 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 			}
 			value, err := s.evaluateSemanticMetric(r, siteID, in.Environment, from, to, definition, 1)
 			if err != nil {
+				s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", err.Error())
+				auditComplete = true
 				writeError(w, 500, "QUERY_FAILED", err.Error())
 				return
 			}
 			row[metric] = value
 			columns = append(columns, metric)
 		}
-		writeJSON(w, 200, map[string]any{"columns": columns, "rows": []map[string]any{row}, "environment": in.Environment})
+		s.finishQueryAudit(r.Context(), auditID, started, 1, "success", "")
+		auditComplete = true
+		writeJSON(w, 200, map[string]any{"columns": columns, "rows": []map[string]any{row}, "environment": in.Environment, "query": plan})
 		return
 	}
 	selects := []string{}
@@ -546,6 +566,11 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []any{siteID, from, to, in.Environment}
 	where := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3", "e.environment=$4"}
+	if plan.SamplePercent < 100 {
+		threshold := int(math.Round(plan.SamplePercent * 100))
+		args = append(args, threshold)
+		where = append(where, "mod((hashtextextended(e.event_id::text,0) & 9223372036854775807),10000) < $"+strconv.Itoa(len(args)))
+	}
 	for _, f := range in.Filters {
 		part, err := compileSegment(segmentNode{Field: f.Field, Operator: f.Operator, Value: f.Value}, resolver, "e", &args, 0)
 		if err != nil {
@@ -586,6 +611,8 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	sql += ` ORDER BY ` + strconv.Itoa(len(in.Dimensions)+1) + ` DESC LIMIT ` + strconv.Itoa(limit)
 	rows, err := s.DB.Query(r.Context(), sql, args...)
 	if err != nil {
+		s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", err.Error())
+		auditComplete = true
 		writeError(w, 400, "QUERY_FAILED", err.Error())
 		return
 	}
@@ -602,7 +629,15 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		}
 		result = append(result, item)
 	}
-	writeJSON(w, 200, map[string]any{"columns": columns, "rows": result})
+	if err := rows.Err(); err != nil {
+		s.finishQueryAudit(r.Context(), auditID, started, len(result), "failed", err.Error())
+		auditComplete = true
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
+	}
+	s.finishQueryAudit(r.Context(), auditID, started, len(result), "success", "")
+	auditComplete = true
+	writeJSON(w, 200, map[string]any{"columns": columns, "rows": result, "environment": in.Environment, "query": plan})
 }
 
 func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
