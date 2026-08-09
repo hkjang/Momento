@@ -23,6 +23,14 @@ export interface Site {
   created_at: string;
 }
 
+export interface SiteEnvironment {
+  name: string;
+  label: string;
+  contract_mode: "allow" | "warn" | "reject";
+  cardinality_limit: number;
+  active: boolean;
+}
+
 export class APIError extends Error {
   constructor(
     public status: number,
@@ -34,7 +42,16 @@ export class APIError extends Error {
 }
 
 export async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  let target = url;
+  const method = init?.method || "GET";
+  if (method === "GET" && url.includes("/api/v1/sites/")) {
+    const environment = localStorage.getItem("momento:selected-environment") || "prd";
+    const parsed = new URL(url, location.origin);
+    if (!parsed.searchParams.has("environment"))
+      parsed.searchParams.set("environment", environment);
+    target = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  }
+  const response = await fetch(target, {
     credentials: "same-origin",
     ...init,
     headers: {
@@ -98,5 +115,6 @@ export function dateRangeValues(days = 30, timezone = "UTC") {
 
 export function rangeQuery(days = 30, timezone = "UTC") {
   const { from, to } = dateRangeValues(days, timezone);
-  return `from=${from}&to=${to}`;
+  const environment = localStorage.getItem("momento:selected-environment") || "prd";
+  return `from=${from}&to=${to}&environment=${encodeURIComponent(environment)}`;
 }

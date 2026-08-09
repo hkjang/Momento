@@ -28,7 +28,7 @@ type Step = {
   filterValue: string;
 };
 export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const [steps, setSteps] = useState<Step[]>([
     {
       name: "페이지 조회",
@@ -75,6 +75,7 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
     mutationFn: () =>
       post<{ steps: Record<string, unknown>[] }>("/api/v1/funnel", {
         site_id: site!.site_id,
+        environment,
         ...dateRangeValues(30, site!.timezone),
         mode: funnelMode,
         within_minutes: withinMinutes,

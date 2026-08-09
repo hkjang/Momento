@@ -20,6 +20,8 @@ interface EventContext {
 export interface MomentoOptions {
   siteId: string;
   endpoint: string;
+  environment?: string;
+  contractVersion?: number;
   mode?: TrackingMode;
   sessionTimeoutMinutes?: number;
   debug?: boolean;
@@ -28,6 +30,11 @@ export interface MomentoOptions {
   batchSize?: number;
   collectElementText?: boolean;
   sanitizeErrorMessages?: boolean;
+  autoRUM?: boolean;
+  appVersion?: string;
+  releaseVersion?: string;
+  gitSha?: string;
+  deploymentId?: string;
 }
 
 interface QueuedEvent {
@@ -37,6 +44,7 @@ interface QueuedEvent {
   properties: Properties;
   context?: EventContext;
   debug?: boolean;
+  contract_version: number;
 }
 
 const VISITOR_KEY = "momento_visitor_id";
@@ -139,6 +147,12 @@ export class MomentoTracker {
   init(options: MomentoOptions) {
     if (!options.siteId || !options.endpoint)
       throw new Error("Momento: siteId and endpoint are required");
+    const environment = options.environment || "prd";
+    const contractVersion = options.contractVersion ?? 1;
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(environment))
+      throw new Error("Momento: environment is invalid");
+    if (!Number.isInteger(contractVersion) || contractVersion < 1)
+      throw new Error("Momento: contractVersion must be a positive integer");
     this.options = {
       mode: "full",
       sessionTimeoutMinutes: 30,
@@ -147,19 +161,25 @@ export class MomentoTracker {
       batchSize: 10,
       collectElementText: false,
       sanitizeErrorMessages: true,
+      autoRUM: true,
       ...options,
+      environment,
+      contractVersion,
       endpoint: options.endpoint.replace(/\/$/, ""),
     };
     this.debugEnabled = !!this.options.debug;
+    this.migrateLegacyStorage();
     this.consentState = this.readConsentState();
     this.loadIdentity();
     this.restoreOffline();
     if (this.options.autoTrack && !this.initialized) this.installAutoTracking();
+    if (this.options.autoRUM && !this.initialized) this.installRUM();
     this.initialized = true;
     if (this.options.autoTrack) this.track("page_view");
     this.log("initialized", {
       siteId: options.siteId,
       mode: this.options.mode,
+      environment: this.options.environment,
     });
     return this;
   }
@@ -183,9 +203,10 @@ export class MomentoTracker {
       id: id(),
       name,
       timestamp,
-      properties,
+      properties: { ...properties, ...this.releaseContext() },
       context: this.context(),
       debug: this.debugEnabled,
+      contract_version: this.options?.contractVersion || 1,
     });
     this.lastEventAt = timestamp;
     this.persistSession();
@@ -199,6 +220,7 @@ export class MomentoTracker {
     const events = this.queue.splice(0, this.options.batchSize || 10);
     const payload = JSON.stringify({
       site_id: this.options.siteId,
+      environment: this.options.environment,
       visitor_id: this.visitorId,
       session_id: this.sessionId,
       user_id: this.userId || undefined,
@@ -238,7 +260,7 @@ export class MomentoTracker {
     grant: () => {
       const wasTracking = this.canTrack();
       this.consentState = "granted";
-      if (storageAvailable()) localStorage.setItem(CONSENT_KEY, "granted");
+      if (storageAvailable()) localStorage.setItem(this.storageKey(CONSENT_KEY), "granted");
       // Keep the acquisition captured when the SDK first loaded. A visitor can
       // move to another SPA route while the consent banner is still open.
       this.loadIdentity(true);
@@ -246,12 +268,12 @@ export class MomentoTracker {
     },
     deny: () => {
       this.consentState = "denied";
-      if (storageAvailable()) localStorage.setItem(CONSENT_KEY, "denied");
+      if (storageAvailable()) localStorage.setItem(this.storageKey(CONSENT_KEY), "denied");
       this.clearTrackingState();
     },
     revoke: () => {
       this.consentState = "unknown";
-      if (storageAvailable()) localStorage.removeItem(CONSENT_KEY);
+      if (storageAvailable()) localStorage.removeItem(this.storageKey(CONSENT_KEY));
       this.clearTrackingState();
       this.loadIdentity();
     },
@@ -303,15 +325,29 @@ export class MomentoTracker {
 
   private readConsentState(): ConsentState {
     if (!storageAvailable()) return "unknown";
-    const stored = localStorage.getItem(CONSENT_KEY);
+    const stored = localStorage.getItem(this.storageKey(CONSENT_KEY));
     return stored === "granted" || stored === "denied" ? stored : "unknown";
+  }
+
+  private storageKey(base: string) {
+    return `${base}:${this.options?.siteId || "unknown"}:${this.options?.environment || "prd"}`;
+  }
+
+  private migrateLegacyStorage() {
+    if (!storageAvailable() || this.options?.environment !== "prd") return;
+    for (const key of [VISITOR_KEY, SESSION_KEY, CONSENT_KEY, OFFLINE_KEY]) {
+      const scoped = this.storageKey(key);
+      if (localStorage.getItem(scoped) !== null) continue;
+      const legacy = localStorage.getItem(key);
+      if (legacy !== null) localStorage.setItem(scoped, legacy);
+    }
   }
 
   private clearIdentityStorage() {
     if (!storageAvailable()) return;
-    localStorage.removeItem(VISITOR_KEY);
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(OFFLINE_KEY);
+    localStorage.removeItem(this.storageKey(VISITOR_KEY));
+    localStorage.removeItem(this.storageKey(SESSION_KEY));
+    localStorage.removeItem(this.storageKey(OFFLINE_KEY));
   }
 
   private clearTrackingState() {
@@ -333,12 +369,15 @@ export class MomentoTracker {
         : this.detectTraffic();
     const persistent = storageAvailable() && this.isPersistent();
     this.visitorId = persistent
-      ? localStorage.getItem(VISITOR_KEY) || id()
+      ? localStorage.getItem(this.storageKey(VISITOR_KEY)) || id()
       : id();
-    if (persistent) localStorage.setItem(VISITOR_KEY, this.visitorId);
+    if (persistent)
+      localStorage.setItem(this.storageKey(VISITOR_KEY), this.visitorId);
     if (persistent) {
       try {
-        const s = JSON.parse(localStorage.getItem(SESSION_KEY) || "{}");
+        const s = JSON.parse(
+          localStorage.getItem(this.storageKey(SESSION_KEY)) || "{}",
+        );
         this.sessionId = s.id || id();
         this.lastEventAt = s.last || 0;
         this.acquisition =
@@ -370,16 +409,17 @@ export class MomentoTracker {
           id: id(),
           name: "session_start",
           timestamp,
-          properties: {},
+          properties: this.releaseContext(),
           context: this.context(),
           debug: this.debugEnabled,
+          contract_version: this.options?.contractVersion || 1,
         });
     }
   }
   private persistSession() {
     if (storageAvailable() && this.isPersistent()) {
       localStorage.setItem(
-        SESSION_KEY,
+        this.storageKey(SESSION_KEY),
         JSON.stringify({
           id: this.sessionId,
           last: this.lastEventAt,
@@ -421,7 +461,10 @@ export class MomentoTracker {
   private saveOffline() {
     if (!storageAvailable() || !this.isPersistent()) return;
     try {
-      localStorage.setItem(OFFLINE_KEY, JSON.stringify(this.queue.slice(-200)));
+      localStorage.setItem(
+        this.storageKey(OFFLINE_KEY),
+        JSON.stringify(this.queue.slice(-200)),
+      );
     } catch {
       /* quota */
     }
@@ -429,15 +472,130 @@ export class MomentoTracker {
   private restoreOffline() {
     if (!storageAvailable() || !this.isPersistent()) return;
     try {
-      const saved = JSON.parse(localStorage.getItem(OFFLINE_KEY) || "[]");
+      const saved = JSON.parse(
+        localStorage.getItem(this.storageKey(OFFLINE_KEY)) || "[]",
+      );
       if (Array.isArray(saved)) this.queue.push(...saved.slice(-200));
-      localStorage.removeItem(OFFLINE_KEY);
+      localStorage.removeItem(this.storageKey(OFFLINE_KEY));
     } catch {
       /* corrupt queue */
     }
   }
   private log(...args: unknown[]) {
     if (this.debugEnabled) console.debug("[Momento]", ...args);
+  }
+
+  private releaseContext(): Properties {
+    if (!this.options) return {};
+    const context: Properties = {};
+    if (this.options.appVersion) context.app_version = this.options.appVersion;
+    if (this.options.releaseVersion)
+      context.release_version = this.options.releaseVersion;
+    if (this.options.gitSha) context.git_sha = this.options.gitSha;
+    if (this.options.deploymentId)
+      context.deployment_id = this.options.deploymentId;
+    return context;
+  }
+
+  private vitalRating(metric: string, value: number) {
+    const thresholds: Record<string, [number, number]> = {
+      LCP: [2500, 4000],
+      INP: [200, 500],
+      CLS: [0.1, 0.25],
+      FCP: [1800, 3000],
+      TTFB: [800, 1800],
+    };
+    const limits = thresholds[metric];
+    if (!limits) return "unknown";
+    return value <= limits[0]
+      ? "good"
+      : value <= limits[1]
+        ? "needs-improvement"
+        : "poor";
+  }
+
+  private trackVital(metric: string, value: number, extra: Properties = {}) {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.track("web_vital", {
+      metric,
+      value: Math.round(value * 1000) / 1000,
+      rating: this.vitalRating(metric, value),
+      ...extra,
+    });
+  }
+
+  private installRUM() {
+    const observe = (
+      type: string,
+      callback: (entries: PerformanceEntry[]) => void,
+    ) => {
+      if (typeof PerformanceObserver === "undefined") return;
+      try {
+        const observer = new PerformanceObserver((list) =>
+          callback(list.getEntries()),
+        );
+        observer.observe({ type, buffered: true });
+      } catch {
+        /* browser does not support this entry type */
+      }
+    };
+
+    let lastLCP = 0;
+    let cls = 0;
+    let maxINP = 0;
+    let emitted = false;
+    observe("largest-contentful-paint", (entries) => {
+      const last = entries[entries.length - 1];
+      if (last) lastLCP = last.startTime;
+    });
+    observe("layout-shift", (entries) => {
+      for (const entry of entries) {
+        const shift = entry as PerformanceEntry & {
+          value?: number;
+          hadRecentInput?: boolean;
+        };
+        if (!shift.hadRecentInput) cls += shift.value || 0;
+      }
+    });
+    observe("event", (entries) => {
+      for (const entry of entries) {
+        const timing = entry as PerformanceEntry & {
+          duration: number;
+          interactionId?: number;
+        };
+        if ((timing.interactionId || 0) > 0)
+          maxINP = Math.max(maxINP, timing.duration);
+      }
+    });
+    observe("paint", (entries) => {
+      const fcp = entries.find((entry) => entry.name === "first-contentful-paint");
+      if (fcp) this.trackVital("FCP", fcp.startTime);
+    });
+
+    const emitFinalVitals = () => {
+      if (emitted) return;
+      emitted = true;
+      if (lastLCP) this.trackVital("LCP", lastLCP);
+      this.trackVital("CLS", cls);
+      if (maxINP) this.trackVital("INP", maxINP);
+    };
+    addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") emitFinalVitals();
+    });
+
+    const navigation = () => {
+      const entry = performance.getEntriesByType?.(
+        "navigation",
+      )[0] as PerformanceNavigationTiming | undefined;
+      if (!entry) return;
+      this.trackVital("TTFB", entry.responseStart, {
+        navigation_type: entry.type,
+      });
+      this.trackVital("DOMContentLoaded", entry.domContentLoadedEventEnd);
+      this.trackVital("page_load", entry.loadEventEnd || entry.duration);
+    };
+    if (document.readyState === "complete") window.setTimeout(navigation, 0);
+    else addEventListener("load", navigation, { once: true });
   }
 
   private installAutoTracking() {
@@ -517,15 +675,31 @@ export class MomentoTracker {
       const form = event.target as HTMLFormElement;
       this.track("form_submit", { form_id: form.id || form.name });
     });
-    addEventListener("error", (event) =>
-      this.track("error", {
-        message: this.options?.sanitizeErrorMessages
-          ? sanitizedError(event.message)
-          : event.message,
-        filename: sanitizedURL(event.filename),
-        line: event.lineno,
-        column: event.colno,
-      }),
+    addEventListener(
+      "error",
+      (event) => {
+        const error = event as ErrorEvent;
+        if (error.message) {
+          this.track("error", {
+            message: this.options?.sanitizeErrorMessages
+              ? sanitizedError(error.message)
+              : error.message,
+            filename: sanitizedURL(error.filename),
+            line: error.lineno,
+            column: error.colno,
+          });
+          return;
+        }
+        const target = event.target as
+          | (HTMLElement & { src?: string; href?: string })
+          | null;
+        if (target)
+          this.track("resource_error", {
+            resource: sanitizedURL(target.src || target.href || ""),
+            resource_type: target.tagName?.toLowerCase(),
+          });
+      },
+      true,
     );
     addEventListener("unhandledrejection", (event) =>
       this.track("error", {
@@ -566,7 +740,14 @@ if (script?.dataset.siteId) {
     siteId: script.dataset.siteId,
     endpoint,
     mode: (script.dataset.mode as TrackingMode) || "full",
+    environment: script.dataset.environment || "prd",
+    contractVersion: Number(script.dataset.contractVersion || 1),
     debug: script.dataset.debug === "true",
     collectElementText: script.dataset.collectElementText === "true",
+    autoRUM: script.dataset.autoRum !== "false",
+    appVersion: script.dataset.appVersion,
+    releaseVersion: script.dataset.releaseVersion,
+    gitSha: script.dataset.gitSha,
+    deploymentId: script.dataset.deploymentId,
   });
 }

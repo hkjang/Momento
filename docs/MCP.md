@@ -17,6 +17,14 @@ Content-Type: application/json
 - `query_ecommerce`: 매출, 환불, 순매출, 거래, 구매자, 평균 주문 금액, 구매 전환율
 - `query_identity_graph`: 내부 User ID에 결정적으로 연결된 Visitor 목록, 최초/연결/최근 활동, Event와 Conversion 수. Visitor Profile 정책이 활성화된 경우에만 사용 가능
 - `list_segments`: MCP 분석에서 재사용할 수 있는 저장 Segment와 중첩 AND/OR 정의
+- `list_semantic_metrics`: Metric Registry의 정의·Format·Version 조회
+- `query_semantic_metric`: 등록된 Semantic Metric을 Environment와 기간 기준으로 계산
+- `analyze_retention`: Event 기반 주차별 Cohort/Retention 분석
+- `analyze_feature_adoption`: 조직·부서·기능별 사용자와 Adoption 분석
+- `analyze_experience`: Web Vitals P75, Error와 영향 사용자 분석
+- `analyze_ai_operations`: Model·Provider·Agent·MCP Server·Tool별 호출, 지연, Token 분석
+- `inspect_data_quality`: 수집·중복·계약·PII·Cardinality 품질 분석
+- `ask_analytics`: 외부 LLM 호출 없는 오프라인 한국어/영어 Analytics 질의
 
 초기화 예제:
 
@@ -36,12 +44,15 @@ Content-Type: application/json
     "arguments": {
       "site_id": "SITE_12345678",
       "dimension": "department",
+      "environment": "prd",
       "from": "2026-08-01",
       "to": "2026-08-08"
     }
   }
 }
 ```
+
+모든 기간형 도구는 선택적인 `environment`를 받으며 생략 시 `prd`를 조회합니다. `ask_analytics`는 Momento DB 밖으로 질문이나 Event를 전송하지 않는 결정적 Parser입니다.
 
 Identity Graph 조회 예제:
 

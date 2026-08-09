@@ -127,11 +127,11 @@ type metricSet struct {
 	SessionConversionRate, Revenue                            float64
 }
 
-func (s *Server) metrics(r *http.Request, siteID uuid.UUID, from, to time.Time) (metricSet, error) {
+func (s *Server) metrics(r *http.Request, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
 	var m metricSet
 	err := s.DB.QueryRow(r.Context(), `WITH
 		cfg AS (SELECT engagement_threshold_seconds threshold FROM sites WHERE id=$1),
-		period AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3),
+		period AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
 		sess AS (
 			SELECT session_id,min(event_timestamp) mn,max(event_timestamp) mx,
 				count(*) FILTER(WHERE event_name='page_view') page_views,
@@ -140,9 +140,9 @@ func (s *Server) metrics(r *http.Request, siteID uuid.UUID, from, to time.Time) 
 			FROM period GROUP BY session_id
 		),
 		first_seen AS (
-			SELECT coalesce('u:'||i.user_id,'v:'||v.visitor_id) entity,min(v.first_seen) first_at
-			FROM visitors v LEFT JOIN visitor_identities i ON i.site_id=v.site_id AND i.visitor_id=v.visitor_id
-			WHERE v.site_id=$1 GROUP BY 1
+			SELECT entity_id entity,min(event_timestamp) first_at
+			FROM analytics_events
+			WHERE site_id=$1 AND environment=$4 GROUP BY entity_id
 		)
 		SELECT
 			count(DISTINCT p.entity),
@@ -158,7 +158,7 @@ func (s *Server) metrics(r *http.Request, siteID uuid.UUID, from, to time.Time) 
 			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
 			coalesce(100.0*count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.session_id),0),0),
 			coalesce(sum(CASE WHEN p.event_name='purchase' AND coalesce(p.properties->>'value',p.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(p.properties->>'value',p.properties->>'revenue')::numeric ELSE 0 END),0)
-		FROM period p`, siteID, from, to).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.ConversionSessions, &m.EngagementRate, &m.AvgSessionDuration, &m.UserConversionRate, &m.SessionConversionRate, &m.Revenue)
+		FROM period p`, siteID, from, to, environment).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.ConversionSessions, &m.EngagementRate, &m.AvgSessionDuration, &m.UserConversionRate, &m.SessionConversionRate, &m.Revenue)
 	return m, err
 }
 func metricMap(m metricSet) map[string]any {
@@ -175,7 +175,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	current, err := s.metrics(r, siteID, from, to)
+	environment := requestEnvironment(r)
+	current, err := s.metrics(r, siteID, environment, from, to)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -186,22 +187,22 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previousFrom, previousTo := previousDateRange(from, to, location)
-	previous, _ := s.metrics(r, siteID, previousFrom, previousTo)
+	previous, _ := s.metrics(r, siteID, environment, previousFrom, previousTo)
 	var rows pgx.Rows
 	if dateFrom, dateTo, daily := localDateBucketRange(from, to, location); daily {
 		rows, err = s.DB.Query(r.Context(), `WITH visitor_counts AS (
 			SELECT d.event_date,count(DISTINCT coalesce('u:'||i.user_id,'v:'||d.visitor_id)) users
 			FROM daily_site_visitors d LEFT JOIN visitor_identities i ON i.site_id=d.site_id AND i.visitor_id=d.visitor_id
-			WHERE d.site_id=$1 AND d.event_date >= $2::date AND d.event_date < $3::date GROUP BY d.event_date
+			WHERE d.site_id=$1 AND d.environment=$4 AND d.event_date >= $2::date AND d.event_date < $3::date GROUP BY d.event_date
 		), session_counts AS (
 			SELECT event_date,count(DISTINCT session_id) sessions FROM daily_site_sessions
-			WHERE site_id=$1 AND event_date >= $2::date AND event_date < $3::date GROUP BY event_date
+			WHERE site_id=$1 AND environment=$4 AND event_date >= $2::date AND event_date < $3::date GROUP BY event_date
 		)
 		SELECT to_char(m.event_date,'YYYY-MM-DD'),coalesce(v.users,0),coalesce(ss.sessions,0),m.page_views,m.events,m.conversions
 		FROM daily_site_metrics m LEFT JOIN visitor_counts v USING(event_date) LEFT JOIN session_counts ss USING(event_date)
-		WHERE m.site_id=$1 AND m.event_date >= $2::date AND m.event_date < $3::date ORDER BY m.event_date`, siteID, dateFrom, dateTo)
+		WHERE m.site_id=$1 AND m.environment=$4 AND m.event_date >= $2::date AND m.event_date < $3::date ORDER BY m.event_date`, siteID, dateFrom, dateTo, environment)
 	} else {
-		rows, err = s.DB.Query(r.Context(), `SELECT to_char(event_timestamp AT TIME ZONE $4,'YYYY-MM-DD') AS bucket,count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to, timezone)
+		rows, err = s.DB.Query(r.Context(), `SELECT to_char(event_timestamp AT TIME ZONE $4,'YYYY-MM-DD') AS bucket,count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$5 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to, timezone, environment)
 	}
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
@@ -216,7 +217,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 			trend = append(trend, map[string]any{"date": day, "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"from": from, "to": to, "timezone": timezone, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
+	writeJSON(w, 200, map[string]any{"from": from, "to": to, "timezone": timezone, "environment": environment, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
 }
 
 func rowsToList(rows pgx.Rows, scan func() (map[string]any, error)) []map[string]any {
@@ -236,13 +237,14 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
+	environment := requestEnvironment(r)
 	var u1, u5, u30, e30, p30 int64
-	err = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '1 minute'),count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '5 minutes'),count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE event_name='page_view') FROM analytics_events WHERE site_id=$1 AND event_timestamp>=now()-interval '30 minutes'`, siteID).Scan(&u1, &u5, &u30, &e30, &p30)
+	err = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '1 minute'),count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '5 minutes'),count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE event_name='page_view') FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes'`, siteID, environment).Scan(&u1, &u5, &u30, &e30, &p30)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	topEventsRows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID)
+	topEventsRows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -253,7 +255,7 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 		err := topEventsRows.Scan(&n, &c, &u)
 		return map[string]any{"name": n, "count": c, "users": u}, err
 	})
-	topPagesRows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND event_name='page_view' AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID)
+	topPagesRows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_name='page_view' AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -264,7 +266,7 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 		err := topPagesRows.Scan(&n, &c, &u)
 		return map[string]any{"name": n, "count": c, "users": u}, err
 	})
-	timelineRows, err := s.DB.Query(r.Context(), `SELECT date_trunc('minute',event_timestamp),count(*),count(*) FILTER(WHERE event_name='page_view') FROM raw_events WHERE site_id=$1 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 1`, siteID)
+	timelineRows, err := s.DB.Query(r.Context(), `SELECT date_trunc('minute',event_timestamp),count(*),count(*) FILTER(WHERE event_name='page_view') FROM raw_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 1`, siteID, environment)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -275,7 +277,7 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 		err := timelineRows.Scan(&t, &e, &p)
 		return map[string]any{"time": t, "events": e, "page_views": p}, err
 	})
-	writeJSON(w, 200, map[string]any{"active_users_1m": u1, "active_users_5m": u5, "active_users_30m": u30, "events_30m": e30, "page_views_30m": p30, "events_per_second": float64(e30) / 1800, "page_views_per_second": float64(p30) / 1800, "top_events": topEvents, "top_pages": topPages, "timeline": timeline})
+	writeJSON(w, 200, map[string]any{"environment": environment, "active_users_1m": u1, "active_users_5m": u5, "active_users_30m": u30, "events_30m": e30, "page_views_30m": p30, "events_per_second": float64(e30) / 1800, "page_views_per_second": float64(p30) / 1800, "top_events": topEvents, "top_pages": topPages, "timeline": timeline})
 }
 
 func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
@@ -289,7 +291,7 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE is_conversion),max(event_timestamp) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 2 DESC LIMIT 500`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE is_conversion),max(event_timestamp) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 2 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -314,7 +316,7 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),max(coalesce(page_title,'')),count(*),count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND event_name='page_view' AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY page_url ORDER BY 3 DESC LIMIT 500`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),max(coalesce(page_title,'')),count(*),count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_name='page_view' AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY page_url ORDER BY 3 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -343,12 +345,12 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 	dims := []dimension{{"networks", "coalesce(network_name,'External / Unclassified')"}, {"departments", "coalesce(nullif(canonical_user_properties->>'department',''),'(미지정)')"}, {"organizations", "coalesce(nullif(canonical_user_properties->>'organization',''),'(미지정)')"}, {"services", "coalesce(nullif(properties->>'service',''),(SELECT service_name FROM sites WHERE id=$1),'(미지정)')"}, {"features", "coalesce(nullif(properties->>'feature',''),'(미지정)')"}, {"buttons", "coalesce(nullif(properties->>'button',''),nullif(properties->>'element_text',''),nullif(properties->>'element_id',''),'(미지정)')"}}
 	result := map[string]any{}
 	for _, d := range dims {
-		query := `SELECT ` + d.expr + ` label,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3`
+		query := `SELECT ` + d.expr + ` label,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`
 		if d.key == "buttons" {
 			query += ` AND event_name='click'`
 		}
 		query += ` GROUP BY 1 ORDER BY 2 DESC LIMIT 20`
-		rows, qerr := s.DB.Query(r.Context(), query, siteID, from, to)
+		rows, qerr := s.DB.Query(r.Context(), query, siteID, from, to, requestEnvironment(r))
 		if qerr != nil {
 			writeError(w, 500, "QUERY_FAILED", qerr.Error())
 			return
@@ -381,8 +383,8 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.DB.Query(r.Context(), `WITH grouped AS (
 		SELECT visitor_id,max(canonical_user_id) user_id,(array_agg(canonical_user_properties ORDER BY event_timestamp DESC))[1] user_properties,min(event_timestamp) first_seen,max(event_timestamp) last_seen,count(*) events,count(DISTINCT session_id) sessions,count(*) FILTER(WHERE is_conversion) conversions
-		FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY visitor_id
-	) SELECT g.*,(SELECT count(*) FROM visitor_identities linked WHERE linked.site_id=$1 AND linked.user_id=g.user_id) FROM grouped g ORDER BY g.last_seen DESC LIMIT 500`, siteID, from, to)
+		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY visitor_id
+	) SELECT g.*,(SELECT count(*) FROM visitor_identities linked WHERE linked.site_id=$1 AND linked.user_id=g.user_id) FROM grouped g ORDER BY g.last_seen DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -431,10 +433,11 @@ func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
 }
 
 type queryRequest struct {
-	SiteID    string       `json:"site_id"`
-	SegmentID string       `json:"segment_id,omitempty"`
-	Segment   *segmentNode `json:"segment,omitempty"`
-	DateRange struct {
+	SiteID      string       `json:"site_id"`
+	Environment string       `json:"environment,omitempty"`
+	SegmentID   string       `json:"segment_id,omitempty"`
+	Segment     *segmentNode `json:"segment,omitempty"`
+	DateRange   struct {
 		From string `json:"from"`
 		To   string `json:"to"`
 	} `json:"date_range"`
@@ -471,6 +474,50 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
+	if !environmentNamePattern.MatchString(in.Environment) {
+		in.Environment = "prd"
+	}
+	semanticCount := 0
+	for _, metric := range in.Metrics {
+		if strings.HasPrefix(metric, "semantic.") {
+			semanticCount++
+		}
+	}
+	semanticOnly := semanticCount > 0
+	if semanticCount > 0 && semanticCount != len(in.Metrics) {
+		writeError(w, 400, "INVALID_QUERY", "semantic metrics cannot be mixed with built-in metrics")
+		return
+	}
+	if semanticOnly {
+		if len(in.Dimensions) > 0 {
+			writeError(w, 400, "INVALID_QUERY", "semantic metric preview currently requires no dimensions")
+			return
+		}
+		row := map[string]any{}
+		columns := []string{}
+		for _, metric := range in.Metrics {
+			name := strings.TrimPrefix(metric, "semantic.")
+			var raw []byte
+			if err := s.DB.QueryRow(r.Context(), `SELECT definition FROM semantic_metrics WHERE site_id=$1 AND name=$2 AND status='active'`, siteID, name).Scan(&raw); err != nil {
+				writeError(w, 400, "INVALID_METRIC", "semantic metric not found: "+name)
+				return
+			}
+			var definition semanticDefinition
+			if err := json.Unmarshal(raw, &definition); err != nil {
+				writeError(w, 500, "INVALID_METRIC_DEFINITION", err.Error())
+				return
+			}
+			value, err := s.evaluateSemanticMetric(r, siteID, in.Environment, from, to, definition, 1)
+			if err != nil {
+				writeError(w, 500, "QUERY_FAILED", err.Error())
+				return
+			}
+			row[metric] = value
+			columns = append(columns, metric)
+		}
+		writeJSON(w, 200, map[string]any{"columns": columns, "rows": []map[string]any{row}, "environment": in.Environment})
+		return
+	}
 	selects := []string{}
 	groups := []string{}
 	columns := []string{}
@@ -497,8 +544,8 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_QUERY", "at least one metric is required")
 		return
 	}
-	args := []any{siteID, from, to}
-	where := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3"}
+	args := []any{siteID, from, to, in.Environment}
+	where := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3", "e.environment=$4"}
 	for _, f := range in.Filters {
 		part, err := compileSegment(segmentNode{Field: f.Field, Operator: f.Operator, Value: f.Value}, resolver, "e", &args, 0)
 		if err != nil {
@@ -569,7 +616,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_timestamp,event_name,visitor_id,session_id,user_id,page_url,source,medium,campaign,device_type,browser,network_name,properties FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 ORDER BY event_timestamp LIMIT 100000`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_timestamp,event_name,visitor_id,session_id,user_id,page_url,source,medium,campaign,device_type,browser,network_name,properties,environment,contract_version FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 ORDER BY event_timestamp LIMIT 100000`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "EXPORT_FAILED", err.Error())
 		return
@@ -586,7 +633,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 			if raw, ok := properties.([]byte); ok {
 				properties = json.RawMessage(raw)
 			}
-			_ = enc.Encode(map[string]any{"event_id": exportUUID(vals[0]), "timestamp": vals[1], "event_name": vals[2], "visitor_id": vals[3], "session_id": vals[4], "user_id": vals[5], "page_url": vals[6], "source": vals[7], "medium": vals[8], "campaign": vals[9], "device_type": vals[10], "browser": vals[11], "network": vals[12], "properties": properties})
+			_ = enc.Encode(map[string]any{"event_id": exportUUID(vals[0]), "timestamp": vals[1], "event_name": vals[2], "visitor_id": vals[3], "session_id": vals[4], "user_id": vals[5], "page_url": vals[6], "source": vals[7], "medium": vals[8], "campaign": vals[9], "device_type": vals[10], "browser": vals[11], "network": vals[12], "properties": properties, "environment": vals[14], "contract_version": vals[15]})
 		}
 		return
 	}
@@ -594,7 +641,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="momento-events.csv"`)
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"event_id", "timestamp", "event_name", "visitor_id", "session_id", "user_id", "page_url", "source", "medium", "campaign", "device_type", "browser", "network", "properties"})
+	_ = cw.Write([]string{"event_id", "timestamp", "event_name", "visitor_id", "session_id", "user_id", "page_url", "source", "medium", "campaign", "device_type", "browser", "network", "properties", "environment", "contract_version"})
 	for rows.Next() {
 		vals, _ := rows.Values()
 		record := make([]string, len(vals))
@@ -629,6 +676,7 @@ func exportUUID(value any) any {
 
 type funnelRequest struct {
 	SiteID        string       `json:"site_id"`
+	Environment   string       `json:"environment,omitempty"`
 	From          string       `json:"from"`
 	To            string       `json:"to"`
 	Mode          string       `json:"mode,omitempty"`
@@ -678,8 +726,11 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_WINDOW", "within_minutes must be between 0 and 525600")
 		return
 	}
-	args := []any{siteID, from, to}
-	baseWhere := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3"}
+	if !environmentNamePattern.MatchString(in.Environment) {
+		in.Environment = "prd"
+	}
+	args := []any{siteID, from, to, in.Environment}
+	baseWhere := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3", "e.environment=$4"}
 	if in.SegmentID != "" {
 		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
 		if err != nil {
@@ -789,7 +840,7 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `WITH seq AS (SELECT session_id,CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END node,lead(CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END) OVER(PARTITION BY session_id ORDER BY event_timestamp,id) next_node FROM raw_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT node,next_node,count(*) FROM seq WHERE next_node IS NOT NULL GROUP BY 1,2 ORDER BY 3 DESC LIMIT 80`, siteID, from, to)
+	rows, err := s.DB.Query(r.Context(), `WITH seq AS (SELECT session_id,CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END node,lead(CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END) OVER(PARTITION BY session_id ORDER BY event_timestamp,id) next_node FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT node,next_node,count(*) FROM seq WHERE next_node IS NOT NULL GROUP BY 1,2 ORDER BY 3 DESC LIMIT 80`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return

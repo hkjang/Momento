@@ -1,0 +1,307 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type Automation struct {
+	DB     *pgxpool.Pool
+	Logger *slog.Logger
+}
+
+type automationConfig struct {
+	Enabled                bool     `json:"enabled"`
+	AllowedWebhookHosts    []string `json:"allowed_webhook_hosts"`
+	DeliveryTimeoutSeconds int      `json:"delivery_timeout_seconds"`
+	MaxEntityIDs           int      `json:"max_entity_ids"`
+}
+
+type scheduledDelivery struct {
+	ReportID       uuid.UUID
+	SiteID         uuid.UUID
+	SiteKey        string
+	ChannelID      uuid.UUID
+	ChannelType    string
+	EndpointURL    string
+	Headers        []byte
+	Name           string
+	ReportKind     string
+	Definition     []byte
+	IntervalMinute int
+}
+
+func (a Automation) Run(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for index := 0; index < 20; index++ {
+				ran, err := a.runNext(ctx)
+				if err != nil && ctx.Err() == nil && a.Logger != nil {
+					a.Logger.Error("scheduled delivery failed", "error", err)
+				}
+				if !ran {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (a Automation) config(ctx context.Context) (automationConfig, error) {
+	var raw []byte
+	var config automationConfig
+	if err := a.DB.QueryRow(ctx, `SELECT value FROM settings WHERE key='automation'`).Scan(&raw); err != nil {
+		return config, err
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return config, err
+	}
+	if config.DeliveryTimeoutSeconds < 1 || config.DeliveryTimeoutSeconds > 60 {
+		config.DeliveryTimeoutSeconds = 10
+	}
+	if config.MaxEntityIDs < 0 || config.MaxEntityIDs > 1000 {
+		config.MaxEntityIDs = 0
+	}
+	return config, nil
+}
+
+func (a Automation) runNext(ctx context.Context) (bool, error) {
+	config, err := a.config(ctx)
+	if err != nil || !config.Enabled {
+		return false, err
+	}
+	tx, err := a.DB.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var delivery scheduledDelivery
+	err = tx.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,r.name,r.report_kind,r.definition,r.interval_minutes
+		FROM scheduled_reports r JOIN delivery_channels c ON c.id=r.channel_id AND c.site_id=r.site_id AND c.active JOIN sites s ON s.id=r.site_id AND s.active
+		WHERE r.enabled AND r.next_run_at<=now() ORDER BY r.next_run_at LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE scheduled_reports SET next_run_at=now()+make_interval(mins=>$2),last_run_at=now(),last_status='running',last_error=NULL,updated_at=now() WHERE id=$1`, delivery.ReportID, delivery.IntervalMinute); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	err = a.execute(ctx, delivery, config)
+	return true, err
+}
+
+func (a Automation) RunByID(ctx context.Context, reportID uuid.UUID) error {
+	config, err := a.config(ctx)
+	if err != nil {
+		return err
+	}
+	if !config.Enabled {
+		return fmt.Errorf("automation is disabled in administrator settings")
+	}
+	var delivery scheduledDelivery
+	err = a.DB.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,r.name,r.report_kind,r.definition,r.interval_minutes
+		FROM scheduled_reports r JOIN delivery_channels c ON c.id=r.channel_id AND c.site_id=r.site_id AND c.active JOIN sites s ON s.id=r.site_id AND s.active WHERE r.id=$1`, reportID).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
+	if err != nil {
+		return err
+	}
+	_, _ = a.DB.Exec(ctx, `UPDATE scheduled_reports SET last_run_at=now(),last_status='running',last_error=NULL,updated_at=now() WHERE id=$1`, reportID)
+	return a.execute(ctx, delivery, config)
+}
+
+func (a Automation) execute(ctx context.Context, delivery scheduledDelivery, config automationConfig) error {
+	started := time.Now()
+	payload, err := a.buildPayload(ctx, delivery, config)
+	if err == nil {
+		err = validateDeliveryEndpoint(delivery.EndpointURL, config.AllowedWebhookHosts)
+	}
+	var status int
+	if err == nil {
+		status, err = postDelivery(ctx, delivery, payload, config.DeliveryTimeoutSeconds)
+	}
+	state := "success"
+	errorText := ""
+	if err != nil {
+		state, errorText = "failed", truncateAutomationError(err.Error())
+	}
+	_, _ = a.DB.Exec(ctx, `INSERT INTO delivery_runs(site_id,report_id,channel_id,status,response_status,error,started_at,finished_at) VALUES($1,$2,$3,$4,$5,nullif($6,''),$7,now())`, delivery.SiteID, delivery.ReportID, delivery.ChannelID, state, nullableStatus(status), errorText, started)
+	_, _ = a.DB.Exec(ctx, `UPDATE scheduled_reports SET last_status=$2,last_error=nullif($3,''),updated_at=now() WHERE id=$1`, delivery.ReportID, state, errorText)
+	return err
+}
+
+func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery, config automationConfig) (map[string]any, error) {
+	definition := map[string]any{}
+	_ = json.Unmarshal(delivery.Definition, &definition)
+	environment, _ := definition["environment"].(string)
+	if environment == "" {
+		environment = "prd"
+	}
+	days := 7
+	if value, ok := definition["days"].(float64); ok && value >= 1 && value <= 365 {
+		days = int(value)
+	}
+	to := time.Now().UTC()
+	from := to.AddDate(0, 0, -days)
+	data := map[string]any{}
+	switch delivery.ReportKind {
+	case "overview", "insights":
+		var users, events, conversions, errors int64
+		var revenue float64
+		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE is_conversion),count(*) FILTER(WHERE event_name=ANY($5)),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&users, &events, &conversions, &errors, &revenue)
+		if err != nil {
+			return nil, err
+		}
+		data = map[string]any{"users": users, "events": events, "conversions": conversions, "errors": errors, "revenue": revenue}
+	case "adoption":
+		rows, err := a.DB.Query(ctx, `SELECT coalesce(properties->>'feature','(not set)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1 ORDER BY 2 DESC LIMIT 50`, delivery.SiteID, from, to, environment)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		items := []map[string]any{}
+		for rows.Next() {
+			var feature string
+			var events, users int64
+			if rows.Scan(&feature, &events, &users) == nil {
+				items = append(items, map[string]any{"feature": feature, "events": events, "users": users})
+			}
+		}
+		data["features"] = items
+	case "experience":
+		var errors, affected int64
+		err := a.DB.QueryRow(ctx, `SELECT count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5)`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&errors, &affected)
+		if err != nil {
+			return nil, err
+		}
+		data = map[string]any{"errors": errors, "affected_users": affected}
+	case "ai":
+		var calls, users, inputTokens, outputTokens int64
+		err := a.DB.QueryRow(ctx, `SELECT count(*),count(DISTINCT entity_id),coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','')~'^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','')~'^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5)`, delivery.SiteID, from, to, environment, []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"}).Scan(&calls, &users, &inputTokens, &outputTokens)
+		if err != nil {
+			return nil, err
+		}
+		data = map[string]any{"calls": calls, "users": users, "input_tokens": inputTokens, "output_tokens": outputTokens}
+	case "segment":
+		eventName, _ := definition["event_name"].(string)
+		feature, _ := definition["feature"].(string)
+		department, _ := definition["department"].(string)
+		var count int64
+		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($5='' OR event_name=$5) AND ($6='' OR properties->>'feature'=$6) AND ($7='' OR canonical_user_properties->>'department'=$7)`, delivery.SiteID, from, to, environment, eventName, feature, department).Scan(&count)
+		if err != nil {
+			return nil, err
+		}
+		data = map[string]any{"matched_entities": count, "event_name": eventName, "feature": feature, "department": department}
+		if config.MaxEntityIDs > 0 {
+			rows, queryErr := a.DB.Query(ctx, `SELECT DISTINCT entity_id FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($5='' OR event_name=$5) AND ($6='' OR properties->>'feature'=$6) AND ($7='' OR canonical_user_properties->>'department'=$7) LIMIT $8`, delivery.SiteID, from, to, environment, eventName, feature, department, config.MaxEntityIDs)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			defer rows.Close()
+			entities := []string{}
+			for rows.Next() {
+				var entity string
+				if rows.Scan(&entity) == nil {
+					entities = append(entities, entity)
+				}
+			}
+			data["entity_ids"] = entities
+		}
+	default:
+		return nil, fmt.Errorf("unsupported report kind %q", delivery.ReportKind)
+	}
+	payload := map[string]any{"source": "Momento", "report_id": delivery.ReportID, "site_id": delivery.SiteKey, "name": delivery.Name, "kind": delivery.ReportKind, "environment": environment, "from": from, "to": to, "generated_at": time.Now().UTC(), "data": data}
+	if delivery.ChannelType == "confluence" {
+		raw, _ := json.MarshalIndent(payload, "", "  ")
+		title, _ := definition["page_title"].(string)
+		spaceKey, _ := definition["space_key"].(string)
+		if title == "" {
+			title = "Momento - " + delivery.Name + " - " + time.Now().Format("2006-01-02")
+		}
+		payload = map[string]any{"type": "page", "title": title, "space": map[string]any{"key": spaceKey}, "body": map[string]any{"storage": map[string]any{"value": "<h2>Momento Analytics</h2><pre>" + html.EscapeString(string(raw)) + "</pre>", "representation": "storage"}}}
+	}
+	return payload, nil
+}
+
+func validateDeliveryEndpoint(raw string, allowedHosts []string) error {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		return fmt.Errorf("delivery endpoint must be an http(s) URL without embedded credentials")
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	for _, allowed := range allowedHosts {
+		allowed = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(allowed, ".")))
+		if allowed == host || (strings.HasPrefix(allowed, "*.") && strings.HasSuffix(host, allowed[1:])) {
+			return nil
+		}
+	}
+	return fmt.Errorf("delivery host %q is not in automation.allowed_webhook_hosts", host)
+}
+
+func postDelivery(ctx context.Context, delivery scheduledDelivery, payload map[string]any, timeoutSeconds int) (int, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.EndpointURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "Momento-Automation/1")
+	headers := map[string]string{}
+	_ = json.Unmarshal(delivery.Headers, &headers)
+	for key, value := range headers {
+		if strings.EqualFold(key, "Host") || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
+			continue
+		}
+		request.Header.Set(key, value)
+	}
+	client := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return response.StatusCode, fmt.Errorf("delivery returned HTTP %d", response.StatusCode)
+	}
+	return response.StatusCode, nil
+}
+
+func nullableStatus(status int) any {
+	if status == 0 {
+		return nil
+	}
+	return status
+}
+
+func truncateAutomationError(value string) string {
+	if len(value) > 1000 {
+		return value[:1000]
+	}
+	return value
+}

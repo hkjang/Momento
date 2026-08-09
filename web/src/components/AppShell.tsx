@@ -38,6 +38,10 @@ import KeyRounded from "@mui/icons-material/KeyRounded";
 import LogoutRounded from "@mui/icons-material/LogoutRounded";
 import HelpOutlineRounded from "@mui/icons-material/HelpOutlineRounded";
 import BusinessRounded from "@mui/icons-material/BusinessRounded";
+import InsightsRounded from "@mui/icons-material/InsightsRounded";
+import PsychologyRounded from "@mui/icons-material/PsychologyRounded";
+import HealthAndSafetyRounded from "@mui/icons-material/HealthAndSafetyRounded";
+import CalendarMonthRounded from "@mui/icons-material/CalendarMonthRounded";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
@@ -78,6 +82,25 @@ const groups = [
       { to: "/path", label: "경로", icon: <AccountTreeOutlined /> },
     ],
   },
+  {
+    label: "제품 · 경험",
+    items: [
+      { to: "/adoption", label: "Feature Adoption", icon: <BusinessRounded /> },
+      { to: "/cohort", label: "Cohort · Retention", icon: <CalendarMonthRounded /> },
+      { to: "/journey", label: "Business Journey", icon: <AccountTreeOutlined /> },
+      { to: "/experience", label: "Web Vitals · 오류", icon: <HealthAndSafetyRounded /> },
+    ],
+  },
+  {
+    label: "지능 · 품질",
+    items: [
+      { to: "/insights", label: "Insight · 자연어", icon: <InsightsRounded /> },
+      { to: "/ai-analytics", label: "AI · Agent · MCP", icon: <PsychologyRounded /> },
+      { to: "/data-quality", label: "Data Quality", icon: <HealthAndSafetyRounded /> },
+      { to: "/admin/governance", label: "Metric · Contract", icon: <TuneRounded /> },
+      { to: "/admin/automation", label: "Report · Action", icon: <BoltRounded /> },
+    ],
+  },
 ];
 const titles: Record<string, [string, string]> = {
   "/": ["개요", "서비스 사용 흐름을 한눈에 확인합니다."],
@@ -96,13 +119,22 @@ const titles: Record<string, [string, string]> = {
   "/segments": ["Segment", "중첩 AND/OR 조건으로 분석 대상을 정의합니다."],
   "/funnel": ["퍼널", "단계별 전환과 이탈을 분석합니다."],
   "/path": ["경로", "사용자가 이동한 주요 흐름입니다."],
+  "/adoption": ["Feature Adoption", "조직·부서별 기능 도입률과 재사용을 분석합니다."],
+  "/cohort": ["Cohort · Retention", "최초 행동 이후 사용자가 다시 돌아오는 비율입니다."],
+  "/journey": ["Business Journey", "기능을 넘어 실제 업무 결과까지 이어지는 흐름입니다."],
+  "/experience": ["Experience", "Web Vitals와 오류가 사용자 전환에 미친 영향입니다."],
+  "/insights": ["Insight · Root Cause", "변화를 자동 감지하고 오프라인 자연어로 분석합니다."],
+  "/ai-analytics": ["AI · Agent · MCP", "모델, Agent, MCP Tool의 효과·지연·비용을 분석합니다."],
+  "/data-quality": ["Data Quality", "수집 계약, 지연, 중복, PII와 Cardinality 상태입니다."],
+  "/admin/governance": ["Analytics Governance", "환경, 이벤트 계약, Semantic Metric과 Adoption 분모를 관리합니다."],
+  "/admin/automation": ["Report · Action", "분석 결과를 사내 시스템과 Confluence로 전달합니다."],
   "/admin": ["관리", "Momento 운영 설정을 관리합니다."],
   "/profile": ["내 프로필", "개인 정보와 API 키를 관리합니다."],
 };
 
 function Navigation({ close }: { close(): void }) {
   return (
-    <Box sx={{ px: 1.5, mt: 1 }}>
+    <Box sx={{ px: 1.5, mt: 1, flex: 1, overflowY: "auto" }}>
       {groups.map((group) => (
         <Box key={group.label} sx={{ mb: 2.5 }}>
           <Typography
@@ -169,7 +201,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [version, setVersion] = useState("");
   const { user, logout } = useAuth();
-  const { sites, site, select } = useSite();
+  const { sites, site, select, environments, environment, selectEnvironment } = useSite();
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
@@ -308,6 +340,26 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     >
                       {s.site_id}
                     </Typography>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 115 }}>
+              <Select
+                value={environment}
+                onChange={(event) => selectEnvironment(event.target.value)}
+                renderValue={(value) => String(value).toUpperCase()}
+              >
+                {environments.map((item) => (
+                  <MenuItem key={item.name} value={item.name}>
+                    <Stack>
+                      <Typography variant="body2" fontWeight={650}>
+                        {item.name.toUpperCase()}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {item.label}
+                      </Typography>
+                    </Stack>
                   </MenuItem>
                 ))}
               </Select>

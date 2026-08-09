@@ -1,0 +1,240 @@
+import { useMemo, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Chip,
+  LinearProgress,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
+import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { get, post, rangeQuery } from "../api/client";
+import { useSite } from "../contexts/SiteContext";
+import DataTable from "../components/DataTable";
+import MetricCard from "../components/MetricCard";
+import { ErrorState, Loading, NoSite } from "../components/States";
+
+export type PlatformMode =
+  | "cohort"
+  | "journey"
+  | "adoption"
+  | "experience"
+  | "insights"
+  | "ai"
+  | "quality";
+
+export default function PlatformAnalyticsPage({ mode }: { mode: PlatformMode }) {
+  if (mode === "cohort") return <Cohort />;
+  if (mode === "journey") return <Journey />;
+  if (mode === "adoption") return <Adoption />;
+  if (mode === "experience") return <Experience />;
+  if (mode === "insights") return <Insights />;
+  if (mode === "ai") return <AIAnalytics />;
+  return <Quality />;
+}
+
+function Cohort() {
+  const { site, environment } = useSite();
+  const [cohortEvent, setCohortEvent] = useState("");
+  const [returnEvent, setReturnEvent] = useState("");
+  const [periods, setPeriods] = useState(12);
+  const q = useQuery({
+    queryKey: ["cohort", site?.site_id, environment, cohortEvent, returnEvent, periods],
+    enabled: !!site,
+    queryFn: () =>
+      get<{
+        cohorts: { cohort: string; size: number; periods: { period: number; users: number; retention_rate: number }[] }[];
+      }>(
+        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(180, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}`,
+      ),
+  });
+  if (!site) return <NoSite />;
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} />;
+  return (
+    <Stack spacing={2}>
+      <Card sx={{ p: 2.5 }}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+          <TextField label="Cohort Event" placeholder="비우면 최초 Event" value={cohortEvent} onChange={(e) => setCohortEvent(e.target.value)} />
+          <TextField label="Return Event" placeholder="비우면 모든 활동" value={returnEvent} onChange={(e) => setReturnEvent(e.target.value)} />
+          <TextField select label="기간" value={periods} onChange={(e) => setPeriods(Number(e.target.value))}>
+            {[8, 12, 16, 24].map((value) => <MenuItem key={value} value={value}>{value}주</MenuItem>)}
+          </TextField>
+        </Stack>
+      </Card>
+      <Card sx={{ overflowX: "auto" }}>
+        <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+          <Box component="thead">
+            <Box component="tr">
+              <Box component="th" sx={cellSx}>Cohort</Box>
+              <Box component="th" sx={cellSx}>Users</Box>
+              {Array.from({ length: periods }, (_, i) => <Box component="th" key={i} sx={cellSx}>W{i}</Box>)}
+            </Box>
+          </Box>
+          <Box component="tbody">
+            {(q.data?.cohorts || []).map((row) => (
+              <Box component="tr" key={row.cohort}>
+                <Box component="td" sx={cellSx}>{row.cohort}</Box>
+                <Box component="td" sx={cellSx}>{row.size.toLocaleString()}</Box>
+                {row.periods.map((period) => (
+                  <Box component="td" key={period.period} sx={{ ...cellSx, bgcolor: `rgba(86,88,220,${Math.max(.04, period.retention_rate / 110)})`, color: period.retention_rate > 55 ? "white" : "inherit", fontWeight: 700 }}>
+                    {period.retention_rate.toFixed(1)}%
+                  </Box>
+                ))}
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Card>
+    </Stack>
+  );
+}
+
+const cellSx = { p: 1.4, borderBottom: "1px solid #E8ECF3", textAlign: "center", fontSize: 13, whiteSpace: "nowrap" };
+
+function Journey() {
+  const { site, environment } = useSite();
+  const [events, setEvents] = useState("login\nsearch\npurchase");
+  const steps = useMemo(() => events.split("\n").map((event) => event.trim()).filter(Boolean).map((event) => ({ name: event, event })), [events]);
+  const analyze = useMutation({
+    mutationFn: () => post<{ steps: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/journeys/analyze?${rangeQuery(30, site!.timezone)}`, { steps, conversion_window_days: 30 }),
+  });
+  const save = useMutation({
+    mutationFn: () => post(`/api/v1/sites/${site!.site_id}/journeys`, { name: `Journey ${new Date().toLocaleDateString("ko-KR")}`, steps, conversion_window_days: 30, shared: true }),
+  });
+  if (!site) return <NoSite />;
+  return (
+    <Stack spacing={2}>
+      <Card sx={{ p: 2.5 }}>
+        <Typography fontWeight={720}>Business Journey</Typography>
+        <Typography variant="body2" color="text.secondary" mb={2}>업무 결과까지 이어지는 Event를 줄마다 순서대로 입력합니다. 동일 Canonical User가 30일 이내 순차 도달해야 합니다.</Typography>
+        <TextField fullWidth multiline minRows={5} label="Journey Steps" value={events} onChange={(e) => setEvents(e.target.value)} helperText={`${steps.length} steps · ${environment.toUpperCase()}`} />
+        <Stack direction="row" spacing={1} mt={2}>
+          <Button variant="contained" disabled={steps.length < 2 || analyze.isPending} onClick={() => analyze.mutate()}>분석 실행</Button>
+          <Button variant="outlined" disabled={steps.length < 2 || save.isPending} onClick={() => save.mutate()}>공유 Journey 저장</Button>
+        </Stack>
+        {save.isSuccess && <Alert severity="success" sx={{ mt: 2 }}>Journey가 저장되었습니다.</Alert>}
+      </Card>
+      {analyze.error && <ErrorState error={analyze.error} />}
+      {analyze.data && <DataTable rows={analyze.data.steps} columns={[
+        { key: "step", label: "단계" }, { key: "name", label: "업무 단계" }, { key: "users", label: "사용자", align: "right" },
+        { key: "conversion_rate", label: "최초 대비", align: "right", format: (v) => `${Number(v).toFixed(1)}%` },
+        { key: "average_elapsed_seconds", label: "평균 소요", align: "right", format: (v) => `${(Number(v) / 60).toFixed(1)}분` },
+      ]} />}
+    </Stack>
+  );
+}
+
+function Adoption() {
+  const { site, environment } = useSite();
+  const q = useQuery({
+    queryKey: ["adoption", site?.site_id, environment], enabled: !!site,
+    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/adoption?${rangeQuery(30, site!.timezone)}`),
+  });
+  if (!site) return <NoSite />;
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} />;
+  return <DataTable rows={q.data?.rows || []} columns={[
+    { key: "organization", label: "조직" }, { key: "department", label: "부서" }, { key: "feature", label: "기능" },
+    { key: "eligible_users", label: "대상자", align: "right" }, { key: "users", label: "사용자", align: "right" },
+    { key: "adoption_rate", label: "Adoption", align: "right", format: (v) => <Stack minWidth={110}><Typography variant="body2">{Number(v).toFixed(1)}%</Typography><LinearProgress variant="determinate" value={Math.min(100, Number(v))} /></Stack> },
+    { key: "repeat_usage_rate", label: "재사용률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "dormant_users", label: "비활성", align: "right" },
+  ]} />;
+}
+
+function Experience() {
+  const { site, environment } = useSite();
+  const q = useQuery({
+    queryKey: ["experience", site?.site_id, environment], enabled: !!site,
+    queryFn: () => get<{ vitals: Record<string, unknown>[]; errors: Record<string, unknown>[]; releases: Record<string, unknown>[]; impact: Record<string, number> }>(`/api/v1/sites/${site!.site_id}/experience?${rangeQuery(30, site!.timezone)}`),
+  });
+  if (!site) return <NoSite />;
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} />;
+  return <Stack spacing={2}>
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}>
+      <MetricCard label="오류 영향 사용자" value={q.data?.impact.error_users || 0} />
+      <MetricCard label="오류 사용자 전환율" value={q.data?.impact.error_user_conversion_rate || 0} type="percent" />
+      <MetricCard label="정상 사용자 전환율" value={q.data?.impact.clean_user_conversion_rate || 0} type="percent" />
+    </Box>
+    <Typography variant="h6">Core Web Vitals / RUM</Typography>
+    <DataTable rows={q.data?.vitals || []} columns={[{ key: "metric", label: "Metric" }, { key: "page", label: "Page" }, { key: "samples", label: "Samples", align: "right" }, { key: "p75", label: "P75", align: "right" }, { key: "good_rate", label: "Good", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }]} />
+    <Typography variant="h6">오류와 사용자 영향</Typography>
+    <DataTable rows={q.data?.errors || []} columns={[{ key: "event", label: "유형" }, { key: "message", label: "오류 / Resource" }, { key: "page", label: "Page" }, { key: "count", label: "건수", align: "right" }, { key: "affected_users", label: "영향 사용자", align: "right" }]} />
+    <Typography variant="h6">Release Impact</Typography>
+    <DataTable rows={q.data?.releases || []} columns={[{ key: "release", label: "Release" }, { key: "events", label: "Events", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "errors", label: "Errors", align: "right" }, { key: "user_conversion_rate", label: "전환율", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "last_seen", label: "Last Seen" }]} />
+  </Stack>;
+}
+
+function Insights() {
+  const { site, environment } = useSite();
+  const [question, setQuestion] = useState("지난주 사용 현황을 요약해줘");
+  const q = useQuery({
+    queryKey: ["insights", site?.site_id, environment], enabled: !!site,
+    queryFn: () => get<{ insights: Record<string, unknown>[]; engine: string }>(`/api/v1/sites/${site!.site_id}/insights?${rangeQuery(7, site!.timezone)}`),
+  });
+  const ask = useMutation({ mutationFn: () => post<{ answer: string; engine: string; confidence: number; data: unknown }>(`/api/v1/sites/${site!.site_id}/natural-query`, { question, environment }) });
+  if (!site) return <NoSite />;
+  return <Stack spacing={2}>
+    <Card sx={{ p: 2.5, background: "linear-gradient(135deg,#F0F0FF,#F7FAFF)" }}>
+      <Stack direction="row" spacing={1} alignItems="center"><AutoAwesomeRounded color="primary" /><Typography fontWeight={750}>Offline Natural Language Analytics</Typography><Chip size="small" label="외부 전송 없음" color="success" /></Stack>
+      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} mt={2}>
+        <TextField fullWidth value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="어떤 부서가 AI 검색을 가장 많이 사용했어?" />
+        <Button variant="contained" disabled={!question.trim() || ask.isPending} onClick={() => ask.mutate()}>질문</Button>
+      </Stack>
+      {ask.data && <Alert severity="info" sx={{ mt: 2 }}><Typography fontWeight={700}>{ask.data.answer}</Typography><Typography variant="caption">{ask.data.engine} · confidence {(ask.data.confidence * 100).toFixed(0)}%</Typography></Alert>}
+      {ask.error && <Box mt={2}><ErrorState error={ask.error} /></Box>}
+    </Card>
+    {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} /> : <DataTable rows={q.data?.insights || []} columns={[
+      { key: "severity", label: "심각도", format: (v) => <Chip size="small" color={v === "critical" ? "error" : v === "warning" ? "warning" : "default"} label={String(v)} /> },
+      { key: "title", label: "Insight" }, { key: "change_percent", label: "변화", align: "right", format: (v) => `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}%` }, { key: "evidence", label: "근거" }, { key: "recommendation", label: "권장 조치" },
+    ]} />}
+  </Stack>;
+}
+
+function AIAnalytics() {
+  const { site, environment } = useSite();
+  const [group, setGroup] = useState("model");
+  const q = useQuery({
+    queryKey: ["ai-analytics", site?.site_id, environment, group], enabled: !!site,
+    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/ai-analytics?${rangeQuery(30, site!.timezone)}&group_by=${group}`),
+  });
+  if (!site) return <NoSite />;
+  return <Stack spacing={2}>
+    <Card sx={{ p: 2 }}><TextField select label="분석 차원" value={group} onChange={(e) => setGroup(e.target.value)} sx={{ minWidth: 220 }}>{["model", "provider", "agent", "mcp_server", "tool"].map((item) => <MenuItem value={item} key={item}>{item}</MenuItem>)}</TextField></Card>
+    {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} /> : <DataTable rows={q.data?.rows || []} columns={[
+      { key: "label", label: group }, { key: "calls", label: "호출", align: "right" }, { key: "users", label: "사용자", align: "right" }, { key: "success_rate", label: "성공률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "average_latency_ms", label: "평균 지연(ms)", align: "right" }, { key: "input_tokens", label: "Input Token", align: "right" }, { key: "output_tokens", label: "Output Token", align: "right" }, { key: "cost", label: "Cost", align: "right" }, { key: "fallbacks", label: "Fallback", align: "right" },
+    ]} />}
+  </Stack>;
+}
+
+function Quality() {
+  const { site, environment } = useSite();
+  const q = useQuery({
+    queryKey: ["data-quality", site?.site_id, environment], enabled: !!site, refetchInterval: 30000,
+    queryFn: () => get<{ health_score: number; collector: Record<string, number>; quality: Record<string, number>; cardinalities: Record<string, unknown>[]; issues: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(7, site!.timezone)}`),
+  });
+  if (!site) return <NoSite />;
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} />;
+  const data = q.data!;
+  return <Stack spacing={2}>
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(5,1fr)" }, gap: 2 }}>
+      <MetricCard label="Health Score" value={data.health_score} />
+      <MetricCard label="Accepted" value={data.collector.accepted || 0} />
+      <MetricCard label="Inbox Lag(s)" value={data.collector.inbox_lag_seconds || 0} />
+      <MetricCard label="Rejected" value={data.quality.rejected || 0} />
+      <MetricCard label="PII Blocked" value={data.quality.pii_blocked || 0} />
+    </Box>
+    <Alert severity={data.health_score >= 90 ? "success" : data.health_score >= 70 ? "warning" : "error"}>수집 계약·중복·지연·Cardinality를 반영한 {environment.toUpperCase()} 환경 점수입니다.</Alert>
+    <Typography variant="h6">Cardinality Guard</Typography>
+    <DataTable rows={data.cardinalities} columns={[{ key: "dimension", label: "Dimension" }, { key: "distinct_values", label: "Distinct Values", align: "right" }]} />
+    <Typography variant="h6">최근 품질 이슈</Typography>
+    <DataTable rows={data.issues} columns={[{ key: "severity", label: "심각도" }, { key: "code", label: "Code" }, { key: "event_name", label: "Event" }, { key: "message", label: "내용" }, { key: "occurred_at", label: "시각" }]} />
+  </Stack>;
+}

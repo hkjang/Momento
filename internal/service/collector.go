@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 )
 
 var eventNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+var environmentPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 var knownBotPattern = regexp.MustCompile(`(?i)(bot\b|crawler|spider|slurp|bingpreview|headlesschrome)`)
 var monitoringPattern = regexp.MustCompile(`(?i)(uptime|pingdom|healthcheck|monitoring|prometheus)`)
 
@@ -32,16 +34,23 @@ type SiteForCollect struct {
 	AllowedDomains []string
 	MaxEvents      int
 	PrivacyRaw     []byte
+	Timezone       string
 }
 
 type CollectorService struct{ DB *pgxpool.Pool }
 
 func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, origin, clientIP, userAgent string) (int64, error) {
+	if req.Environment == "" {
+		req.Environment = "prd"
+	}
 	if req.SiteID == "" || req.VisitorID == "" || req.SessionID == "" || len(req.Events) == 0 {
 		return 0, errors.New("site_id, visitor_id, session_id and events are required")
 	}
 	if len(req.VisitorID) > 128 || len(req.SessionID) > 128 || len(req.UserID) > 128 {
 		return 0, errors.New("identifier is too long")
+	}
+	if !environmentPattern.MatchString(req.Environment) {
+		return 0, errors.New("invalid environment")
 	}
 	for _, event := range req.Events {
 		if !eventNamePattern.MatchString(event.Name) {
@@ -52,8 +61,8 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 		}
 	}
 	var site SiteForCollect
-	err := s.DB.QueryRow(ctx, `SELECT id,site_key,tracking_key_hash,server_api_key_hash,allowed_domains,least(1000,greatest(1,coalesce((SELECT (value->>'max_events_per_request')::int FROM settings WHERE key='security'),100))),(SELECT value FROM settings WHERE key='privacy') FROM sites WHERE site_key=$1 AND active`, req.SiteID).
-		Scan(&site.ID, &site.SiteKey, &site.TrackingHash, &site.ServerKeyHash, &site.AllowedDomains, &site.MaxEvents, &site.PrivacyRaw)
+	err := s.DB.QueryRow(ctx, `SELECT id,site_key,tracking_key_hash,server_api_key_hash,allowed_domains,least(1000,greatest(1,coalesce((SELECT (value->>'max_events_per_request')::int FROM settings WHERE key='security'),100))),(SELECT value FROM settings WHERE key='privacy'),timezone FROM sites WHERE site_key=$1 AND active`, req.SiteID).
+		Scan(&site.ID, &site.SiteKey, &site.TrackingHash, &site.ServerKeyHash, &site.AllowedDomains, &site.MaxEvents, &site.PrivacyRaw, &site.Timezone)
 	if err != nil {
 		return 0, errors.New("unknown site")
 	}
@@ -71,11 +80,17 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 	if len(req.Events) > site.MaxEvents {
 		return 0, fmt.Errorf("at most %d events are accepted per request", site.MaxEvents)
 	}
+	var environmentMode string
+	if err := s.DB.QueryRow(ctx, `SELECT contract_mode FROM site_environments WHERE site_id=$1 AND name=$2 AND active`, site.ID, req.Environment).Scan(&environmentMode); err != nil {
+		return 0, errors.New("unknown or inactive environment")
+	}
 	names := make([]string, 0, len(req.Events))
 	for _, event := range req.Events {
 		names = append(names, event.Name)
 	}
-	definitionRows, err := s.DB.Query(ctx, `SELECT name,validation_mode,schema FROM event_definitions WHERE site_id=$1 AND name=ANY($2)`, site.ID, names)
+	definitionRows, err := s.DB.Query(ctx, `SELECT d.name,d.current_version,v.version,v.validation_mode,v.schema
+		FROM event_definitions d JOIN event_contract_versions v ON v.site_id=d.site_id AND v.event_name=d.name
+		WHERE d.site_id=$1 AND d.name=ANY($2) AND v.status<>'draft'`, site.ID, names)
 	if err != nil {
 		return 0, err
 	}
@@ -83,42 +98,120 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 		mode   string
 		schema []byte
 	}
-	definitions := map[string]definition{}
+	type eventContracts struct {
+		current  int
+		versions map[int]definition
+	}
+	definitions := map[string]eventContracts{}
 	for definitionRows.Next() {
 		var name string
+		var current, version int
 		var item definition
-		if err := definitionRows.Scan(&name, &item.mode, &item.schema); err != nil {
+		if err := definitionRows.Scan(&name, &current, &version, &item.mode, &item.schema); err != nil {
 			definitionRows.Close()
 			return 0, err
 		}
-		definitions[name] = item
+		contracts := definitions[name]
+		if contracts.versions == nil {
+			contracts = eventContracts{current: current, versions: map[int]definition{}}
+		}
+		contracts.versions[version] = item
+		definitions[name] = contracts
 	}
 	definitionRows.Close()
 	for i := range req.Events {
-		if item, ok := definitions[req.Events[i].Name]; ok && item.mode != "allow" {
-			warnings := validateProperties(req.Events[i].Properties, item.schema)
-			if len(warnings) > 0 && item.mode == "reject" {
+		contracts, known := definitions[req.Events[i].Name]
+		warnings := []string{}
+		if !known {
+			warnings = append(warnings, "event is not registered")
+		} else {
+			if req.Events[i].ContractVersion == 0 {
+				req.Events[i].ContractVersion = contracts.current
+			}
+			item, exists := contracts.versions[req.Events[i].ContractVersion]
+			if !exists {
+				warnings = append(warnings, fmt.Sprintf("contract version %d is not registered", req.Events[i].ContractVersion))
+			} else if strictestValidationMode(environmentMode, item.mode) != "allow" {
+				warnings = append(warnings, validateProperties(req.Events[i].Properties, item.schema)...)
+			}
+		}
+		if req.Events[i].ContractVersion == 0 {
+			req.Events[i].ContractVersion = 1
+		}
+		if len(warnings) > 0 {
+			mode := environmentMode
+			if contracts, ok := definitions[req.Events[i].Name]; ok {
+				if item, ok := contracts.versions[req.Events[i].ContractVersion]; ok {
+					mode = strictestValidationMode(mode, item.mode)
+				}
+			}
+			if mode == "reject" {
+				s.recordQualityRejection(ctx, site, req.Environment, req.Events[i], warnings)
 				return 0, fmt.Errorf("schema validation failed for %s: %s", req.Events[i].Name, strings.Join(warnings, "; "))
 			}
-			if len(warnings) > 0 {
+			if mode == "warn" {
 				if req.Events[i].Properties == nil {
 					req.Events[i].Properties = map[string]any{}
 				}
-				req.Events[i].Properties["_momento_schema_warnings"] = warnings
+				req.Events[i].Properties["_momento_contract_warnings"] = warnings
 			}
 		}
 	}
 	var privacy privacyConfig
 	_ = json.Unmarshal(site.PrivacyRaw, &privacy)
+	privacyBlocked := countPrivacyBlocked(req, privacy.BlockedProperties)
 	applyPrivacyBeforeQueue(&req, &clientIP, &userAgent, privacy)
-	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli()}
+	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli(), PrivacyBlocked: privacyBlocked}
 	body, err := payload.JSON()
 	if err != nil {
 		return 0, err
 	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	receivedDate := time.Now()
+	if location, loadErr := time.LoadLocation(site.Timezone); loadErr == nil {
+		receivedDate = receivedDate.In(location)
+	}
+	for _, event := range req.Events {
+		warningCount := int64(0)
+		if _, ok := event.Properties["_momento_contract_warnings"]; ok {
+			warningCount = 1
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,received,warnings)
+			VALUES($1,$2,$3,$4,1,$5) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET received=data_quality_daily.received+1,warnings=data_quality_daily.warnings+excluded.warnings,updated_at=now()`, site.ID, receivedDate.Format("2006-01-02"), req.Environment, event.Name, warningCount); err != nil {
+			return 0, err
+		}
+	}
 	var inboxID int64
-	err = s.DB.QueryRow(ctx, `INSERT INTO event_inbox(site_id,payload) VALUES($1,$2) RETURNING id`, site.ID, body).Scan(&inboxID)
-	return inboxID, err
+	if err = tx.QueryRow(ctx, `INSERT INTO event_inbox(site_id,payload) VALUES($1,$2) RETURNING id`, site.ID, body).Scan(&inboxID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return inboxID, nil
+}
+
+func strictestValidationMode(a, b string) string {
+	rank := map[string]int{"allow": 0, "warn": 1, "reject": 2}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
+}
+
+func (s CollectorService) recordQualityRejection(ctx context.Context, site SiteForCollect, environment string, event model.IncomingEvent, warnings []string) {
+	date := time.Now()
+	if location, err := time.LoadLocation(site.Timezone); err == nil {
+		date = date.In(location)
+	}
+	_, _ = s.DB.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,received,rejected) VALUES($1,$2,$3,$4,1,1)
+		ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET received=data_quality_daily.received+1,rejected=data_quality_daily.rejected+1,updated_at=now()`, site.ID, date.Format("2006-01-02"), environment, event.Name)
+	sample, _ := json.Marshal(map[string]any{"warnings": warnings, "contract_version": event.ContractVersion})
+	_, _ = s.DB.Exec(ctx, `INSERT INTO data_quality_issues(site_id,environment,event_name,code,severity,message,sample) VALUES($1,$2,$3,'CONTRACT_REJECTED','error',$4,$5)`, site.ID, environment, event.Name, strings.Join(warnings, "; "), sample)
 }
 
 func originAllowed(origin string, allowed []string) bool {
@@ -252,8 +345,12 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 	if err := json.Unmarshal(body, &p); err != nil {
 		return err
 	}
+	if p.Request.Environment == "" {
+		p.Request.Environment = "prd"
+	}
 	var timezone string
-	if err := tx.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&timezone); err != nil {
+	var cardinalityLimit int
+	if err := tx.QueryRow(ctx, `SELECT s.timezone,e.cardinality_limit FROM sites s JOIN site_environments e ON e.site_id=s.id AND e.name=$2 WHERE s.id=$1`, siteID, p.Request.Environment).Scan(&timezone, &cardinalityLimit); err != nil {
 		return err
 	}
 	location, err := time.LoadLocation(timezone)
@@ -290,6 +387,9 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 		trafficClass = "internal_traffic"
 	}
 	for _, event := range p.Request.Events {
+		if event.ContractVersion <= 0 {
+			event.ContractVersion = 1
+		}
 		ctxValue := p.Request.Context
 		if event.Context != nil {
 			ctxValue = *event.Context
@@ -320,13 +420,20 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 		}
 		propsJSON, _ := json.Marshal(props)
 		userJSON, _ := json.Marshal(userProps)
-		result, err := tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,is_conversion,is_internal,traffic_class)
-			VALUES($1,$2,$3,$4,$5,$6,nullif($7,''),nullif($8,''),nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''),nullif($14,''),nullif($15,''),nullif($16,''),nullif($17,''),nullif($18,''),nullif($19,''),$20,$21,$22,$23,$24,$25,$26)
-			ON CONFLICT(site_id,event_id) DO NOTHING`, eventID, siteID, event.Name, eventTime, p.Request.VisitorID, p.Request.SessionID, userID, pageURL, ctxValue.Page.Title, ctxValue.Page.Referrer, ctxValue.Traffic.Source, ctxValue.Traffic.Medium, ctxValue.Traffic.Campaign, ctxValue.Device.Type, ctxValue.Device.Browser, ctxValue.Device.OS, ctxValue.Device.Language, ctxValue.Device.Screen, userAgent, nullableIP(ip), networkName, propsJSON, userJSON, conversion, internal, trafficClass)
+		result, err := tx.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,campaign,device_type,browser,os,language,screen,user_agent,client_ip,network_name,properties,user_properties,is_conversion,is_internal,traffic_class,environment,contract_version)
+			VALUES($1,$2,$3,$4,$5,$6,nullif($7,''),nullif($8,''),nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),nullif($13,''),nullif($14,''),nullif($15,''),nullif($16,''),nullif($17,''),nullif($18,''),nullif($19,''),$20,$21,$22,$23,$24,$25,$26,$27,$28)
+			ON CONFLICT(site_id,event_id) DO NOTHING`, eventID, siteID, event.Name, eventTime, p.Request.VisitorID, p.Request.SessionID, userID, pageURL, ctxValue.Page.Title, ctxValue.Page.Referrer, ctxValue.Traffic.Source, ctxValue.Traffic.Medium, ctxValue.Traffic.Campaign, ctxValue.Device.Type, ctxValue.Device.Browser, ctxValue.Device.OS, ctxValue.Device.Language, ctxValue.Device.Screen, userAgent, nullableIP(ip), networkName, propsJSON, userJSON, conversion, internal, trafficClass, p.Request.Environment, event.ContractVersion)
 		if err != nil {
 			return err
 		}
 		if result.RowsAffected() > 0 {
+			if err := recordAcceptedQuality(ctx, tx, siteID, p, event, eventTime, location, userID, networkName); err != nil {
+				return err
+			}
+			p.PrivacyBlocked = 0
+			if err := recordCardinality(ctx, tx, siteID, p.Request.Environment, eventTime, location, event, pageURL, networkName, cardinalityLimit); err != nil {
+				return err
+			}
 			if userID != "" {
 				if err := updateVisitorIdentity(ctx, tx, siteID, p.Request.VisitorID, userID, eventTime); err != nil {
 					return err
@@ -350,9 +457,13 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 			if err := updateVisitorSession(ctx, tx, siteID, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, eventTime); err != nil {
 				return err
 			}
-			if err := updateDailyAggregates(ctx, tx, siteID, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, userJSON, event, eventTime, location, conversion); err != nil {
+			if err := updateDailyAggregates(ctx, tx, siteID, p.Request.Environment, p.Request.VisitorID, p.Request.SessionID, canonicalUserID, userJSON, event, eventTime, location, conversion); err != nil {
 				return err
 			}
+		} else {
+			local := eventTime.In(location)
+			_, _ = tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,duplicates) VALUES($1,$2,$3,$4,1)
+				ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET duplicates=data_quality_daily.duplicates+1,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name)
 		}
 	}
 	return nil
@@ -431,36 +542,36 @@ func updateVisitorSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visi
 	return err
 }
 
-func updateDailyAggregates(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, visitorID, sessionID, userID string, userProperties []byte, event model.IncomingEvent, eventTime time.Time, location *time.Location, conversion bool) error {
+func updateDailyAggregates(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, environment, visitorID, sessionID, userID string, userProperties []byte, event model.IncomingEvent, eventTime time.Time, location *time.Location, conversion bool) error {
 	local := eventTime.In(location)
 	eventDate := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
-	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_metrics(site_id,event_date,events,page_views,conversions,revenue)
-		VALUES($1,$2,1,$3,$4,$5)
-		ON CONFLICT(site_id,event_date) DO UPDATE SET
+	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+		VALUES($1,$2,$3,1,$4,$5,$6)
+		ON CONFLICT(site_id,event_date,environment) DO UPDATE SET
 		events=daily_site_metrics.events+1,
 		page_views=daily_site_metrics.page_views+excluded.page_views,
 		conversions=daily_site_metrics.conversions+excluded.conversions,
-		revenue=daily_site_metrics.revenue+excluded.revenue,updated_at=now()`, siteID, eventDate, boolInt(event.Name == "page_view"), boolInt(conversion), eventRevenue(event)); err != nil {
+		revenue=daily_site_metrics.revenue+excluded.revenue,updated_at=now()`, siteID, eventDate, environment, boolInt(event.Name == "page_view"), boolInt(conversion), eventRevenue(event)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_visitors(site_id,event_date,visitor_id,user_id,first_seen,last_seen,event_count,conversion_count,user_properties)
-		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6,$7)
-		ON CONFLICT(site_id,event_date,visitor_id) DO UPDATE SET
+	if _, err := tx.Exec(ctx, `INSERT INTO daily_site_visitors(site_id,event_date,environment,visitor_id,user_id,first_seen,last_seen,event_count,conversion_count,user_properties)
+		VALUES($1,$2,$3,$4,nullif($5,''),$6,$6,1,$7,$8)
+		ON CONFLICT(site_id,event_date,environment,visitor_id) DO UPDATE SET
 		user_id=coalesce(excluded.user_id,daily_site_visitors.user_id),
 		first_seen=least(daily_site_visitors.first_seen,excluded.first_seen),
 		last_seen=greatest(daily_site_visitors.last_seen,excluded.last_seen),
 		event_count=daily_site_visitors.event_count+1,
 		conversion_count=daily_site_visitors.conversion_count+excluded.conversion_count,
 		user_properties=CASE WHEN excluded.user_properties<>'{}'::jsonb AND excluded.last_seen>=daily_site_visitors.last_seen THEN excluded.user_properties ELSE daily_site_visitors.user_properties END,
-		updated_at=now()`, siteID, eventDate, visitorID, userID, eventTime, boolInt(conversion), userProperties); err != nil {
+		updated_at=now()`, siteID, eventDate, environment, visitorID, userID, eventTime, boolInt(conversion), userProperties); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO daily_site_sessions(site_id,event_date,session_id,visitor_id,user_id,first_seen,last_seen)
-		VALUES($1,$2,$3,$4,nullif($5,''),$6,$6)
-		ON CONFLICT(site_id,event_date,session_id) DO UPDATE SET
+	_, err := tx.Exec(ctx, `INSERT INTO daily_site_sessions(site_id,event_date,environment,session_id,visitor_id,user_id,first_seen,last_seen)
+		VALUES($1,$2,$3,$4,$5,nullif($6,''),$7,$7)
+		ON CONFLICT(site_id,event_date,environment,session_id) DO UPDATE SET
 		visitor_id=excluded.visitor_id,user_id=coalesce(excluded.user_id,daily_site_sessions.user_id),
 		first_seen=least(daily_site_sessions.first_seen,excluded.first_seen),
-		last_seen=greatest(daily_site_sessions.last_seen,excluded.last_seen),updated_at=now()`, siteID, eventDate, sessionID, visitorID, userID, eventTime)
+		last_seen=greatest(daily_site_sessions.last_seen,excluded.last_seen),updated_at=now()`, siteID, eventDate, environment, sessionID, visitorID, userID, eventTime)
 	return err
 }
 
@@ -499,9 +610,9 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 	activeMS := activeEngagementMilliseconds(event)
 	heartbeat := boolInt(event.Name == "user_engagement")
 	interaction := boolInt(isInteractionEvent(event.Name))
-	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count)
-		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6::bigint,$7::bigint,($7::bigint>0 OR $6::bigint>=2 OR $13::bigint >= (SELECT engagement_threshold_seconds::bigint*1000 FROM sites WHERE id=$1)),$8,$8,nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),$13::bigint,$14::bigint,$15::bigint)
-		ON CONFLICT(site_id,session_id) DO UPDATE SET
+	_, err := tx.Exec(ctx, `INSERT INTO sessions(site_id,session_id,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,active_engagement_ms,heartbeat_count,interaction_count,environment)
+		VALUES($1,$2,$3,nullif($4,''),$5,$5,1,$6::bigint,$7::bigint,($7::bigint>0 OR $6::bigint>=2 OR $13::bigint >= (SELECT engagement_threshold_seconds::bigint*1000 FROM sites WHERE id=$1)),$8,$8,nullif($9,''),nullif($10,''),nullif($11,''),nullif($12,''),$13::bigint,$14::bigint,$15::bigint,$16)
+		ON CONFLICT(site_id,environment,session_id) DO UPDATE SET
 		visitor_id=excluded.visitor_id,
 		user_id=coalesce(excluded.user_id,sessions.user_id),
 		landing_page=CASE WHEN excluded.started_at<sessions.started_at AND excluded.landing_page IS NOT NULL THEN excluded.landing_page ELSE coalesce(sessions.landing_page,excluded.landing_page) END,
@@ -522,8 +633,70 @@ func updateSession(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, request mod
 		medium=coalesce(sessions.medium,excluded.medium),
 		campaign=coalesce(sessions.campaign,excluded.campaign),
 		device_type=coalesce(sessions.device_type,excluded.device_type),
-		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type, activeMS, heartbeat, interaction)
+		environment=CASE WHEN excluded.last_event_at>=sessions.last_event_at THEN excluded.environment ELSE sessions.environment END,
+		updated_at=now()`, siteID, request.SessionID, request.VisitorID, userID, eventTime, boolInt(event.Name == "page_view"), boolInt(conversion), page, eventContext.Traffic.Source, eventContext.Traffic.Medium, eventContext.Traffic.Campaign, eventContext.Device.Type, activeMS, heartbeat, interaction, request.Environment)
 	return err
+}
+
+func recordAcceptedQuality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, p model.InboxPayload, event model.IncomingEvent, eventTime time.Time, location *time.Location, userID, networkName string) error {
+	local := eventTime.In(location)
+	late := int64(0)
+	if p.ReceivedUnix > 0 && time.UnixMilli(p.ReceivedUnix).Sub(eventTime).Abs() > time.Hour {
+		late = 1
+	}
+	missingUser, missingFeature, unknownNetwork := int64(0), int64(0), int64(0)
+	if userID == "" {
+		missingUser = 1
+	}
+	if strings.TrimSpace(fmt.Sprint(event.Properties["feature"])) == "" || event.Properties["feature"] == nil {
+		missingFeature = 1
+	}
+	if networkName == "External / Unclassified" {
+		unknownNetwork = 1
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,accepted,late_events,missing_user_id,missing_feature,unknown_network,pii_blocked)
+		VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET accepted=data_quality_daily.accepted+1,late_events=data_quality_daily.late_events+excluded.late_events,missing_user_id=data_quality_daily.missing_user_id+excluded.missing_user_id,missing_feature=data_quality_daily.missing_feature+excluded.missing_feature,unknown_network=data_quality_daily.unknown_network+excluded.unknown_network,pii_blocked=data_quality_daily.pii_blocked+excluded.pii_blocked,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name, late, missingUser, missingFeature, unknownNetwork, p.PrivacyBlocked)
+	return err
+}
+
+func recordCardinality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, environment string, eventTime time.Time, location *time.Location, event model.IncomingEvent, pageURL, networkName string, limit int) error {
+	values := map[string]string{
+		"event_name": event.Name, "page": pageURL, "network": networkName,
+		"feature": stringProperty(event.Properties, "feature"), "department": stringProperty(event.Properties, "department"),
+		"organization": stringProperty(event.Properties, "organization"), "release_version": stringProperty(event.Properties, "release_version"),
+		"model": stringProperty(event.Properties, "model"), "agent": stringProperty(event.Properties, "agent"), "tool": stringProperty(event.Properties, "tool"),
+	}
+	date := eventTime.In(location).Format("2006-01-02")
+	for dimension, value := range values {
+		if value == "" {
+			continue
+		}
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
+		result, err := tx.Exec(ctx, `INSERT INTO data_quality_dimension_values(site_id,event_date,environment,dimension,value_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, siteID, date, environment, dimension, hash)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() == 0 {
+			continue
+		}
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM data_quality_dimension_values WHERE site_id=$1 AND event_date=$2 AND environment=$3 AND dimension=$4`, siteID, date, environment, dimension).Scan(&count); err != nil {
+			return err
+		}
+		if count == limit+1 {
+			_, _ = tx.Exec(ctx, `UPDATE data_quality_daily SET cardinality_violations=cardinality_violations+1,updated_at=now() WHERE site_id=$1 AND event_date=$2 AND environment=$3 AND event_name=$4`, siteID, date, environment, event.Name)
+			_, _ = tx.Exec(ctx, `INSERT INTO data_quality_issues(site_id,environment,event_name,code,severity,message,sample) VALUES($1,$2,$3,'CARDINALITY_LIMIT','warning',$4,jsonb_build_object('dimension',$5,'limit',$6))`, siteID, environment, event.Name, fmt.Sprintf("%s exceeded the daily cardinality limit", dimension), dimension, limit)
+		}
+	}
+	return nil
+}
+
+func stringProperty(properties map[string]any, key string) string {
+	value, ok := properties[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func activeEngagementMilliseconds(event model.IncomingEvent) int64 {
@@ -582,6 +755,42 @@ func filteredProperties(in map[string]any, blocked []string) map[string]any {
 		}
 	}
 	return out
+}
+
+func countPrivacyBlocked(req model.CollectRequest, blocked []string) int {
+	blockedSet := make(map[string]bool, len(blocked))
+	for _, key := range blocked {
+		blockedSet[strings.ToLower(strings.TrimSpace(key))] = true
+	}
+	count := countBlockedProperties(req.UserProperties, blockedSet)
+	for _, event := range req.Events {
+		count += countBlockedProperties(event.Properties, blockedSet)
+		for _, item := range event.Items {
+			count += countBlockedProperties(item, blockedSet)
+		}
+	}
+	return count
+}
+
+func countBlockedProperties(properties map[string]any, blocked map[string]bool) int {
+	count := 0
+	for key, value := range properties {
+		if blocked[strings.ToLower(key)] {
+			count++
+			continue
+		}
+		switch nested := value.(type) {
+		case map[string]any:
+			count += countBlockedProperties(nested, blocked)
+		case []any:
+			for _, item := range nested {
+				if object, ok := item.(map[string]any); ok {
+					count += countBlockedProperties(object, blocked)
+				}
+			}
+		}
+	}
+	return count
 }
 func applyPrivacyBeforeQueue(req *model.CollectRequest, clientIP, userAgent *string, privacy privacyConfig) {
 	if !privacy.CollectUserID {
@@ -762,6 +971,12 @@ func (w Worker) cleanup(ctx context.Context) error {
 		return err
 	}
 	if _, err := w.DB.Exec(ctx, `DELETE FROM event_dead_letters d WHERE d.failed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=d.site_id),$1))`, debugDays); err != nil {
+		return err
+	}
+	if _, err := w.DB.Exec(ctx, `DELETE FROM data_quality_dimension_values d WHERE d.event_date < current_date-make_interval(days=>$1)`, debugDays); err != nil {
+		return err
+	}
+	if _, err := w.DB.Exec(ctx, `DELETE FROM data_quality_issues d WHERE d.occurred_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
 		return err
 	}
 	if _, err := w.DB.Exec(ctx, `DELETE FROM user_sessions WHERE expires_at<now()`); err != nil {

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.4.0
+  version: 0.5.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -153,6 +153,133 @@ paths:
     post:
       summary: Analyze an open or closed 2-10 step event funnel with segment and property conditions
       responses: {'200': {description: Funnel steps}}
+  /api/v1/sites/{siteId}/environments:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List DEV/STG/PRD and custom collection environments
+      responses: {'200': {description: Environment policies}}
+  /api/v1/sites/{siteId}/environments/{name}:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {name: name, in: path, required: true, schema: {type: string}}
+    put:
+      summary: Create or update contract mode and cardinality limit for an environment
+      responses: {'200': {description: Environment updated}}
+  /api/v1/sites/{siteId}/event-contracts:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List versioned event contracts
+      responses: {'200': {description: Contract versions}}
+    post:
+      summary: Create a draft or active event contract version
+      responses: {'201': {description: Contract version created}}
+  /api/v1/sites/{siteId}/event-contracts/{eventName}/{version}/activate:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {name: eventName, in: path, required: true, schema: {type: string}}
+      - {name: version, in: path, required: true, schema: {type: integer}}
+    post:
+      summary: Activate an immutable event contract version
+      responses: {'200': {description: Contract activated}}
+  /api/v1/sites/{siteId}/semantic-metrics:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List the versioned Semantic Metric Registry
+      responses: {'200': {description: Semantic metrics}}
+    post:
+      summary: Create or version a safe AST-based semantic metric
+      responses: {'200': {description: Metric saved}}
+  /api/v1/sites/{siteId}/semantic-metrics/{name}/query:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {name: name, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Evaluate a registered semantic metric
+      responses: {'200': {description: Metric value and definition version}}
+  /api/v1/sites/{siteId}/data-quality:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Tracking health, contract, PII, lag, duplicate and cardinality report
+      responses: {'200': {description: Data Quality Center report}}
+  /api/v1/sites/{siteId}/cohort:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Cohort and retention matrix
+      responses: {'200': {description: Retention cohorts}}
+  /api/v1/sites/{siteId}/journeys:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List personal and shared Business Journeys
+      responses: {'200': {description: Journey definitions}}
+    post:
+      summary: Save a 2-12 step Business Journey
+      responses: {'200': {description: Journey saved}}
+  /api/v1/sites/{siteId}/journeys/analyze:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    post:
+      summary: Analyze sequential business outcomes with a conversion window
+      responses: {'200': {description: Journey conversion and elapsed time}}
+  /api/v1/sites/{siteId}/adoption:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Organization, department and feature adoption
+      responses: {'200': {description: Adoption, repeat use and dormant users}}
+  /api/v1/sites/{siteId}/experience:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Core Web Vitals, errors, conversion impact and release impact
+      responses: {'200': {description: Experience analytics}}
+  /api/v1/sites/{siteId}/ai-analytics:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Model, Agent, MCP and Tool usage, latency, tokens and cost
+      responses: {'200': {description: AI operations analytics}}
+  /api/v1/sites/{siteId}/insights:
+    parameters:
+      - {$ref: '#/components/parameters/SiteId'}
+      - {$ref: '#/components/parameters/Environment'}
+    get:
+      summary: Offline rule-based change detection and recommended diagnosis
+      responses: {'200': {description: Insights}}
+  /api/v1/sites/{siteId}/natural-query:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    post:
+      summary: Ask Korean or English analytics questions with the offline semantic parser
+      responses: {'200': {description: Interpreted intent, answer and evidence}}
+  /api/v1/sites/{siteId}/delivery-channels:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List redacted Webhook, Confluence, Mail, internal message and AI Agent channels
+      responses: {'200': {description: Delivery channels}}
+    post:
+      summary: Save a delivery channel; header values are write-only
+      responses: {'200': {description: Channel saved}}
+  /api/v1/sites/{siteId}/scheduled-reports:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List scheduled reports and Segment actions
+      responses: {'200': {description: Schedules}}
+    post:
+      summary: Schedule report or Segment aggregate delivery
+      responses: {'200': {description: Schedule saved}}
+  /api/v1/sites/{siteId}/delivery-runs:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List site-scoped delivery outcomes with redacted errors and HTTP status
+      responses: {'200': {description: Delivery runs}}
   /mcp:
     post:
       summary: MCP Streamable HTTP JSON-RPC endpoint
@@ -169,6 +296,11 @@ components:
       in: path
       required: true
       schema: {type: string}
+    Environment:
+      name: environment
+      in: query
+      required: false
+      schema: {type: string, default: prd}
   responses:
     Error:
       description: Structured error
@@ -186,6 +318,7 @@ components:
       required: [site_id, visitor_id, session_id, events]
       properties:
         site_id: {type: string}
+        environment: {type: string, default: prd, pattern: '^[a-z][a-z0-9_-]{0,31}$'}
         tracking_key: {type: string}
         visitor_id: {type: string, maxLength: 128}
         session_id: {type: string, maxLength: 128}
@@ -203,6 +336,7 @@ components:
               id: {type: string, format: uuid}
               name: {type: string, pattern: '^[A-Za-z][A-Za-z0-9_]{0,63}$'}
               timestamp: {type: integer}
+              contract_version: {type: integer, minimum: 1, default: 1}
               properties: {type: object, additionalProperties: true}
               context:
                 allOf:
@@ -249,6 +383,7 @@ components:
       required: [site_id, date_range, metrics]
       properties:
         site_id: {type: string}
+        environment: {type: string, default: prd}
         date_range:
           type: object
           required: [from, to]

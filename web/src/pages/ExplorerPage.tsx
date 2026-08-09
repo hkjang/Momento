@@ -51,7 +51,7 @@ const metrics = [
   "revenue",
 ];
 export default function ExplorerPage() {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const qc = useQueryClient();
   const [dims, setDims] = useState<string[]>(["event.name"]);
   const [mets, setMets] = useState<string[]>(["events", "users"]);
@@ -96,6 +96,7 @@ export default function ExplorerPage() {
         "/api/v1/query",
         {
           site_id: site!.site_id,
+          environment,
           date_range: dateRangeValues(30, site!.timezone),
           dimensions: dims,
           metrics: mets,

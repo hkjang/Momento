@@ -59,6 +59,23 @@ func TestValidateProperties(t *testing.T) {
 		t.Fatalf("expected two warnings: %v", warnings)
 	}
 }
+
+func TestStrictestValidationMode(t *testing.T) {
+	tests := []struct {
+		a, b, want string
+	}{
+		{"allow", "allow", "allow"},
+		{"allow", "warn", "warn"},
+		{"warn", "allow", "warn"},
+		{"warn", "reject", "reject"},
+		{"reject", "allow", "reject"},
+	}
+	for _, tt := range tests {
+		if got := strictestValidationMode(tt.a, tt.b); got != tt.want {
+			t.Errorf("strictestValidationMode(%q,%q)=%q want %q", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
 func TestPrivacyAppliedBeforeDurableQueue(t *testing.T) {
 	req := model.CollectRequest{UserID: "EMP001", UserProperties: map[string]any{"email": "secret", "department": "Platform"}, Context: model.EventContext{Page: model.PageContext{URL: "https://example.test/a?token=secret"}}, Events: []model.IncomingEvent{{Name: "click", Properties: map[string]any{"phone": "010", "feature": "search"}}}}
 	ip, ua := "192.168.1.42", "Browser/1"

@@ -4,6 +4,7 @@ import "encoding/json"
 
 type CollectRequest struct {
 	SiteID         string          `json:"site_id"`
+	Environment    string          `json:"environment,omitempty"`
 	TrackingKey    string          `json:"tracking_key,omitempty"`
 	VisitorID      string          `json:"visitor_id"`
 	SessionID      string          `json:"session_id"`
@@ -14,13 +15,14 @@ type CollectRequest struct {
 }
 
 type IncomingEvent struct {
-	ID         string           `json:"id,omitempty"`
-	Name       string           `json:"name"`
-	Timestamp  int64            `json:"timestamp"`
-	Properties map[string]any   `json:"properties,omitempty"`
-	Items      []map[string]any `json:"items,omitempty"`
-	Context    *EventContext    `json:"context,omitempty"`
-	Debug      bool             `json:"debug,omitempty"`
+	ID              string           `json:"id,omitempty"`
+	Name            string           `json:"name"`
+	Timestamp       int64            `json:"timestamp"`
+	Properties      map[string]any   `json:"properties,omitempty"`
+	Items           []map[string]any `json:"items,omitempty"`
+	Context         *EventContext    `json:"context,omitempty"`
+	Debug           bool             `json:"debug,omitempty"`
+	ContractVersion int              `json:"contract_version,omitempty"`
 }
 
 type EventContext struct {
@@ -50,11 +52,12 @@ type TrafficContext struct {
 }
 
 type InboxPayload struct {
-	Request      CollectRequest `json:"request"`
-	ClientIP     string         `json:"client_ip"`
-	Origin       string         `json:"origin"`
-	UserAgent    string         `json:"user_agent"`
-	ReceivedUnix int64          `json:"received_unix"`
+	Request        CollectRequest `json:"request"`
+	ClientIP       string         `json:"client_ip"`
+	Origin         string         `json:"origin"`
+	UserAgent      string         `json:"user_agent"`
+	ReceivedUnix   int64          `json:"received_unix"`
+	PrivacyBlocked int            `json:"privacy_blocked,omitempty"`
 }
 
 func (p InboxPayload) JSON() ([]byte, error) { return json.Marshal(p) }

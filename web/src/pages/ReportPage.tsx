@@ -52,7 +52,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
   ],
 };
 export default function ReportPage({ kind }: { kind: Kind }) {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const q = useQuery({
     queryKey: ["report", kind, site?.site_id, site?.timezone],
     queryFn: async () => {
@@ -60,6 +60,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
         return (
           await post<{ rows: Record<string, unknown>[] }>("/api/v1/query", {
             site_id: site!.site_id,
+            environment,
             date_range: dateRangeValues(30, site!.timezone),
             dimensions: [
               "traffic.source",

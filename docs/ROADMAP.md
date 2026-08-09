@@ -44,12 +44,26 @@
 - Linked anonymous/device Visitor deletion and complete derived-data reconciliation
 - Atomic daily aggregate rebuild on Site Timezone changes
 
+## v0.5 — implemented
+
+- DEV/STG/PRD Environment isolation for SDK, Collector, Raw Events, aggregates and analytics
+- Immutable Event Contract versions with environment-specific allow/warn/reject enforcement
+- Safe AST-based Semantic Metric Registry shared by REST, Query API and MCP
+- Data Quality Center with Health Score, Collector lag, Contract/PII/Cardinality diagnostics
+- Cohort/Retention and reusable sequential Business Journey analysis
+- Organization/Department Feature Adoption with eligible-user targets and repeat/dormant usage
+- Automatic Web Vitals/Resource Error RUM, Error Conversion Impact and Release Impact
+- Offline Insight/Root Cause and Korean/English Natural Language Analytics
+- AI Model/Agent/MCP/Tool calls, success, latency, token, cost and fallback analytics
+- Allowlisted Scheduled Report and Segment Action delivery to HTTP-based enterprise channels
+- 13-tool Analytics MCP surface
+
 ## Next schema-compatible increments
 
-- Cohort/retention and first/last/last-non-direct attribution
+- First/last/last-non-direct attribution and enterprise channel classification
 - Scheduled aggregate validation/rebuild jobs and Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation
-- Mobile/server SDK packages, anomaly alerts and AI-assisted diagnosis
+- Mobile/server SDK packages, statistical anomaly detection and governed external LLM diagnosis
 
 Raw Event remains the source of truth so these increments do not require changing the tracking protocol.

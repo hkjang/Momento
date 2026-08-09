@@ -72,6 +72,10 @@ test("captures page and acquisition context when each event occurs", async () =>
     endpoint: "https://analytics.internal",
     mode: "cookieless",
     autoTrack: false,
+    environment: "stg",
+    contractVersion: 3,
+    releaseVersion: "v2.4.1",
+    gitSha: "abc123",
   });
   tracker.track("click", { button: "from-a" });
 
@@ -92,6 +96,44 @@ test("captures page and acquisition context when each event occurs", async () =>
   assert.equal(clicks[0].context.traffic.source, "intranet");
   assert.equal(clicks[1].context.traffic.source, "intranet");
   assert.equal(clicks[0].context.page.referrer, "https://portal.internal/home");
+  assert.equal(deliveries[0].environment, "stg");
+  assert.equal(clicks[0].contract_version, 3);
+  assert.equal(clicks[0].properties.release_version, "v2.4.1");
+  assert.equal(clicks[0].properties.git_sha, "abc123");
+  tracker.consent.deny();
+});
+
+test("migrates v0.4 identity into the scoped production storage", async () => {
+  const storage = new MemoryStorage();
+  storage.setItem("momento_visitor_id", "legacy-visitor");
+  storage.setItem(
+    "momento_session",
+    JSON.stringify({ id: "legacy-session", last: Date.now(), traffic: { source: "legacy" } }),
+  );
+  setGlobal("localStorage", storage);
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+
+  const tracker = new MomentoTracker();
+  tracker.init({
+    siteId: "SITE_UPGRADE",
+    endpoint: "https://analytics.internal",
+    mode: "full",
+    autoTrack: false,
+  });
+  tracker.track("click", { release_version: "event-supplied" });
+  await tracker.flush();
+
+  assert.equal(deliveries[0].visitor_id, "legacy-visitor");
+  assert.equal(deliveries[0].session_id, "legacy-session");
+  assert.equal(deliveries[0].events[0].properties.release_version, "event-supplied");
+  assert.equal(
+    storage.getItem("momento_visitor_id:SITE_UPGRADE:prd"),
+    "legacy-visitor",
+  );
   tracker.consent.deny();
 });
 

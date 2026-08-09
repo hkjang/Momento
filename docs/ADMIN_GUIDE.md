@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.4.0
+- **문서 버전**: v0.5.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -106,3 +106,28 @@ Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter �
 - Overview의 Site-local 일별 Trend는 일별 집계를 사용하고, 임의 시각 범위는 Raw Event로 정확히 fallback합니다.
 - Site Timezone을 바꾸면 Raw Timestamp는 그대로 두고 일별 집계만 새 Calendar 경계로 즉시 재생성합니다.
 - 장애 복구와 개인정보 삭제에서는 Raw Event를 Single Source of Truth로 파생 데이터를 재생성합니다.
+
+## 10. Environment와 Event Contract
+
+- `Analytics Governance`에서 Site별 DEV/STG/PRD와 사용자 정의 Environment를 관리합니다.
+- 각 Environment는 Event Contract 정책 `allow`, `warn`, `reject`와 일별 Cardinality Limit를 가집니다.
+- Event Contract는 Version마다 JSON Schema, Validation Mode, Changelog, 작성자와 활성시각을 보관합니다.
+- Draft는 수집에 사용할 수 없습니다. Active Version을 바꾸면 이전 Active는 Deprecated가 되지만 Retry 호환을 위해 계속 검증할 수 있습니다.
+- PRD를 비활성화할 수 없으며 SDK와 Server API가 Environment를 생략하면 PRD가 적용됩니다.
+
+## 11. Semantic Metric과 Data Quality
+
+- Semantic Metric은 관리자 정의 SQL을 받지 않고 허용된 JSON AST만 저장합니다.
+- 수정 시 Version이 증가하고 REST/Query/MCP가 동일한 정의를 사용합니다.
+- Data Quality는 Received, Accepted, Duplicate, Late, Reject, Contract Warning, Missing User/Feature, Unknown Network, PII Blocked, Dead Letter, Cardinality를 표시합니다.
+- Cardinality 원문은 저장하지 않으며 SHA-256 digest로 Daily Distinct만 계산합니다.
+
+## 12. Report / Action 보안
+
+Scheduled Report를 사용하려면 먼저 관리자 설정 `automation`에서 기능을 활성화하고 `allowed_webhook_hosts`를 지정해야 합니다. 빈 Allowlist에서는 어떤 Endpoint도 호출하지 않습니다.
+
+- 지원 Channel: Webhook, Confluence, Mail HTTP Gateway, Internal Message HTTP Gateway, AI Agent
+- HTTP(S)만 허용하며 URL 내 Credential과 Redirect는 허용하지 않습니다.
+- Channel Header 값은 저장 후 API에서 다시 노출하지 않습니다.
+- Segment Delivery는 기본적으로 Aggregate만 전송하고 `max_entity_ids=0`입니다.
+- 실행 결과는 Delivery Run과 Audit Log에서 확인합니다.

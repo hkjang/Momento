@@ -240,6 +240,16 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = s.DB.Exec(r.Context(), `INSERT INTO retention_policies(site_id) VALUES($1) ON CONFLICT(site_id) DO NOTHING`, id)
+	_, _ = s.DB.Exec(r.Context(), `INSERT INTO site_environments(site_id,name,label,contract_mode,cardinality_limit) VALUES
+		($1,'dev','Development','allow',50000),($1,'stg','Staging','warn',25000),($1,'prd','Production','warn',10000) ON CONFLICT DO NOTHING`, id)
+	_, _ = s.DB.Exec(r.Context(), `INSERT INTO semantic_metrics(site_id,name,label,description,definition,format) VALUES
+		($1,'events','Events','수집된 이벤트 수','{"type":"count"}','number'),
+		($1,'users','Users','Canonical 사용자 수','{"type":"unique_users"}','number'),
+		($1,'sessions','Sessions','세션 수','{"type":"unique_sessions"}','number'),
+		($1,'page_views','Page Views','페이지 조회 수','{"type":"count","event_name":"page_view"}','number'),
+		($1,'conversions','Conversions','전환 이벤트 수','{"type":"count","conversion":true}','number'),
+		($1,'conversion_users','Conversion Users','전환 사용자 수','{"type":"unique_users","conversion":true}','number'),
+		($1,'revenue','Revenue','구매 매출 합계','{"type":"sum","event_name":"purchase","property":"value","fallback_property":"revenue"}','currency') ON CONFLICT DO NOTHING`, id)
 	s.audit(r.Context(), &p, "site.create", "site", id.String(), map[string]any{"name": in.Name}, clientIP(r))
 	writeJSON(w, 201, map[string]any{"id": id, "tracking_key": plain, "server_api_key": serverPlain, "message": "Store the keys now; they will not be shown again."})
 }
@@ -398,8 +408,9 @@ func (s *Server) trackingCode(w http.ResponseWriter, r *http.Request) {
 			endpoint = strings.TrimSuffix(p, "/")
 		}
 	}
-	code := fmt.Sprintf(`<script async src="%s/tracker.js" data-site-id="%s"></script>`, endpoint, siteID)
-	writeJSON(w, 200, map[string]string{"site_id": siteID, "collector_endpoint": endpoint, "tracking_code": code})
+	environment := requestEnvironment(r)
+	code := fmt.Sprintf(`<script async src="%s/tracker.js" data-site-id="%s" data-environment="%s" data-contract-version="1"></script>`, endpoint, siteID, environment)
+	writeJSON(w, 200, map[string]string{"site_id": siteID, "environment": environment, "collector_endpoint": endpoint, "tracking_code": code})
 }
 
 func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +443,7 @@ func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
 }
 func allowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "privacy", "storage", "security":
+	case "general", "oidc", "privacy", "storage", "security", "automation":
 		return true
 	}
 	return false
@@ -537,6 +548,24 @@ func validateAdminSetting(key string, value map[string]any) error {
 		engine, _ := value["engine"].(string)
 		if engine != "postgres" {
 			return fmt.Errorf("only the postgres storage engine is available in this release")
+		}
+	case "automation":
+		if err := number("delivery_timeout_seconds", 1, 60); err != nil {
+			return err
+		}
+		if err := number("max_entity_ids", 0, 1000); err != nil {
+			return err
+		}
+		values, ok := value["allowed_webhook_hosts"].([]any)
+		if !ok && value["allowed_webhook_hosts"] != nil {
+			return fmt.Errorf("allowed_webhook_hosts must be an array")
+		}
+		for _, item := range values {
+			host, ok := item.(string)
+			host = strings.TrimSpace(strings.TrimPrefix(host, "*."))
+			if !ok || host == "" || strings.ContainsAny(host, "/:@") {
+				return fmt.Errorf("allowed_webhook_hosts contains an invalid host")
+			}
 		}
 	}
 	return nil
@@ -728,7 +757,8 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 	siteKey := r.URL.Query().Get("site_id")
-	rows, err := s.DB.Query(r.Context(), `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) ORDER BY e.received_at DESC LIMIT 200`, siteKey)
+	p, _ := auth.FromContext(r.Context())
+	rows, err := s.DB.Query(r.Context(), `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class,e.environment,e.contract_version FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.received_at DESC LIMIT 200`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -736,15 +766,16 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 	events := rowsToList(rows, func() (map[string]any, error) {
 		var eventID uuid.UUID
 		var occurred, received time.Time
-		var name, visitor, session, network, traffic string
+		var name, visitor, session, network, traffic, environment string
+		var contractVersion int
 		var page, ip *string
 		var raw []byte
-		err := rows.Scan(&eventID, &occurred, &received, &name, &visitor, &session, &page, &ip, &network, &raw, &traffic)
+		err := rows.Scan(&eventID, &occurred, &received, &name, &visitor, &session, &page, &ip, &network, &raw, &traffic, &environment, &contractVersion)
 		var props any
 		_ = json.Unmarshal(raw, &props)
-		return map[string]any{"event_id": eventID, "event_timestamp": occurred, "received_at": received, "event_name": name, "visitor_id": visitor, "session_id": session, "page_url": page, "client_ip": ip, "network": network, "properties": props, "traffic_class": traffic}, err
+		return map[string]any{"event_id": eventID, "event_timestamp": occurred, "received_at": received, "event_name": name, "visitor_id": visitor, "session_id": session, "page_url": page, "client_ip": ip, "network": network, "properties": props, "traffic_class": traffic, "environment": environment, "contract_version": contractVersion}, err
 	})
-	errorRows, err := s.DB.Query(r.Context(), `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1)) failures ORDER BY created_at DESC LIMIT 100`, siteKey)
+	errorRows, err := s.DB.Query(r.Context(), `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -970,7 +1001,7 @@ func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, 
 func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {
 	site := r.URL.Query().Get("site_id")
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT e.id,e.site_id,s.site_key,e.name,e.description,e.schema,e.validation_mode,e.conversion,e.created_at FROM event_definitions e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.name`, site, p.Role, p.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT e.id,e.site_id,s.site_key,e.name,e.description,e.schema,e.validation_mode,e.conversion,e.current_version,e.owner,e.created_at FROM event_definitions e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.name`, site, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -979,14 +1010,15 @@ func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, siteUUID uuid.UUID
-		var siteKey, name, desc, mode string
+		var siteKey, name, desc, mode, owner string
 		var raw []byte
 		var conversion bool
+		var currentVersion int
 		var created time.Time
-		if rows.Scan(&id, &siteUUID, &siteKey, &name, &desc, &raw, &mode, &conversion, &created) == nil {
+		if rows.Scan(&id, &siteUUID, &siteKey, &name, &desc, &raw, &mode, &conversion, &currentVersion, &owner, &created) == nil {
 			var schema any
 			_ = json.Unmarshal(raw, &schema)
-			out = append(out, map[string]any{"id": id, "site_uuid": siteUUID, "site_id": siteKey, "name": name, "description": desc, "schema": schema, "validation_mode": mode, "conversion": conversion, "created_at": created})
+			out = append(out, map[string]any{"id": id, "site_uuid": siteUUID, "site_id": siteKey, "name": name, "description": desc, "schema": schema, "validation_mode": mode, "conversion": conversion, "current_version": currentVersion, "owner": owner, "created_at": created})
 		}
 	}
 	writeJSON(w, 200, out)
@@ -1010,14 +1042,38 @@ func (s *Server) upsertEventDefinition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := json.Marshal(in.Schema)
-	var id uuid.UUID
-	err := s.DB.QueryRow(r.Context(), `INSERT INTO event_definitions(site_id,name,description,schema,validation_mode,conversion) SELECT id,$2,$3,$4,$5,$6 FROM sites WHERE site_key=$1 ON CONFLICT(site_id,name) DO UPDATE SET description=excluded.description,schema=excluded.schema,validation_mode=excluded.validation_mode,conversion=excluded.conversion RETURNING id`, in.SiteID, in.Name, in.Description, body, in.ValidationMode, in.Conversion).Scan(&id)
+	tx, err := s.DB.Begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
 		return
 	}
+	defer tx.Rollback(r.Context())
+	var id, siteID uuid.UUID
+	err = tx.QueryRow(r.Context(), `INSERT INTO event_definitions(site_id,name,description,schema,validation_mode,conversion) SELECT id,$2,$3,$4,$5,$6 FROM sites WHERE site_key=$1 ON CONFLICT(site_id,name) DO UPDATE SET description=excluded.description,conversion=excluded.conversion,updated_at=now() RETURNING id,site_id`, in.SiteID, in.Name, in.Description, body, in.ValidationMode, in.Conversion).Scan(&id, &siteID)
+	if err != nil {
+		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
+		return
+	}
+	var version int
+	if err := tx.QueryRow(r.Context(), `SELECT coalesce(max(version),0)+1 FROM event_contract_versions WHERE site_id=$1 AND event_name=$2`, siteID, in.Name).Scan(&version); err != nil {
+		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
+		return
+	}
+	_, _ = tx.Exec(r.Context(), `UPDATE event_contract_versions SET status='deprecated' WHERE site_id=$1 AND event_name=$2 AND status='active'`, siteID, in.Name)
+	if _, err := tx.Exec(r.Context(), `INSERT INTO event_contract_versions(site_id,event_name,version,schema,validation_mode,status,changelog,created_by,activated_at) VALUES($1,$2,$3,$4,$5,'active','Legacy schema editor',$6,now())`, siteID, in.Name, version, body, in.ValidationMode, p.ID); err != nil {
+		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `UPDATE event_definitions SET schema=$3,validation_mode=$4,current_version=$5,updated_at=now() WHERE site_id=$1 AND name=$2`, siteID, in.Name, body, in.ValidationMode, version); err != nil {
+		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "DEFINITION_SAVE_FAILED", err.Error())
+		return
+	}
 	s.audit(r.Context(), &p, "event_definition.save", "event_definition", id.String(), map[string]any{"name": in.Name}, clientIP(r))
-	writeJSON(w, 200, map[string]any{"id": id})
+	writeJSON(w, 200, map[string]any{"id": id, "version": version})
 }
 
 var _ = pgx.ErrNoRows

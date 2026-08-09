@@ -4,8 +4,8 @@
 </p>
 
 <p align="center">
-  <strong>사내 Web/App을 위한 온프레미스 이벤트 애널리틱스 플랫폼</strong><br>
-  누가 어느 조직·부서·네트워크 망에서 어느 서비스·기능·버튼을 사용하는지를 Raw Event 수준에서 직접 소유하고 분석합니다.
+  <strong>온프레미스 Product · Employee · Experience · AI Analytics 플랫폼</strong><br>
+  누가 어느 조직·부서·네트워크 망에서 어느 서비스·기능·버튼·AI Agent를 사용하는지부터 실제 업무 결과와 사용자 경험까지 Raw Event 수준에서 직접 소유하고 분석합니다.
 </p>
 
 <p align="center">
@@ -16,14 +16,16 @@
 
 ## 현재 제공 범위
 
-- JavaScript SDK: Event 발생 시점 Context snapshot, Page View, SPA route, custom event, identify, session/visitor, first-touch UTM, device, click/scroll/form/download/outbound/error/heartbeat, fail-closed consent, cookieless, batch, Beacon, offline queue
-- Durable Collector: `POST /collect/v1/events`, domain/key 검증, 중복 제거, 개인정보 필터, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
-- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, 사내 사용 현황, 저장형 Query Builder, 조건형 Open/Closed Funnel, Path, Ecommerce, User Timeline
+- JavaScript SDK: Event 발생 시점 Context snapshot, DEV/STG/PRD, Event Contract version, Release context, Page View/SPA/custom event, identify, session/visitor, first-touch UTM, click/form/error, Core Web Vitals·Resource Error RUM, fail-closed consent, cookieless, batch, Beacon, offline queue
+- Durable Collector: `POST /collect/v1/events`, 환경별 계약 `allow/warn/reject`, domain/key 검증, 중복 제거, 개인정보 필터, Cardinality Guard, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
+- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Cohort/Retention, Business Journey, Feature Adoption, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
+- 거버넌스: 버전형 Event Contract, Semantic Metric Registry, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
 - 관리: Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, C 클래스/CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
 - 고급 분석: 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
-- 연동: REST/OpenAPI, Raw CSV/NDJSON export, Identity Graph를 포함한 Analytics MCP
+- AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 13개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
+- Action: 보안 Host Allowlist 기반 Scheduled Report와 Segment 집계를 Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent로 전달
 - 배포: 단일 non-root Docker image, PostgreSQL migration 자동 적용, tag 기반 offline `.tar.gz` GitHub Release
 
 ## 빠른 시작
@@ -39,7 +41,13 @@ docker compose up --build
 SDK 설치:
 
 ```html
-<script async src="https://analytics.example.com/tracker.js" data-site-id="SITE_XXXXXXXX"></script>
+<script
+  async
+  src="https://analytics.example.com/tracker.js"
+  data-site-id="SITE_XXXXXXXX"
+  data-environment="prd"
+  data-contract-version="1">
+</script>
 ```
 
 ```javascript
@@ -78,7 +86,7 @@ cd ../web && npm install && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.4.0` 태그는 `momento-v0.4.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.5.0` 태그는 `momento-v0.5.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

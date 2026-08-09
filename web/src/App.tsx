@@ -15,6 +15,8 @@ import FunnelPage from "./pages/FunnelPage";
 import SegmentsPage from "./pages/SegmentsPage";
 import EcommercePage from "./pages/EcommercePage";
 import UserExplorerPage from "./pages/UserExplorerPage";
+import PlatformAnalyticsPage from "./pages/PlatformAnalyticsPage";
+import PlatformAdminPage from "./pages/PlatformAdminPage";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -45,6 +47,15 @@ export default function App() {
           <Route path="/segments" element={<SegmentsPage />} />
           <Route path="/funnel" element={<FunnelPage mode="funnel" />} />
           <Route path="/path" element={<FunnelPage mode="path" />} />
+          <Route path="/adoption" element={<PlatformAnalyticsPage mode="adoption" />} />
+          <Route path="/cohort" element={<PlatformAnalyticsPage mode="cohort" />} />
+          <Route path="/journey" element={<PlatformAnalyticsPage mode="journey" />} />
+          <Route path="/experience" element={<PlatformAnalyticsPage mode="experience" />} />
+          <Route path="/insights" element={<PlatformAnalyticsPage mode="insights" />} />
+          <Route path="/ai-analytics" element={<PlatformAnalyticsPage mode="ai" />} />
+          <Route path="/data-quality" element={<PlatformAnalyticsPage mode="quality" />} />
+          <Route path="/admin/governance" element={<PlatformAdminPage mode="governance" />} />
+          <Route path="/admin/automation" element={<PlatformAdminPage mode="automation" />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

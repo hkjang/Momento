@@ -56,6 +56,10 @@ var builtinDimensionSQL = map[string]string{
 	"feature":           "%s.properties->>'feature'",
 	"button":            "coalesce(%s.properties->>'button',%s.properties->>'element_text')",
 	"is_conversion":     "%s.is_conversion::text",
+	"environment":       "%s.environment",
+	"contract.version":  "%s.contract_version::text",
+	"release.version":   "%s.properties->>'release_version'",
+	"app.version":       "%s.properties->>'app_version'",
 }
 
 func (s *Server) newDimensionResolver(ctx context.Context, siteID uuid.UUID) (dimensionResolver, error) {
@@ -182,7 +186,7 @@ func compileSegment(node segmentNode, resolver dimensionResolver, alias string, 
 
 func compileEventExistence(node segmentNode, alias string, args *[]any) (string, error) {
 	identity := "segment_event.entity_id=" + alias + ".entity_id"
-	base := "segment_event.site_id=" + alias + ".site_id AND " + identity
+	base := "segment_event.site_id=" + alias + ".site_id AND segment_event.environment=" + alias + ".environment AND " + identity
 	switch node.Operator {
 	case "=", "!=":
 		name := strings.TrimSpace(fmt.Sprint(node.Value))

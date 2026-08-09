@@ -465,12 +465,12 @@ docker compose up --build
                         <h4>📦 Offline Archive (.tar.gz)</h4>
                         <p>Docker image bundle for air-gapped corporate networks without internet access.</p>
 <pre><code># Load the release archive
-gzip -dc momento-v0.4.0.tar.gz | docker load
+gzip -dc momento-v0.5.0.tar.gz | docker load
 
 # Run in air-gapped environment
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.4.0</code></pre>
+  momento-v0.5.0</code></pre>
                     </div>
                 </div>
             </div>
