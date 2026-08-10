@@ -14,6 +14,7 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
+  LinearProgress,
   List,
   ListItemButton,
   ListItemIcon,
@@ -28,22 +29,34 @@ import AccountTreeRounded from "@mui/icons-material/AccountTreeRounded";
 import AdminPanelSettingsRounded from "@mui/icons-material/AdminPanelSettingsRounded";
 import BugReportRounded from "@mui/icons-material/BugReportRounded";
 import ChevronRightRounded from "@mui/icons-material/ChevronRightRounded";
+import CheckCircleRounded from "@mui/icons-material/CheckCircleRounded";
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import ErrorOutlineRounded from "@mui/icons-material/ErrorOutlineRounded";
 import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
 import HomeRounded from "@mui/icons-material/HomeRounded";
 import KeyRounded from "@mui/icons-material/KeyRounded";
 import LanRounded from "@mui/icons-material/LanRounded";
 import PeopleAltRounded from "@mui/icons-material/PeopleAltRounded";
+import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import SaveRounded from "@mui/icons-material/SaveRounded";
 import SchemaRounded from "@mui/icons-material/SchemaRounded";
 import SecurityRounded from "@mui/icons-material/SecurityRounded";
 import SettingsRounded from "@mui/icons-material/SettingsRounded";
 import StorageRounded from "@mui/icons-material/StorageRounded";
+import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { del, get, patch, post, put, type Site } from "../api/client";
+import {
+  del,
+  get,
+  patch,
+  post,
+  put,
+  rangeQuery,
+  type Site,
+} from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
@@ -301,30 +314,287 @@ export default function AdminPage() {
   );
 }
 
+type AdminUserSummary = {
+  role: string;
+  active: boolean;
+};
+
+type DataQualitySummary = {
+  health_score: number;
+  collector: {
+    received: number;
+    accepted: number;
+    pending: number;
+    inbox_lag_seconds: number;
+    dead_letters: number;
+  };
+};
+
+type TrackingSummary = {
+  events: Record<string, unknown>[];
+  errors: Record<string, unknown>[];
+};
+
+type WorkflowSummary = {
+  status: string;
+  environment?: string;
+  created_at?: string;
+};
+
+type AuditSummary = {
+  id: number;
+  action: string;
+  resource_type: string;
+  actor: string;
+  created_at: string;
+};
+
+function relativeTime(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return "—";
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return "방금 전";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return `${Math.floor(seconds / 86400)}일 전`;
+}
+
 function AdminOverview() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { user } = useAuth();
-  const { sites, site, environments, environment } = useSite();
+  const { sites, site, environment } = useSite();
+  const settings = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => get<Settings>("/api/v1/settings"),
+  });
+  const users = useQuery({
+    queryKey: ["users"],
+    queryFn: () => get<AdminUserSummary[]>("/api/v1/users"),
+  });
+  const debuggerQuery = useQuery({
+    queryKey: ["tracking-debugger", site?.site_id],
+    queryFn: () =>
+      get<TrackingSummary>(
+        `/api/v1/tracking-debugger?site_id=${site?.site_id || ""}`,
+      ),
+    enabled: !!site,
+    refetchInterval: 30000,
+  });
+  const quality = useQuery({
+    queryKey: ["data-quality", site?.site_id, environment],
+    queryFn: () =>
+      get<DataQualitySummary>(
+        `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(7, site!.timezone)}`,
+      ),
+    enabled: !!site,
+    refetchInterval: 30000,
+  });
+  const privacyRequests = useQuery({
+    queryKey: ["privacy-requests", site?.site_id],
+    queryFn: () =>
+      get<WorkflowSummary[]>(
+        `/api/v1/sites/${site!.site_id}/privacy-requests`,
+      ),
+    enabled: !!site,
+  });
+  const aggregateJobs = useQuery({
+    queryKey: ["aggregate-jobs", site?.site_id],
+    queryFn: () =>
+      get<WorkflowSummary[]>(
+        `/api/v1/sites/${site!.site_id}/aggregate-jobs`,
+      ),
+    enabled: !!site,
+    refetchInterval: 30000,
+  });
+  const audit = useQuery({
+    queryKey: ["audit"],
+    queryFn: () => get<AuditSummary[]>("/api/v1/audit"),
+  });
+  const privacy = settings.data?.privacy?.value || {};
+  const oidc = settings.data?.oidc?.value || {};
+  const activeSites = sites.filter((item) => item.active);
+  const administratorCount = (users.data || []).filter(
+    (item) => item.active && item.role.endsWith("_admin"),
+  ).length;
+  const unrestrictedSites = activeSites.filter(
+    (item) => item.allowed_domains.length === 0,
+  );
+  const readiness = [
+    {
+      label: "수집 사이트",
+      detail: activeSites.length
+        ? `${activeSites.length}개 사이트가 활성 상태입니다.`
+        : "활성 사이트를 등록해야 합니다.",
+      ready: activeSites.length > 0,
+      to: "/admin?section=sites",
+    },
+    {
+      label: "Origin 제한",
+      detail: unrestrictedSites.length
+        ? `${unrestrictedSites.length}개 사이트가 모든 Origin을 허용합니다.`
+        : "활성 사이트의 허용 도메인이 제한되어 있습니다.",
+      ready: activeSites.length > 0 && unrestrictedSites.length === 0,
+      to: "/admin?section=sites",
+    },
+    {
+      label: "URL 개인정보 보호",
+      detail: privacy.strip_query_string
+        ? "Query String을 Raw Event 저장 전에 제거합니다."
+        : "Query String 제거 정책이 꺼져 있습니다.",
+      ready: privacy.strip_query_string === true,
+      to: "/admin?section=privacy",
+    },
+    {
+      label: "PII 값 탐지",
+      detail: ["mask", "reject"].includes(String(privacy.pii_detection_mode))
+        ? `${String(privacy.pii_detection_mode).toUpperCase()} 정책이 적용됩니다.`
+        : "PII 탐지를 Mask 또는 Reject로 강화하세요.",
+      ready: ["mask", "reject"].includes(
+        String(privacy.pii_detection_mode),
+      ),
+      to: "/admin?section=privacy",
+    },
+    {
+      label: "관리자 이중화",
+      detail:
+        administratorCount >= 2
+          ? `${administratorCount}개의 활성 관리자 계정이 있습니다.`
+          : "비상 운영을 위해 관리자를 한 명 더 지정하세요.",
+      ready: administratorCount >= 2,
+      to: "/admin?section=users",
+    },
+    {
+      label: "Enterprise SSO",
+      detail: oidc.enabled
+        ? "OIDC 로그인이 활성화되어 있습니다."
+        : "OIDC를 연결하면 계정 수명주기를 중앙 관리할 수 있습니다.",
+      ready: oidc.enabled === true,
+      to: "/admin?section=settings",
+    },
+  ];
+  const readinessLoading = settings.isLoading || users.isLoading;
+  const readinessScore = Math.round(
+    (readiness.filter((item) => item.ready).length / readiness.length) * 100,
+  );
+  const pendingPrivacy = (privacyRequests.data || []).filter(
+    (item) => item.status === "pending",
+  ).length;
+  const activeJobs = (aggregateJobs.data || []).filter(
+    (item) =>
+      item.environment === environment &&
+      ["pending", "running"].includes(item.status),
+  ).length;
+  const recentFailedJobs = (aggregateJobs.data || []).filter((item) => {
+    if (item.environment !== environment || item.status !== "failed")
+      return false;
+    const created = new Date(item.created_at || 0).getTime();
+    return created > Date.now() - 7 * 86400000;
+  }).length;
+  const collectorErrors = debuggerQuery.data?.errors.length || 0;
+  const deadLetters = quality.data?.collector.dead_letters || 0;
+  const actions: {
+    severity: "critical" | "warning" | "info";
+    title: string;
+    detail: string;
+    to: string;
+  }[] = [];
+  if (collectorErrors || deadLetters)
+    actions.push({
+      severity: "critical",
+      title: "수집 처리 오류 확인",
+      detail: `처리 오류 ${collectorErrors}건 · 최근 Dead Letter ${deadLetters}건`,
+      to: "/admin?section=debugger",
+    });
+  if (recentFailedJobs)
+    actions.push({
+      severity: "critical",
+      title: "실패한 재집계 작업 확인",
+      detail: `현재 환경에서 최근 7일간 ${recentFailedJobs}개 작업이 실패했습니다.`,
+      to: "/admin/analytics-engineering?panel=aggregate",
+    });
+  if (pendingPrivacy)
+    actions.push({
+      severity: "warning",
+      title: "개인정보 요청 검토",
+      detail: `${pendingPrivacy}개 요청이 관리자 결정을 기다립니다.`,
+      to: "/admin/privacy-requests",
+    });
+  if (quality.data && quality.data.health_score < 95)
+    actions.push({
+      severity: "warning",
+      title: "데이터 품질 저하 분석",
+      detail: `최근 7일 품질 점수가 ${quality.data.health_score.toFixed(1)}점입니다.`,
+      to: "/data-quality",
+    });
+  if (unrestrictedSites.length)
+    actions.push({
+      severity: "warning",
+      title: "수집 Origin 제한",
+      detail: `${unrestrictedSites.map((item) => item.name).join(", ")} 사이트가 모든 Origin을 허용합니다.`,
+      to: "/admin?section=sites",
+    });
+  if (users.data && administratorCount < 2)
+    actions.push({
+      severity: "warning",
+      title: "비상 관리자 지정",
+      detail: "단일 관리자 잠금에 대비해 활성 관리자 계정을 추가하세요.",
+      to: "/admin?section=users",
+    });
+  if (settings.data && !oidc.enabled)
+    actions.push({
+      severity: "info",
+      title: "Enterprise SSO 연결",
+      detail: "Keycloak OIDC로 입·퇴사자 계정 관리를 중앙화할 수 있습니다.",
+      to: "/admin?section=settings",
+    });
+  if (quality.data && quality.data.collector.received === 0)
+    actions.push({
+      severity: "info",
+      title: "SDK 수집 상태 점검",
+      detail: `최근 7일간 ${environment.toUpperCase()} 환경에서 수신된 이벤트가 없습니다.`,
+      to: "/admin?section=debugger",
+    });
   const summary = [
     {
-      label: "등록 사이트",
-      value: sites.length,
-      detail: `${sites.filter((item) => item.active).length}개 수집 중`,
+      label: "데이터 품질",
+      value: quality.data ? quality.data.health_score.toFixed(1) : "—",
+      suffix: quality.data ? "점" : "",
+      detail: "최근 7일 수집 정확도",
+      tone:
+        quality.data && quality.data.health_score < 95 ? "warning" : "success",
     },
     {
-      label: "현재 환경",
-      value: environment.toUpperCase(),
-      detail: `${environments.length}개 환경 등록`,
+      label: "수신 이벤트",
+      value: (quality.data?.collector.received || 0).toLocaleString(),
+      detail: `${environment.toUpperCase()} · 최근 7일`,
+      tone: "default",
     },
     {
-      label: "기준 시간대",
-      value: site?.timezone || "—",
-      detail: "일별 집계 기준",
+      label: "수집 대기",
+      value: (quality.data?.collector.pending || 0).toLocaleString(),
+      detail: quality.data?.collector.inbox_lag_seconds
+        ? `최대 ${Math.round(quality.data.collector.inbox_lag_seconds)}초 지연`
+        : "Inbox 지연 없음",
+      tone: quality.data?.collector.pending ? "warning" : "success",
     },
     {
-      label: "내 권한",
-      value: user?.role.replaceAll("_", " ") || "—",
-      detail: user?.organization_name || "Momento",
+      label: "처리 오류",
+      value: collectorErrors.toLocaleString(),
+      detail: `Dead Letter ${deadLetters}건`,
+      tone: collectorErrors || deadLetters ? "error" : "success",
+    },
+    {
+      label: "개인정보 요청",
+      value: pendingPrivacy.toLocaleString(),
+      detail: "결정 대기",
+      tone: pendingPrivacy ? "warning" : "success",
+    },
+    {
+      label: "재집계 작업",
+      value: activeJobs.toLocaleString(),
+      detail: `진행 중 · 실패 ${recentFailedJobs}건`,
+      tone: recentFailedJobs ? "error" : activeJobs ? "warning" : "success",
     },
   ];
   const quickActions = [
@@ -375,6 +645,31 @@ function AdminOverview() {
       to: "/admin/automation",
     },
   ];
+  const overviewError =
+    settings.error ||
+    users.error ||
+    debuggerQuery.error ||
+    quality.error ||
+    privacyRequests.error ||
+    aggregateJobs.error ||
+    audit.error;
+  const refreshing =
+    settings.isFetching ||
+    users.isFetching ||
+    debuggerQuery.isFetching ||
+    quality.isFetching ||
+    privacyRequests.isFetching ||
+    aggregateJobs.isFetching ||
+    audit.isFetching;
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ["settings"] });
+    void qc.invalidateQueries({ queryKey: ["users"] });
+    void qc.invalidateQueries({ queryKey: ["tracking-debugger"] });
+    void qc.invalidateQueries({ queryKey: ["data-quality"] });
+    void qc.invalidateQueries({ queryKey: ["privacy-requests"] });
+    void qc.invalidateQueries({ queryKey: ["aggregate-jobs"] });
+    void qc.invalidateQueries({ queryKey: ["audit"] });
+  };
   return (
     <Stack spacing={2.5}>
       <Card className="admin-hero" sx={{ p: { xs: 2.5, md: 3.25 } }}>
@@ -390,36 +685,57 @@ function AdminOverview() {
               sx={{ mb: 1.5, bgcolor: "rgba(255,255,255,.14)", color: "white" }}
             />
             <Typography variant="h5" color="white">
-              데이터 수집부터 거버넌스까지 한곳에서 운영하세요.
+              {site?.name || "Momento"} 운영 브리핑
             </Typography>
             <Typography color="rgba(255,255,255,.72)" variant="body2" mt={1}>
-              자주 사용하는 작업은 바로 시작하고, 위험한 변경은 상태와 영향
-              범위를 확인한 뒤 실행할 수 있습니다.
+              {environment.toUpperCase()} 환경의 수집 상태와 미처리 작업을 한곳에서
+              확인하고, 우선순위가 높은 조치부터 처리하세요.
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            color="inherit"
-            startIcon={<AddRounded />}
-            onClick={() => navigate("/admin?section=sites")}
-            sx={{
-              alignSelf: { xs: "flex-start", md: "center" },
-              color: "primary.dark",
-              bgcolor: "white",
-            }}
-          >
-            사이트 추가
-          </Button>
+          <Stack alignItems={{ md: "flex-end" }} gap={1}>
+            <Typography
+              color="white"
+              fontSize={{ xs: 32, md: 40 }}
+              fontWeight={800}
+              lineHeight={1}
+            >
+              {readinessLoading ? "—" : readinessScore}
+              <Typography component="span" color="rgba(255,255,255,.7)">
+                /100
+              </Typography>
+            </Typography>
+            <Typography variant="caption" color="rgba(255,255,255,.72)">
+              운영 준비도 · {user?.role.replaceAll("_", " ") || "admin"}
+            </Typography>
+            <Button
+              variant="contained"
+              color="inherit"
+              size="small"
+              startIcon={<RefreshRounded />}
+              onClick={refresh}
+              disabled={refreshing}
+              sx={{ color: "primary.dark", bgcolor: "white" }}
+            >
+              {refreshing ? "갱신 중" : "상태 새로고침"}
+            </Button>
+          </Stack>
         </Stack>
       </Card>
+      {overviewError && (
+        <Alert severity="warning">
+          일부 운영 지표를 불러오지 못했습니다. 새로고침 후에도 계속되면 Audit
+          Log와 서버 상태를 확인하세요.
+        </Alert>
+      )}
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: {
             xs: "repeat(2,minmax(0,1fr))",
-            xl: "repeat(4,minmax(0,1fr))",
+            md: "repeat(3,minmax(0,1fr))",
+            xl: "repeat(6,minmax(0,1fr))",
           },
-          gap: 2,
+          gap: 1.5,
         }}
       >
         {summary.map((item) => (
@@ -431,19 +747,154 @@ function AdminOverview() {
             >
               {item.label}
             </Typography>
-            <Typography
-              fontSize={{ xs: 20, md: 25 }}
-              fontWeight={760}
-              mt={0.6}
-              noWrap
-            >
-              {item.value}
-            </Typography>
+            <Stack direction="row" alignItems="baseline" gap={0.4} mt={0.6}>
+              <Typography fontSize={{ xs: 20, md: 25 }} fontWeight={760} noWrap>
+                {item.value}
+              </Typography>
+              {"suffix" in item && item.suffix && (
+                <Typography variant="caption" color="text.secondary">
+                  {item.suffix}
+                </Typography>
+              )}
+            </Stack>
             <Typography variant="caption" color="text.secondary">
               {item.detail}
             </Typography>
+            <Box
+              sx={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                mt: 1.2,
+                bgcolor:
+                  item.tone === "error"
+                    ? "error.main"
+                    : item.tone === "warning"
+                      ? "warning.main"
+                      : item.tone === "success"
+                        ? "success.main"
+                        : "text.disabled",
+              }}
+            />
           </Card>
         ))}
+      </Box>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", xl: "minmax(0,1fr) minmax(0,1fr)" },
+          gap: 2,
+        }}
+      >
+        <Card sx={{ p: { xs: 2.2, md: 2.75 } }}>
+          <Stack direction="row" justifyContent="space-between" gap={2}>
+            <Box>
+              <Typography variant="h6">운영 준비도</Typography>
+              <Typography variant="body2" color="text.secondary">
+                보안·접근·수집 기본 설정의 권장 상태입니다.
+              </Typography>
+            </Box>
+            <Chip
+              size="small"
+              color={
+                readinessScore >= 90
+                  ? "success"
+                  : readinessScore >= 60
+                    ? "warning"
+                    : "error"
+              }
+              label={readinessLoading ? "계산 중" : `${readinessScore}%`}
+            />
+          </Stack>
+          <LinearProgress
+            variant={readinessLoading ? "indeterminate" : "determinate"}
+            value={readinessScore}
+            color={readinessScore >= 90 ? "success" : "primary"}
+            sx={{ mt: 2, mb: 1.5, height: 7, borderRadius: 999 }}
+          />
+          <Stack spacing={0.4}>
+            {readiness.map((item) => (
+              <ListItemButton
+                key={item.label}
+                onClick={() => navigate(item.to)}
+                sx={{ borderRadius: 2, px: 1, py: 0.8 }}
+              >
+                <ListItemIcon sx={{ minWidth: 34 }}>
+                  {item.ready ? (
+                    <CheckCircleRounded color="success" fontSize="small" />
+                  ) : (
+                    <WarningAmberRounded color="warning" fontSize="small" />
+                  )}
+                </ListItemIcon>
+                <ListItemText
+                  primary={item.label}
+                  secondary={item.detail}
+                  primaryTypographyProps={{ fontWeight: 700, fontSize: 13.5 }}
+                  secondaryTypographyProps={{ fontSize: 11.5 }}
+                />
+                <ChevronRightRounded color="action" fontSize="small" />
+              </ListItemButton>
+            ))}
+          </Stack>
+        </Card>
+        <Card sx={{ p: { xs: 2.2, md: 2.75 } }}>
+          <Stack direction="row" justifyContent="space-between" gap={2} mb={1.5}>
+            <Box>
+              <Typography variant="h6">조치 필요</Typography>
+              <Typography variant="body2" color="text.secondary">
+                위험도와 처리 시급성을 기준으로 정렬했습니다.
+              </Typography>
+            </Box>
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${actions.length}개`}
+            />
+          </Stack>
+          {actions.length ? (
+            <Stack spacing={1}>
+              {actions.slice(0, 6).map((item) => (
+                <ListItemButton
+                  key={`${item.severity}-${item.title}`}
+                  onClick={() => navigate(item.to)}
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 2,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <ListItemIcon sx={{ minWidth: 36, mt: 0.25 }}>
+                    {item.severity === "critical" ? (
+                      <ErrorOutlineRounded color="error" fontSize="small" />
+                    ) : item.severity === "warning" ? (
+                      <WarningAmberRounded color="warning" fontSize="small" />
+                    ) : (
+                      <FactCheckRounded color="info" fontSize="small" />
+                    )}
+                  </ListItemIcon>
+                  <ListItemText
+                    primary={item.title}
+                    secondary={item.detail}
+                    primaryTypographyProps={{ fontWeight: 700, fontSize: 13.5 }}
+                    secondaryTypographyProps={{ fontSize: 11.5 }}
+                  />
+                  <ChevronRightRounded color="action" fontSize="small" />
+                </ListItemButton>
+              ))}
+            </Stack>
+          ) : (
+            <Stack alignItems="center" textAlign="center" py={5}>
+              <CheckCircleRounded color="success" sx={{ fontSize: 42 }} />
+              <Typography fontWeight={750} mt={1.2}>
+                즉시 처리할 운영 항목이 없습니다
+              </Typography>
+              <Typography variant="body2" color="text.secondary" mt={0.4}>
+                수집과 관리 Workflow가 정상 범위에 있습니다.
+              </Typography>
+            </Stack>
+          )}
+        </Card>
       </Box>
       <Box>
         <Typography variant="h6">빠른 작업</Typography>
@@ -486,6 +937,59 @@ function AdminOverview() {
           ))}
         </Box>
       </Box>
+      <Card sx={{ p: { xs: 2.2, md: 2.75 } }}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          justifyContent="space-between"
+          gap={1}
+          mb={1.5}
+        >
+          <Box>
+            <Typography variant="h6">최근 관리자 활동</Typography>
+            <Typography variant="body2" color="text.secondary">
+              설정 변경과 운영 작업의 최신 Audit 기록입니다.
+            </Typography>
+          </Box>
+          <Button
+            size="small"
+            endIcon={<ChevronRightRounded />}
+            onClick={() => navigate("/admin?section=audit")}
+          >
+            전체 감사 로그
+          </Button>
+        </Stack>
+        {(audit.data || []).length ? (
+          <Stack divider={<Divider flexItem />}>
+            {(audit.data || []).slice(0, 5).map((item) => (
+              <Stack
+                key={item.id}
+                direction={{ xs: "column", sm: "row" }}
+                justifyContent="space-between"
+                gap={0.5}
+                py={1.2}
+              >
+                <Stack direction="row" gap={1} alignItems="center" minWidth={0}>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={item.action}
+                  />
+                  <Typography variant="body2" noWrap>
+                    {item.resource_type} · {item.actor}
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {relativeTime(item.created_at)}
+                </Typography>
+              </Stack>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary" py={3}>
+            아직 기록된 관리자 활동이 없습니다.
+          </Typography>
+        )}
+      </Card>
       <Box>
         <Typography variant="h6">고급 운영</Typography>
         <Typography variant="body2" color="text.secondary" mb={1.5}>
@@ -1179,6 +1683,18 @@ function PrivacyAdmin() {
               label={l}
             />
           ))}
+          <TextField
+            select
+            label="PII 값 탐지 정책"
+            value={String(v.pii_detection_mode || "mask")}
+            onChange={(e) => set("pii_detection_mode", e.target.value)}
+            helperText="Property 값에서 이메일·전화번호·주민번호 패턴이 발견될 때의 처리 방식입니다."
+          >
+            <MenuItem value="detect">Detect · 지표만 기록</MenuItem>
+            <MenuItem value="warn">Warn · 저장하고 품질 경고</MenuItem>
+            <MenuItem value="mask">Mask · 민감 값을 치환</MenuItem>
+            <MenuItem value="reject">Reject · 이벤트 거부</MenuItem>
+          </TextField>
           <TextField
             label="마스킹할 URL Parameter"
             value={((v.masked_parameters as string[]) || []).join(", ")}

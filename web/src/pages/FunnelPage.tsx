@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Card,
+  Chip,
   IconButton,
   MenuItem,
   Stack,
@@ -18,8 +19,14 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { dateRangeValues, get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
-import { ErrorState, Loading, NoSite } from "../components/States";
+import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import { builtInSegmentFields } from "../components/SegmentBuilder";
+import {
+  buildPathFlow,
+  type PathNode,
+  type PathTransition,
+} from "./pathFlow";
+
 type Step = {
   name: string;
   event: string;
@@ -27,6 +34,7 @@ type Step = {
   filterOperator: string;
   filterValue: string;
 };
+
 export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const { site, environment } = useSite();
   const [steps, setSteps] = useState<Step[]>([
@@ -96,9 +104,9 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       }),
   });
   const paths = useQuery({
-    queryKey: ["paths", site?.site_id, site?.timezone],
+    queryKey: ["paths", site?.site_id, site?.timezone, environment],
     queryFn: () =>
-      get<Record<string, unknown>[]>(
+      get<PathTransition[]>(
         `/api/v1/sites/${site!.site_id}/path?${rangeQuery(30, site!.timezone)}`,
       ),
     enabled: !!site && mode === "path",
@@ -120,45 +128,86 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
     if (paths.isLoading) return <Loading />;
     if (paths.error) return <ErrorState error={paths.error} />;
     const rows = paths.data || [];
+    const flow = buildPathFlow(rows);
+    const totalMoves = flow.links.reduce(
+      (sum, link) => sum + link.value,
+      0,
+    );
     return (
       <Stack spacing={2}>
         <Card sx={{ p: 2.5 }}>
-          <Typography fontWeight={700}>상위 사용자 이동</Typography>
-          <Typography variant="body2" color="text.secondary" mb={2}>
-            동일 세션에서 연속으로 발생한 페이지·이벤트 전환입니다.
-          </Typography>
-          <ReactECharts
-            style={{ height: 480 }}
-            option={{
-              tooltip: {},
-              series: [
-                {
-                  type: "sankey",
-                  layout: "none",
-                  emphasis: { focus: "adjacency" },
-                  lineStyle: {
-                    color: "gradient",
-                    curveness: 0.5,
-                    opacity: 0.25,
-                  },
-                  data: Array.from(
-                    new Set(
-                      rows.flatMap((r) => [String(r.source), String(r.target)]),
-                    ),
-                  )
-                    .slice(0, 60)
-                    .map((name) => ({ name })),
-                  links: rows
-                    .map((r) => ({
-                      source: r.source,
-                      target: r.target,
-                      value: r.count,
-                    }))
-                    .filter((x) => x.source !== x.target),
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            justifyContent="space-between"
+            alignItems={{ sm: "flex-start" }}
+            gap={1.5}
+            mb={2}
+          >
+            <Box>
+              <Typography fontWeight={700}>상위 사용자 이동</Typography>
+              <Typography variant="body2" color="text.secondary">
+                동일 세션에서 연속으로 발생한 페이지·이벤트 전환입니다.
+              </Typography>
+            </Box>
+            <Stack direction="row" gap={0.75} flexWrap="wrap">
+              <Chip size="small" label={`전환 ${flow.links.length}개`} />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`이동 ${totalMoves.toLocaleString()}회`}
+              />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`${environment.toUpperCase()} · 최근 30일`}
+              />
+            </Stack>
+          </Stack>
+          {flow.links.length ? (
+            <ReactECharts
+              style={{ height: 480 }}
+              option={{
+                tooltip: {
+                  formatter: (params: {
+                    dataType: string;
+                    data: {
+                      displayName?: string;
+                      sourceName?: string;
+                      targetName?: string;
+                      value?: number;
+                    };
+                  }) =>
+                    params.dataType === "edge"
+                      ? `${params.data.sourceName} → ${params.data.targetName}<br/>${Number(params.data.value || 0).toLocaleString()}회`
+                      : params.data.displayName || "",
                 },
-              ],
-            }}
-          />
+                series: [
+                  {
+                    type: "sankey",
+                    layout: "none",
+                    nodeAlign: "justify",
+                    emphasis: { focus: "adjacency" },
+                    label: {
+                      formatter: (params: { data: PathNode }) =>
+                        params.data.displayName,
+                    },
+                    lineStyle: {
+                      color: "gradient",
+                      curveness: 0.5,
+                      opacity: 0.25,
+                    },
+                    data: flow.nodes,
+                    links: flow.links,
+                  },
+                ],
+              }}
+            />
+          ) : (
+            <Empty
+              title="표시할 이동 경로가 없습니다"
+              description="선택한 환경에서 한 세션에 두 개 이상의 이벤트가 수집되면 경로가 표시됩니다."
+            />
+          )}
         </Card>
         <DataTable
           columns={[

@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.7.0
+- **문서 버전**: v0.8.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -162,9 +162,13 @@ Event가 수신 시각보다 한 시간 이상 과거이면 Momento는 Site Time
 
 ## 17. 관리 센터 운영 UX
 
-- `관리 센터`는 관리 홈을 시작점으로 서비스 설정, 보안·데이터, 접근 제어, Tracking 설계, 운영 도구를 업무 단위로 구분합니다.
+- `관리 센터` 홈은 현재 Site·Environment의 7일 데이터 품질, 수신·대기·오류, Privacy Request와 Aggregate Job을 운영 브리핑으로 제공합니다.
+- 운영 준비도는 활성 Site, Origin 제한, URL Query 제거, PII 값 정책, 관리자 이중화, OIDC 상태를 점검하며 각 미충족 항목에서 설정 화면으로 바로 이동할 수 있습니다.
+- 조치 필요 목록은 수집 오류·Dead Letter·재집계 실패를 Critical로, 개인정보 승인 대기·품질 저하·보안 권고를 Warning/Info로 분류합니다.
+- 개인정보 화면에서 PII 값 탐지 정책을 `detect`, `warn`, `mask`, `reject`로 변경할 수 있으며 허용되지 않은 값은 서버가 거부합니다.
+- `관리 센터`는 서비스 설정, 보안·데이터, 접근 제어, Tracking 설계, 운영 도구를 업무 단위로 구분합니다.
 - 각 설정은 `/admin?section=...` 형태의 URL을 가지므로 담당자에게 정확한 관리 화면을 공유하거나 Bookmark할 수 있습니다.
 - `Ctrl+K` 또는 `Cmd+K` 명령 팔레트에서 사이트, 개인정보, 사용자·권한, Event Schema, Tracking Debugger 등으로 바로 이동할 수 있습니다. 명령은 현재 RBAC 권한에 맞게 노출됩니다.
-- Analytics Engineering은 Metric·Goal, Query Cost, Aggregate, Change Calendar, Catalog·Lineage 탭으로 분리되고 Product Lab은 Feature Flag와 Experiment 탭으로 분리됩니다.
+- Analytics Engineering은 Metric·Goal, Query Cost, Aggregate, Change Calendar, Catalog·Lineage 탭으로 분리되고 Product Lab은 Feature Flag와 Experiment 탭으로 분리됩니다. `?panel=aggregate`, `?panel=experiments`처럼 탭 URL도 공유할 수 있습니다.
 - Full Aggregate Rebuild와 개인정보 삭제 승인은 실행 전 환경과 영향 범위를 다시 확인하는 Dialog를 표시합니다. Privacy Request의 요청·승인 분리와 Audit 기록 원칙은 그대로 유지됩니다.
 - 공통 관리 표는 검색, 페이지네이션, CSV 내보내기를 제공하며 빈 결과, Loading Skeleton, 오류와 재시도 상태를 일관되게 표시합니다.

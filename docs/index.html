@@ -47,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.7.0",
+      "softwareVersion": "0.8.0",
       "description": "사내 Web/App 사용 현황을 Raw Event 수준에서 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -373,7 +373,7 @@ PII Filter & Key Check  OIDC Discovery / JWKS
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🛡️</div>
                         <h4>개인정보 필터 정책</h4>
-                        <p>관리자 콘솔에서 차단할 Property key와 마스킹할 URL Parameter를 설정합니다. 값 자체의 정규식 탐지는 제공하지 않습니다.</p>
+                        <p>차단할 Property key와 URL 정책을 관리하며 PII 값 패턴을 Detect, Warn, Mask 또는 Reject로 처리합니다.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">📝</div>
@@ -471,12 +471,12 @@ docker compose up --build
                         <h4>📦 오프라인 번들 (.tar.gz)</h4>
                         <p>인터넷 통신이 완전히 차단된 사내 폐쇄망 환경을 위한 오프라인 Docker 이미지 아카이브를 제공합니다.</p>
 <pre><code># 릴리스 아카이브 로드
-gzip -dc momento-v0.7.0.tar.gz | docker load
+gzip -dc momento-v0.8.0.tar.gz | docker load
 
 # 폐쇄망 컨테이너 실행
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.7.0</code></pre>
+  momento-v0.8.0</code></pre>
                     </div>
                 </div>
             </div>

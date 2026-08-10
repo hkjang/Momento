@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.8.0
+
+- Fixed Path Analysis rendering failures when real journeys contained bidirectional or cyclic transitions by projecting origins and destinations into separate acyclic graph layers.
+- Kept Sankey nodes and links under the same top-transition limit, preventing links from referencing omitted nodes, and added a contextual empty state plus movement summaries.
+- Added an operational briefing to Administration with a readiness score, seven-day collection and quality metrics, pending workflow counts, and manual refresh.
+- Added a severity-ordered action queue for collector failures, dead letters, failed aggregate jobs, pending privacy requests, data quality degradation, unrestricted origins, administrator redundancy, SSO, and inactive SDK collection.
+- Added readiness checks for collection boundaries, URL privacy, value-based PII policy, administrator redundancy, and Enterprise SSO with direct remediation links.
+- Added recent administrator activity to the control plane and shareable deep links for Analytics Engineering and Product Lab panels.
+- Added a first-class PII value-detection policy editor with server-side validation for `detect`, `warn`, `mask`, and `reject`.
+- Added browser-console regression tests for cyclic Path data and graph node/link consistency, and included them in local and CI verification.
+- Preserved the v0.7.0 database, SDK, collector, tracking protocol, REST/OpenAPI, privacy, and three-environment-variable runtime contracts.
+
 ## v0.7.0
 
 - Reorganized the console into role-aware, collapsible navigation groups for monitoring, web, product, exploration, experience, and AI analytics.

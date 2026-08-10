@@ -17,6 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { get, post, put } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
@@ -39,7 +40,14 @@ export default function EnterpriseAdminPage({
 function AnalyticsEngineering() {
   const { site, environment } = useSite();
   const qc = useQueryClient();
-  const [panel, setPanel] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const panelNames = ["metrics", "query-cost", "aggregate", "calendar", "catalog"];
+  const requestedPanel = panelNames.indexOf(params.get("panel") || "metrics");
+  const panel = requestedPanel < 0 ? 0 : requestedPanel;
+  const selectPanel = (value: number) => {
+    if (value === 0) setParams({});
+    else setParams({ panel: panelNames[value] });
+  };
   const [confirmRebuild, setConfirmRebuild] = useState(false);
   const metrics = useQuery({
     queryKey: ["semantic-metrics", site?.site_id],
@@ -235,7 +243,7 @@ function AnalyticsEngineering() {
       <Card sx={{ px: 1, overflow: "hidden" }}>
         <Tabs
           value={panel}
-          onChange={(_, value) => setPanel(value)}
+          onChange={(_, value) => selectPanel(value)}
           variant="scrollable"
           scrollButtons="auto"
         >
@@ -1019,7 +1027,14 @@ function PrivacyRequests() {
 function ProductLab() {
   const { site, environment } = useSite();
   const qc = useQueryClient();
-  const [panel, setPanel] = useState(0);
+  const [params, setParams] = useSearchParams();
+  const panelNames = ["flags", "experiments"];
+  const requestedPanel = panelNames.indexOf(params.get("panel") || "flags");
+  const panel = requestedPanel < 0 ? 0 : requestedPanel;
+  const selectPanel = (value: number) => {
+    if (value === 0) setParams({});
+    else setParams({ panel: panelNames[value] });
+  };
   const flags = useQuery({
     queryKey: ["feature-flags", site?.site_id],
     enabled: !!site,
@@ -1108,7 +1123,7 @@ function ProductLab() {
       <Card sx={{ px: 1, overflow: "hidden" }}>
         <Tabs
           value={panel}
-          onChange={(_, value) => setPanel(value)}
+          onChange={(_, value) => selectPanel(value)}
           variant="scrollable"
           scrollButtons="auto"
         >

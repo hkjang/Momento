@@ -10,7 +10,7 @@ test:
 	go test ./cmd/... ./internal/...
 	go vet ./cmd/... ./internal/...
 	cd sdk && npm run typecheck && npm test
-	cd web && npm run lint && npm run build
+	cd web && npm run lint && npm test && npm run build
 
 build:
 	cd sdk && npm run build

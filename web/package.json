@@ -1,12 +1,13 @@
 {
   "name": "momento-console",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

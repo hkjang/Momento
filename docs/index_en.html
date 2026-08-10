@@ -47,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.7.0",
+      "softwareVersion": "0.8.0",
       "description": "Self-hosted, on-premise event analytics platform that collects and analyzes raw event data from enterprise applications.",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -364,7 +364,7 @@ PII Filter & Key Check  OIDC Discovery / JWKS
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">🛡️</div>
                         <h4>Privacy Filter Rules</h4>
-                        <p>Configure blocked property keys and masked URL parameters in the admin console. Value-pattern detection is not provided.</p>
+                        <p>Configure blocked property keys and URL policies, then Detect, Warn, Mask, or Reject value-based PII patterns.</p>
                     </div>
                     <div class="security-card fade-up-element">
                         <div class="sec-icon">📝</div>
@@ -462,12 +462,12 @@ docker compose up --build
                         <h4>📦 Offline Archive (.tar.gz)</h4>
                         <p>Docker image bundle for air-gapped corporate networks without internet access.</p>
 <pre><code># Load the release archive
-gzip -dc momento-v0.7.0.tar.gz | docker load
+gzip -dc momento-v0.8.0.tar.gz | docker load
 
 # Run in air-gapped environment
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.7.0</code></pre>
+  momento-v0.8.0</code></pre>
                     </div>
                 </div>
             </div>

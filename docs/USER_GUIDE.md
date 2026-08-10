@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.7.0
+- **문서 버전**: v0.8.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
 
@@ -141,7 +141,7 @@ Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의
 - 서비스 진입 ➔ 주요 기능 탐색 ➔ 최종 결재/제출까지 단계별 전환율 및 이탈율(Drop-off) 시각화.
 
 ### 3.3 사용자 경로 분석 (Path Analysis)
-- 진입 페이지부터 이탈 페이지까지의 이동 경로를 Sankey 다이어그램으로 분석.
+- 동일 Session에서 연속으로 발생한 Page·Event 이동을 시작/도착 두 계층 Sankey 다이어그램으로 분석합니다. 왕복 이동도 안전하게 표시하며 현재 Environment의 최근 30일 전환 수와 이동 횟수를 함께 제공합니다.
 
 ### 3.4 Segment와 저장된 Exploration
 - Segment 화면에서 최대 5단계의 중첩 `AND`/`OR` 조건과 14개 연산자를 조합합니다.

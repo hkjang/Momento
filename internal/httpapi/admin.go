@@ -522,6 +522,13 @@ func validateAdminSetting(key string, value map[string]any) error {
 		if err := number("debug_retention_days", 1, 90); err != nil {
 			return err
 		}
+		if mode, ok := value["pii_detection_mode"].(string); ok {
+			if !map[string]bool{"detect": true, "warn": true, "mask": true, "reject": true}[mode] {
+				return fmt.Errorf("pii_detection_mode must be detect, warn, mask, or reject")
+			}
+		} else if value["pii_detection_mode"] != nil {
+			return fmt.Errorf("pii_detection_mode must be a string")
+		}
 	case "security":
 		if err := number("collector_rate_limit_per_minute", 1, 1000000); err != nil {
 			return err
