@@ -44,6 +44,7 @@ import LogoutRounded from "@mui/icons-material/LogoutRounded";
 import ManageAccountsRounded from "@mui/icons-material/ManageAccountsRounded";
 import MenuRounded from "@mui/icons-material/MenuRounded";
 import MouseOutlined from "@mui/icons-material/MouseOutlined";
+import InsightsOutlined from "@mui/icons-material/InsightsOutlined";
 import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
 import ScheduleOutlined from "@mui/icons-material/ScheduleOutlined";
 import PersonOutlineRounded from "@mui/icons-material/PersonOutlineRounded";
@@ -93,6 +94,13 @@ const navGroups: NavGroup[] = [
         description: "최근 30분 활성 사용자",
         icon: <BoltRounded />,
         keywords: "realtime active",
+      },
+      {
+        to: "/visitor-insights",
+        label: "방문자 인사이트",
+        description: "전기간 대비 요약과 다음 행동",
+        icon: <InsightsOutlined />,
+        keywords: "visitor insight audience channel landing bounce 방문자 인사이트 채널 이탈",
       },
       {
         to: "/workspace",

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
+	"github.com/hkjang/Momento/internal/insight"
 	"github.com/hkjang/Momento/internal/version"
 )
 
@@ -58,6 +59,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"name": "analyze_frustration", "description": "Rage Click, Dead Click, 오류, 재시도 등 Frustration 신호를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "get_metric_goals", "description": "Semantic Metric에 연결된 목표와 현재 달성 상태를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}}, "required": []string{"site_id"}}},
 			map[string]any{"name": "get_event_catalog", "description": "이벤트 계약의 소유자, 버전, 최근 사용량과 상태를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}}, "required": []string{"site_id"}}},
+			map[string]any{"name": "get_visitor_insights", "description": "방문자 인사이트를 한 번에 조회합니다: 전기간 대비 KPI, 신규·재방문, 채널 그룹, 진입 페이지, 방문 빈도·최근성, 기기, 실행 대상 Segment와 우선순위 인사이트.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "ask_analytics", "description": "완전 오프라인 Semantic Parser로 한국어·영어 분석 질문에 답합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]string{"type": "string"}, "question": map[string]string{"type": "string"}}, "required": []string{"site_id", "question"}}},
 		}
 		writeJSON(w, 200, rpcResult(req.ID, map[string]any{"tools": tools}))
@@ -83,7 +85,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		return
 	}
 	var from, to time.Time
-	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" || call.Name == "query_semantic_metric" || call.Name == "analyze_retention" || call.Name == "analyze_feature_adoption" || call.Name == "analyze_experience" || call.Name == "analyze_ai_operations" || call.Name == "inspect_data_quality" || call.Name == "get_workspace_rollup" || call.Name == "get_feature_scores" || call.Name == "analyze_search" || call.Name == "analyze_frustration" {
+	if call.Name == "query_metrics" || call.Name == "analyze_internal_usage" || call.Name == "query_ecommerce" || call.Name == "query_semantic_metric" || call.Name == "analyze_retention" || call.Name == "analyze_feature_adoption" || call.Name == "analyze_experience" || call.Name == "analyze_ai_operations" || call.Name == "inspect_data_quality" || call.Name == "get_workspace_rollup" || call.Name == "get_feature_scores" || call.Name == "analyze_search" || call.Name == "analyze_frustration" || call.Name == "get_visitor_insights" {
 		var rangeErr error
 		from, to, rangeErr = s.explicitDateRange(r.Context(), siteID, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to"))
 		if rangeErr != nil {
@@ -99,6 +101,21 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			return
 		}
 		body, _ := json.MarshalIndent(metricMap(m), "", "  ")
+		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
+	case "get_visitor_insights":
+		environment := stringArgDefault(call.Arguments, "environment", "prd")
+		_, location, tzErr := s.siteTimezone(r.Context(), siteID)
+		if tzErr != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(tzErr.Error(), true)))
+			return
+		}
+		previousFrom, previousTo := previousDateRange(from, to, location)
+		report, err := insight.New(s.DB).Build(r.Context(), siteID, environment, from, to, previousFrom, previousTo)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		body, _ := json.MarshalIndent(report, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_internal_usage":
 		dim := stringArg(call.Arguments, "dimension")

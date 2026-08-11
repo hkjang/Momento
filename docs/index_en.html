@@ -47,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.9.0",
+      "softwareVersion": "0.10.0",
       "description": "Self-hosted, on-premise event analytics platform that collects and analyzes raw event data from enterprise applications.",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -462,12 +462,12 @@ docker compose up --build
                         <h4>📦 Offline Archive (.tar.gz)</h4>
                         <p>Docker image bundle for air-gapped corporate networks without internet access.</p>
 <pre><code># Load the release archive
-gzip -dc momento-v0.9.0.tar.gz | docker load
+gzip -dc momento-v0.10.0.tar.gz | docker load
 
 # Run in air-gapped environment
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.9.0</code></pre>
+  momento-v0.10.0</code></pre>
                     </div>
                 </div>
             </div>

@@ -30,6 +30,7 @@ Content-Type: application/json
 - `analyze_frustration`: Rage/Dead Click·재시도·오류·느린 상호작용 신호
 - `get_metric_goals`: Semantic Metric 목표와 관리 범위
 - `get_event_catalog`: Event Owner·Contract Version·Volume·Last Seen
+- `get_visitor_insights`: 방문자 인사이트 전체 보고서. 전기간 대비 KPI, 신규·재방문, 채널 그룹, 진입 페이지, 방문 빈도·최근성, 기기, 실행 대상 Segment와 우선순위 인사이트를 한 번에 반환
 - `ask_analytics`: 외부 LLM 호출 없는 오프라인 한국어/영어 Analytics 질의
 
 초기화 예제:

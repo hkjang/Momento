@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.9.0
+  version: 0.10.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -376,6 +376,11 @@ paths:
     get:
       summary: Model, Agent, MCP and Tool usage, latency, tokens and cost
       responses: {'200': {description: AI operations analytics}}
+  /api/v1/sites/{siteId}/visitor-insights:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Visitor insight report with previous-period comparison, channel grouping, landing pages, frequency and recency, devices, actionable audiences and ranked findings
+      responses: {'200': {description: Visitor insight report}, '404': {$ref: '#/components/responses/Error'}}
   /api/v1/sites/{siteId}/insights:
     parameters:
       - {$ref: '#/components/parameters/SiteId'}

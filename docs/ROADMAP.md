@@ -79,9 +79,18 @@
 - 수집 수신·CSP·허용 도메인·환경 일치·적재 파이프라인·키 저장 상태를 함께 보고하는 설치 진단 API와 콘솔
 - 콘솔에서 사용 가능해진 Session 리포트, Raw Event Export, Delivery 이력·삭제, Event Contract 활성화·CI 검증, Semantic Metric 조회, Workspace Business Journey
 
+## v0.10 — implemented
+
+- 방문자 인사이트 보고서: 이전 동일 기간 자동 비교 KPI, 신규·재방문 구조, 방문 빈도·최근 활동 분포, 기기 격차
+- Source·Medium을 Direct/Organic/Paid/Email/Social/Referral/Internal Portal·Notice·Message/Display로 분류하는 채널 그룹
+- 진입 페이지 이탈률·참여율·전환율과 세션 비중
+- 근거·원인 후보·다음 행동을 함께 제시하고 영향 순으로 정렬되는 자동 인사이트
+- 실행 대상 Audience: 반복 방문 미전환, 1회 방문 신규, 휴면, 복귀
+- Markdown 요약 즉시 복사·다운로드, `visitor_insight` Scheduled Report 배달, `get_visitor_insights` MCP 도구
+
 ## Next schema-compatible increments
 
-- First/last/last-non-direct attribution and enterprise channel classification
+- First/last/last-non-direct attribution across channel groups
 - PostgreSQL 월별 Partition 전환과 Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation

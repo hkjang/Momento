@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.10.0
+
+- Added a Visitor Insights report that pairs every visitor metric with the previous equivalent period and states the conclusion first: ranked findings that each carry their evidence, a likely cause, and the next action.
+- Added default channel grouping over source and medium, including the internal portal, notice and messenger channels an on-premise employee deployment needs, plus a distinct `Direct (사내망)` group for corporate-network visits without acquisition data.
+- Added new-versus-returning lifecycle structure, visit frequency and recency distributions, landing page bounce and conversion analysis, and device conversion gap detection.
+- Added actionable audiences with counts and recommended next steps: repeat visitors who never convert, first-time visitors who never return, users active only in the previous period, and users returning from dormancy.
+- Added one-click takeaway of the whole report as Markdown through clipboard copy and file download, with per-table CSV export retained.
+- Added the `visitor_insight` scheduled report kind so the same report is delivered to webhook, mail, Confluence, internal messaging and AI agent channels, and the `get_visitor_insights` MCP tool so an agent can pull it directly.
+- Added a goal-aware comparison so metrics whose direction is ambiguous, such as the share of first-time visitors, are no longer coloured as progress or regression.
+- Extracted the report into `internal/insight` so the console, MCP surface and scheduled delivery share one narrative, and covered the classification, thresholds and digest rendering with unit tests.
+- Preserved the v0.9.0 database, SDK, collector, tracking protocol, REST/OpenAPI and privacy contracts; no migration and no new environment variable.
+
 ## v0.9.0
 
 - Added `MOMENTO_ENCRYPTION_KEY` (with the shared `ENCRYPTION_KEY` alias) so personal API keys, site tracking keys, server API keys, OIDC client secrets, and delivery channel headers are stored with AES-256-GCM and survive a restart instead of being lost or re-entered.

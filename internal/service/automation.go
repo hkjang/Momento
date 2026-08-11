@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/Momento/internal/insight"
 	"github.com/hkjang/Momento/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -211,6 +212,14 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 			return nil, err
 		}
 		data = map[string]any{"calls": calls, "users": users, "input_tokens": inputTokens, "output_tokens": outputTokens}
+	case "visitor_insight":
+		// Deliver the same visitor insight report the console shows, so a mailed or
+		// Confluence-published digest needs no manual assembly.
+		report, err := insight.New(a.DB).Build(ctx, delivery.SiteID, environment, from, to, from.Add(-to.Sub(from)), from)
+		if err != nil {
+			return nil, err
+		}
+		data = report
 	case "segment":
 		eventName, _ := definition["event_name"].(string)
 		feature, _ := definition["feature"].(string)

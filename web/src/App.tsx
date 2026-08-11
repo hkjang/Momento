@@ -6,6 +6,7 @@ import LoginPage from "./pages/LoginPage";
 import AppShell from "./components/AppShell";
 import OverviewPage from "./pages/OverviewPage";
 import RealtimePage from "./pages/RealtimePage";
+import VisitorInsightsPage from "./pages/VisitorInsightsPage";
 import UsagePage from "./pages/UsagePage";
 import ReportPage from "./pages/ReportPage";
 import ExplorerPage from "./pages/ExplorerPage";
@@ -35,6 +36,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<OverviewPage />} />
           <Route path="/realtime" element={<RealtimePage />} />
+          <Route path="/visitor-insights" element={<VisitorInsightsPage />} />
           <Route path="/usage" element={<UsagePage />} />
           <Route
             path="/acquisition"

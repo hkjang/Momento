@@ -169,6 +169,7 @@ func (s *Server) Handler() http.Handler {
 		api.Get("/api/v1/sites/{siteID}/experience", s.experienceReport)
 		api.Get("/api/v1/sites/{siteID}/ai-analytics", s.aiAnalyticsReport)
 		api.Get("/api/v1/sites/{siteID}/insights", s.insightsReport)
+		api.Get("/api/v1/sites/{siteID}/visitor-insights", s.visitorInsights)
 		api.Post("/api/v1/sites/{siteID}/natural-query", s.naturalLanguageAnalytics)
 		api.Get("/api/v1/sites/{siteID}/delivery-channels", s.admin(s.listDeliveryChannels))
 		api.Post("/api/v1/sites/{siteID}/delivery-channels", s.admin(s.saveDeliveryChannel))

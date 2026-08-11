@@ -181,7 +181,7 @@ func (s *Server) listScheduledReports(w http.ResponseWriter, r *http.Request) {
 
 func validReportKind(value string) bool {
 	switch value {
-	case "overview", "adoption", "experience", "ai", "segment", "insights":
+	case "overview", "adoption", "experience", "ai", "segment", "insights", "visitor_insight":
 		return true
 	default:
 		return false

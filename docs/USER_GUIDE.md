@@ -160,6 +160,21 @@ router.on('routeChangeComplete', () => {
 
 Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의미합니다. API는 `conversion_users`, `conversion_sessions`, `user_conversion_rate`, `session_conversion_rate`를 모두 제공합니다. 날짜는 관리자에게 설정된 Site Timezone 기준이며, 저장 Timestamp 자체는 UTC입니다.
 
+### 3.0 방문자 인사이트 (Visitor Insights)
+
+좌측 `모니터링 → 방문자 인사이트`는 여러 화면을 순회하지 않고 방문자 상황과 다음 행동을 한 화면에서 확인하는 요약 보고서입니다. 모든 지표는 **이전 동일 기간과 자동 비교**됩니다.
+
+- **핵심 인사이트**: 영향이 큰 순서로 정렬되며 각 항목이 `근거 → 원인 후보 → 다음 행동`을 함께 제시합니다. 방문자 급증·급감(주도 채널 지목), 신규·재방문 전환율 격차, 참여율 하락, 이탈률 높은 진입 페이지, 기기 간 전환율 격차, 채널 전환율 편차, 반복 방문 미전환, 휴면 전환을 감지합니다.
+- **지표**: 방문자, 신규·재방문, 신규 비중, 세션, 1인당 방문 횟수, 세션당 페이지뷰, 참여율, 평균 체류 시간, 사용자 전환율. 신규 비중처럼 방향이 모호한 지표는 증감을 성과 색으로 표시하지 않습니다.
+- **유입 채널**: Source·Medium을 Direct, Organic Search, Paid Search, Email, Social, Referral, Internal Portal, Internal Notice, Internal Message, Display, Other로 분류합니다. 사내망에서 유입 정보가 없는 방문은 `Direct (사내망)`으로 구분합니다.
+- **진입 페이지**: 세션 비중과 이탈률, 참여율, 전환율, 평균 체류를 함께 제공해 비중이 큰데 이탈률이 높은 페이지를 먼저 찾습니다.
+- **방문 빈도·최근 활동**: 1회 / 2~3회 / 4~9회 / 10회 이상, 그리고 최근 1일 / 2~7일 / 8~30일 / 31일 이상 미활동으로 나눠 충성도와 휴면 위험을 봅니다.
+- **실행 대상**: `3회 이상 방문했지만 미전환`, `한 번만 방문한 신규`, `이전 기간에만 활동(휴면)`, `휴면 후 복귀` 인원과 권장 조치를 제시합니다. 같은 조건으로 Segment를 만들어 Action으로 연결할 수 있습니다.
+
+**바로 가져가기**: 우측 상단 `요약 복사`는 결론·근거·표를 포함한 Markdown을 클립보드에 넣고, `Markdown`은 같은 내용을 파일로 내려받습니다. 각 표는 CSV로 내보낼 수 있습니다. 관리자 → Action의 Scheduled Report에서 `visitor_insight` 종류를 선택하면 같은 보고서를 Webhook·Mail·Confluence·사내 메시지·AI Agent로 정기 배달하고, MCP 도구 `get_visitor_insights`로 AI Agent가 직접 가져갈 수 있습니다.
+
+채널·기기별 사용자 합계는 한 사용자가 여러 채널로 방문하면 중복될 수 있고, 신규 판정은 선택한 환경의 전체 수집 이력을 기준으로 합니다.
+
 ### 3.1 쿼리 빌더 (Query Builder)
 1. **필터링 조건**: 날짜 범위, 부서, 특정 이벤트명, 커스텀 속성(Key-Value) 조건 설정.
 2. **그룹핑 (GroupBy)**: `department`별 또는 `browser`별 시계열 집계 그래프 생성.

@@ -31,19 +31,25 @@ export default function MetricCard({
   previous,
   type,
   icon,
+  tone,
 }: {
   label: string;
   value: number;
   previous?: number;
   type?: "percent" | "duration" | "currency";
   icon?: ReactNode;
+  /**
+   * Overrides the direction-based colouring for metrics where up is not progress,
+   * such as the share of first-time visitors.
+   */
+  tone?: "good" | "bad" | "flat";
 }) {
   const change =
     previous && previous !== 0
       ? ((value - previous) / Math.abs(previous)) * 100
       : 0;
-  const positive = change > 0.05;
-  const negative = change < -0.05;
+  const positive = tone ? tone === "good" : change > 0.05;
+  const negative = tone ? tone === "bad" : change < -0.05;
   return (
     <Card sx={{ p: 2.3, minWidth: 0 }}>
       <Stack
@@ -85,9 +91,9 @@ export default function MetricCard({
           <Chip
             size="small"
             icon={
-              positive ? (
+              change > 0.05 ? (
                 <NorthEastRounded />
-              ) : negative ? (
+              ) : change < -0.05 ? (
                 <SouthEastRounded />
               ) : (
                 <RemoveRounded />
