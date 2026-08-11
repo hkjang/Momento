@@ -14,6 +14,7 @@ import (
 	"github.com/hkjang/Momento/internal/config"
 	"github.com/hkjang/Momento/internal/database"
 	"github.com/hkjang/Momento/internal/httpapi"
+	"github.com/hkjang/Momento/internal/secret"
 	"github.com/hkjang/Momento/internal/service"
 	"github.com/hkjang/Momento/internal/version"
 )
@@ -37,6 +38,16 @@ func main() {
 		logger.Error("migration failed", "error", err)
 		os.Exit(1)
 	}
+	secrets, err := secret.New(cfg.EncryptionKey, cfg.PreviousEncryptionKeys...)
+	if err != nil {
+		logger.Error("encryption key rejected", "error", err)
+		os.Exit(1)
+	}
+	if secrets.Enabled() {
+		logger.Info("secret encryption enabled", "key_id", secrets.KeyID(), "previous_keys", len(secrets.PreviousKeyIDs()))
+	} else {
+		logger.Warn("secret encryption disabled: set MOMENTO_ENCRYPTION_KEY so API keys stay readable after a restart")
+	}
 	authService := auth.Service{DB: db}
 	if err := authService.Bootstrap(ctx, cfg.BootstrapAdmin, cfg.BootstrapPassword); err != nil {
 		logger.Error("bootstrap failed", "error", err)
@@ -49,10 +60,10 @@ func main() {
 			break
 		}
 	}
-	api := httpapi.New(db, webFS, logger)
+	api := httpapi.New(db, webFS, logger, secrets)
 	worker := service.Worker{DB: db}
 	go worker.Run(ctx)
-	automation := service.Automation{DB: db, Logger: logger}
+	automation := service.Automation{DB: db, Logger: logger, Secrets: secrets}
 	go automation.Run(ctx)
 	maintenance := service.Maintenance{DB: db, Logger: logger}
 	go maintenance.Run(ctx)

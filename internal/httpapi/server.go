@@ -13,7 +13,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
+	"github.com/hkjang/Momento/internal/secret"
 	"github.com/hkjang/Momento/internal/service"
 	"github.com/hkjang/Momento/internal/version"
 	"github.com/jackc/pgx/v5"
@@ -34,17 +37,19 @@ type Server struct {
 	DB              *pgxpool.Pool
 	Auth            auth.Service
 	Collector       service.CollectorService
+	Secrets         *secret.Cipher
 	Web             fs.FS
 	Logger          *slog.Logger
 	Limiter         *rateLimiter
 	LoginLimiter    *rateLimiter
 	securityMu      sync.RWMutex
 	trustedProxies  []*net.IPNet
+	connectOrigins  []string
 	maxPayloadBytes int64
 }
 
-func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger) *Server {
-	server := &Server{DB: db, Auth: auth.Service{DB: db}, Collector: service.CollectorService{DB: db}, Web: web, Logger: logger, Limiter: newRateLimiter(6000), LoginLimiter: newRateLimiter(10)}
+func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger, secrets *secret.Cipher) *Server {
+	server := &Server{DB: db, Auth: auth.Service{DB: db}, Collector: service.CollectorService{DB: db}, Secrets: secrets, Web: web, Logger: logger, Limiter: newRateLimiter(6000), LoginLimiter: newRateLimiter(10)}
 	var limit int
 	if db.QueryRow(context.Background(), `SELECT coalesce((value->>'collector_rate_limit_per_minute')::int,6000) FROM settings WHERE key='security'`).Scan(&limit) == nil {
 		server.Limiter.SetLimit(limit)
@@ -55,10 +60,10 @@ func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger) *Server {
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(s.recoverer, s.requestLog, securityHeaders)
+	r.Use(s.recoverer, s.requestLog, s.securityHeaders)
 	r.Get("/health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/health/ready", s.ready)
-	r.Get("/api/v1/version", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, version.Current()) })
+	r.Get("/api/v1/version", versionInfo)
 	r.Get("/api/v1/auth/options", s.authOptions)
 	r.Post("/api/v1/auth/login", s.login)
 	r.Post("/api/v1/auth/logout", s.logout)
@@ -75,13 +80,18 @@ func (s *Server) Handler() http.Handler {
 		api.Post("/api/v1/me/keys", s.sessionOnly(s.createMyKey))
 		api.Delete("/api/v1/me/keys/{id}", s.sessionOnly(s.deleteMyKey))
 		api.Post("/api/v1/me/keys/{id}/rotate", s.sessionOnly(s.rotateMyKey))
+		api.Post("/api/v1/me/keys/{id}/reveal", s.sessionOnly(s.revealMyKey))
+		api.Get("/api/v1/system/encryption", s.admin(s.encryptionStatus))
+		api.Post("/api/v1/system/encryption/rekey", s.admin(s.sessionOnly(s.rekeySecrets)))
 		api.Get("/api/v1/sites", s.listSites)
 		api.Post("/api/v1/sites", s.admin(s.createSite))
 		api.Patch("/api/v1/sites/{id}", s.admin(s.updateSite))
 		api.Delete("/api/v1/sites/{id}", s.admin(s.deleteSite))
 		api.Post("/api/v1/sites/{id}/rotate-key", s.admin(s.rotateSiteKey))
 		api.Post("/api/v1/sites/{id}/rotate-server-key", s.admin(s.rotateServerKey))
+		api.Post("/api/v1/sites/{id}/reveal-keys", s.admin(s.sessionOnly(s.revealSiteKeys)))
 		api.Get("/api/v1/sites/{id}/tracking-code", s.trackingCode)
+		api.Get("/api/v1/sites/{siteID}/install-diagnostics", s.installDiagnostics)
 		api.Get("/api/v1/settings", s.admin(s.listSettings))
 		api.Put("/api/v1/settings/{key}", s.admin(s.putSetting))
 		api.Get("/api/v1/networks", s.admin(s.listNetworks))
@@ -229,15 +239,67 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]string{"status": "ready"})
 }
-func securityHeaders(next http.Handler) http.Handler {
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		if !strings.HasPrefix(r.URL.Path, "/collect/") {
+			w.Header().Set("Content-Security-Policy", contentSecurityPolicy(s.consoleConnectOrigins()))
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// contentSecurityPolicy builds the console policy. The console only talks to its
+// own origin, but an operator can allow extra collector or gateway origins when
+// the console is published under a different host than the collector.
+func contentSecurityPolicy(extraConnect []string) string {
+	connect := append([]string{"'self'"}, extraConnect...)
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src 'self'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data:",
+		"font-src 'self' data:",
+		"connect-src " + strings.Join(connect, " "),
+		"object-src 'none'",
+		"base-uri 'self'",
+		"frame-ancestors 'none'",
+		"form-action 'self'",
+	}, "; ")
+}
+
+// normalizeConnectOrigin keeps only scheme://host[:port], because CSP source
+// expressions must not carry a path, query or fragment.
+func normalizeConnectOrigin(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if trimmed == "ws:" || trimmed == "wss:" || trimmed == "https:" {
+		return trimmed
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	switch parsed.Scheme {
+	case "http", "https", "ws", "wss":
+	default:
+		return ""
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func (s *Server) consoleConnectOrigins() []string {
+	s.securityMu.RLock()
+	defer s.securityMu.RUnlock()
+	return s.connectOrigins
 }
 func (s *Server) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,6 +423,7 @@ func (s *Server) reloadSecurity(ctx context.Context) {
 		Trusted    []string `json:"trusted_proxy_cidrs"`
 		Limit      int      `json:"collector_rate_limit_per_minute"`
 		MaxPayload int64    `json:"max_payload_bytes"`
+		Connect    []string `json:"additional_connect_origins"`
 	}
 	if json.Unmarshal(raw, &cfg) != nil {
 		return
@@ -372,8 +435,23 @@ func (s *Server) reloadSecurity(ctx context.Context) {
 			ranges = append(ranges, network)
 		}
 	}
+	origins := []string{}
+	var publicURL string
+	if s.DB.QueryRow(ctx, `SELECT coalesce(value->>'public_url','') FROM settings WHERE key='general'`).Scan(&publicURL) == nil {
+		if origin := normalizeConnectOrigin(publicURL); origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	for _, value := range cfg.Connect {
+		origin := normalizeConnectOrigin(value)
+		if origin == "" || slices.Contains(origins, origin) {
+			continue
+		}
+		origins = append(origins, origin)
+	}
 	s.securityMu.Lock()
 	s.trustedProxies = ranges
+	s.connectOrigins = origins
 	if cfg.MaxPayload < 1024 || cfg.MaxPayload > 10<<20 {
 		cfg.MaxPayload = 256 << 10
 	}
@@ -431,12 +509,23 @@ func (s *Server) requestSecure(r *http.Request) bool {
 }
 
 func (s *Server) authOptions(w http.ResponseWriter, r *http.Request) {
+	preventCaching(w)
 	var raw []byte
 	_ = s.DB.QueryRow(r.Context(), `SELECT value FROM settings WHERE key='oidc'`).Scan(&raw)
 	var v map[string]any
 	_ = json.Unmarshal(raw, &v)
 	enabled, _ := v["enabled"].(bool)
 	writeJSON(w, 200, map[string]any{"local": true, "oidc_enabled": enabled, "version": version.Current()})
+}
+
+func preventCaching(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+}
+
+func versionInfo(w http.ResponseWriter, _ *http.Request) {
+	preventCaching(w)
+	writeJSON(w, http.StatusOK, version.Current())
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !s.LoginLimiter.Allow(clientIP(r)) {
@@ -500,6 +589,11 @@ func (s *Server) loadOIDC(ctx context.Context) (oidcSetting, error) {
 	if !cfg.Enabled {
 		return cfg, errors.New("OIDC is disabled")
 	}
+	plain, err := s.Secrets.Decrypt(cfg.ClientSecret)
+	if err != nil {
+		return cfg, fmt.Errorf("the stored OIDC client secret cannot be decrypted: %w", err)
+	}
+	cfg.ClientSecret = plain
 	return cfg, nil
 }
 func externalURL(r *http.Request) string {

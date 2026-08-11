@@ -1,4 +1,5 @@
-import { Box, Card, Chip, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Card, Stack, Typography } from "@mui/material";
 import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
 import LayersOutlined from "@mui/icons-material/LayersOutlined";
 import VisibilityOutlined from "@mui/icons-material/VisibilityOutlined";
@@ -10,6 +11,7 @@ import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import AnalysisToolbar from "../components/AnalysisToolbar";
 
 interface Metrics {
   users: number;
@@ -41,18 +43,43 @@ interface Overview {
   }[];
 }
 export default function OverviewPage() {
-  const { site } = useSite();
+  const { site, environment } = useSite();
+  const [days, setDays] = useState(30);
   const q = useQuery({
-    queryKey: ["overview", site?.site_id, site?.timezone],
+    queryKey: ["overview", site?.site_id, site?.timezone, environment, days],
     queryFn: () =>
       get<Overview>(
-        `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(days, site!.timezone)}`,
       ),
     enabled: !!site,
   });
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  const toolbar = (
+    <AnalysisToolbar
+      days={days}
+      setDays={setDays}
+      environment={environment}
+      timezone={site.timezone}
+      updatedAt={q.dataUpdatedAt}
+      refreshing={q.isFetching}
+      refresh={() => void q.refetch()}
+      comparePrevious
+    />
+  );
+  if (q.isLoading)
+    return (
+      <Stack spacing={2}>
+        {toolbar}
+        <Loading />
+      </Stack>
+    );
+  if (q.error)
+    return (
+      <Stack spacing={2}>
+        {toolbar}
+        <ErrorState error={q.error} retry={() => q.refetch()} />
+      </Stack>
+    );
   const d = q.data!;
   const cards = [
     { k: "users", l: "사용자", icon: <PeopleAltOutlined /> },
@@ -63,12 +90,7 @@ export default function OverviewPage() {
   ] as const;
   return (
     <Stack spacing={2.5}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
-        <Chip label={`최근 30일 · ${d.timezone}`} variant="outlined" />
-        <Typography variant="caption" color="text.secondary">
-          사이트 시간대 · Raw Event 기준
-        </Typography>
-      </Stack>
+      {toolbar}
       <Box
         sx={{
           display: "grid",

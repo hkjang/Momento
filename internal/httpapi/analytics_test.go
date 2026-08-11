@@ -36,3 +36,22 @@ func TestLocalDateBucketRange(t *testing.T) {
 		t.Fatal("partial-day range must not use daily aggregates")
 	}
 }
+
+func TestNormalizePathView(t *testing.T) {
+	t.Parallel()
+
+	for input, want := range map[string]string{
+		"":       "all",
+		"all":    "all",
+		"pages":  "pages",
+		"events": "events",
+	} {
+		got, err := normalizePathView(input)
+		if err != nil || got != want {
+			t.Fatalf("normalizePathView(%q) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	if _, err := normalizePathView("sessions"); err == nil {
+		t.Fatal("unsupported path view must return an error")
+	}
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPathFlow } from "../src/pages/pathFlow.ts";
+import { buildPathFlow, shortPathLabel } from "../src/pages/pathFlow.ts";
 
 test("왕복 이동을 순환 없는 두 계층 그래프로 변환한다", () => {
   const flow = buildPathFlow([
@@ -35,4 +35,14 @@ test("제한된 링크가 참조하는 노드를 빠짐없이 생성한다", () 
       (link) => nodeNames.has(link.source) && nodeNames.has(link.target),
     ),
   );
+});
+
+test("긴 URL은 차트에서 경로 중심으로 줄이고 원문은 보존한다", () => {
+  const url = "https://service.example.com/approval/documents/very-long-document-name";
+  const flow = buildPathFlow([{ source: url, target: "/done", count: 2 }]);
+
+  assert.equal(flow.nodes[0].displayName, url);
+  assert.equal(flow.nodes[0].shortName, shortPathLabel(url));
+  assert.ok(flow.nodes[0].shortName.startsWith("/approval/"));
+  assert.ok(flow.nodes[0].shortName.endsWith("…"));
 });

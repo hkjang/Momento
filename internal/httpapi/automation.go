@@ -34,7 +34,7 @@ func (s *Server) listDeliveryChannels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT id,name,channel_type,endpoint_url,headers,active,created_at,updated_at FROM delivery_channels WHERE site_id=$1 ORDER BY name`, siteID)
+	rows, err := s.DB.Query(r.Context(), `SELECT id,name,channel_type,endpoint_url,headers,headers_secret,active,created_at,updated_at FROM delivery_channels WHERE site_id=$1 ORDER BY name`, siteID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -45,10 +45,14 @@ func (s *Server) listDeliveryChannels(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var name, kind, endpoint string
 		var headers []byte
+		var sealed *string
 		var active bool
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &kind, &endpoint, &headers, &active, &created, &updated) == nil {
+		if rows.Scan(&id, &name, &kind, &endpoint, &headers, &sealed, &active, &created, &updated) == nil {
 			values := map[string]any{}
+			if plain, err := s.openSecret(sealed); err == nil && plain != "" {
+				headers = []byte(plain)
+			}
 			_ = json.Unmarshal(headers, &values)
 			keys := make([]string, 0, len(values))
 			for key := range values {
@@ -95,17 +99,23 @@ func (s *Server) saveDeliveryChannel(w http.ResponseWriter, r *http.Request) {
 		active = *in.Active
 	}
 	headers, _ := json.Marshal(in.Headers)
+	// Credentials are sealed when an encryption key is configured, so the plain
+	// JSON column only keeps values written before encryption was enabled.
+	stored, sealed := headers, s.sealSecret(string(headers))
+	if sealed != nil {
+		stored = []byte("{}")
+	}
 	var id uuid.UUID
 	var err error
 	if in.ID == "" {
-		err = s.DB.QueryRow(r.Context(), `INSERT INTO delivery_channels(site_id,name,channel_type,endpoint_url,headers,active,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, siteID, in.Name, in.ChannelType, in.EndpointURL, headers, active, p.ID).Scan(&id)
+		err = s.DB.QueryRow(r.Context(), `INSERT INTO delivery_channels(site_id,name,channel_type,endpoint_url,headers,headers_secret,active,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, siteID, in.Name, in.ChannelType, in.EndpointURL, stored, sealed, active, p.ID).Scan(&id)
 	} else {
 		id, err = uuid.Parse(in.ID)
 		if err == nil {
 			if in.Headers == nil {
 				_, err = s.DB.Exec(r.Context(), `UPDATE delivery_channels SET name=$3,channel_type=$4,endpoint_url=$5,active=$6,updated_at=now() WHERE id=$1 AND site_id=$2`, id, siteID, in.Name, in.ChannelType, in.EndpointURL, active)
 			} else {
-				_, err = s.DB.Exec(r.Context(), `UPDATE delivery_channels SET name=$3,channel_type=$4,endpoint_url=$5,headers=$6,active=$7,updated_at=now() WHERE id=$1 AND site_id=$2`, id, siteID, in.Name, in.ChannelType, in.EndpointURL, headers, active)
+				_, err = s.DB.Exec(r.Context(), `UPDATE delivery_channels SET name=$3,channel_type=$4,endpoint_url=$5,headers=$6,headers_secret=$7,active=$8,updated_at=now() WHERE id=$1 AND site_id=$2`, id, siteID, in.Name, in.ChannelType, in.EndpointURL, stored, sealed, active)
 			}
 		}
 	}

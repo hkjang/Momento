@@ -7,6 +7,7 @@ export type PathTransition = {
 export type PathNode = {
   name: string;
   displayName: string;
+  shortName: string;
   depth: number;
 };
 
@@ -17,6 +18,18 @@ export type PathLink = {
   sourceName: string;
   targetName: string;
 };
+
+export function shortPathLabel(value: string, maxLength = 34) {
+  let label = value;
+  try {
+    const url = new URL(value);
+    label = `${url.pathname}${url.search}` || "/";
+  } catch {
+    // Event names are intentionally kept as-is.
+  }
+  if (label.length <= maxLength) return label;
+  return `${label.slice(0, Math.max(1, maxLength - 1))}…`;
+}
 
 export function buildPathFlow(rows: PathTransition[], limit = 60) {
   const transitions = rows
@@ -33,8 +46,18 @@ export function buildPathFlow(rows: PathTransition[], limit = 60) {
     // destination nodes in separate layers makes the Sankey graph acyclic.
     const source = `from:${row.source}`;
     const target = `to:${row.target}`;
-    nodes.set(source, { name: source, displayName: row.source, depth: 0 });
-    nodes.set(target, { name: target, displayName: row.target, depth: 1 });
+    nodes.set(source, {
+      name: source,
+      displayName: row.source,
+      shortName: shortPathLabel(row.source),
+      depth: 0,
+    });
+    nodes.set(target, {
+      name: target,
+      displayName: row.target,
+      shortName: shortPathLabel(row.target),
+      depth: 1,
+    });
     return {
       source,
       target,

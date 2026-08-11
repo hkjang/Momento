@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.9.0
+
+- Added `MOMENTO_ENCRYPTION_KEY` (with the shared `ENCRYPTION_KEY` alias) so personal API keys, site tracking keys, server API keys, OIDC client secrets, and delivery channel headers are stored with AES-256-GCM and survive a restart instead of being lost or re-entered.
+- Added key re-display for sites and personal API keys with audit logging, replacing rotation as the only way to recover a lost key.
+- Added `MOMENTO_ENCRYPTION_KEY_PREVIOUS` rotation support, an encryption status endpoint, and an administrator re-seal action that finishes a key rotation without a redeploy.
+- Fixed collector requests being blocked by the measured application's Content-Security-Policy by shipping the exact `script-src`/`connect-src` policy, a meta tag, and a reverse proxy snippet in the console, the tracking-code API, and the documentation.
+- Added SDK `data-endpoint` support for a first-party collector proxy and a CSP violation listener that names the required policy in the browser console.
+- Made the console Content-Security-Policy configurable through the public URL origin and a new `additional_connect_origins` security setting, and stopped sending a document policy on collector responses.
+- Added a server-side install diagnostics report and console tab covering site state, ingestion volume, CSP guidance, allowed domains, environment match, pipeline backlog, and key recoverability.
+- Added console access to previously server-only capabilities: session report, raw event export, delivery run history, delivery channel and schedule deletion, event contract activation and CI validation, semantic metric evaluation, and workspace business journeys.
+- Added regression tests for the encryption keyring, environment configuration, CSP construction and guidance, origin allowlist matching, and SDK endpoint resolution.
+- Preserved the v0.8.0 database, SDK, collector, tracking protocol, REST/OpenAPI, and privacy contracts; the three required environment variables are unchanged and encryption stays optional.
+
 ## v0.8.0
 
 - Fixed Path Analysis rendering failures when real journeys contained bidirectional or cyclic transitions by projecting origins and destinations into separate acyclic graph layers.

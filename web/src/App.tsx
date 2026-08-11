@@ -43,6 +43,7 @@ export default function App() {
           <Route path="/pages" element={<ReportPage kind="pages" />} />
           <Route path="/events" element={<ReportPage kind="events" />} />
           <Route path="/visitors" element={<ReportPage kind="visitors" />} />
+          <Route path="/sessions" element={<ReportPage kind="sessions" />} />
           <Route path="/user-explorer" element={<UserExplorerPage />} />
           <Route path="/ecommerce" element={<EcommercePage />} />
           <Route path="/explorer" element={<ExplorerPage />} />

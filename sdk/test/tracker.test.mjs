@@ -198,3 +198,52 @@ test("consent-required remains blocked when localStorage is unavailable", async 
   );
   tracker.consent.deny();
 });
+
+test("data-endpoint keeps the collector first party for a strict CSP", async () => {
+  const { resolveEndpoint } = await import("../src/index.ts");
+
+  assert.equal(
+    resolveEndpoint(undefined, "https://momento.internal/tracker.js", "https://service.internal"),
+    "https://momento.internal",
+    "the script origin stays the default collector",
+  );
+  assert.equal(
+    resolveEndpoint("https://momento.internal/", "", "https://service.internal"),
+    "https://momento.internal",
+  );
+  assert.equal(
+    resolveEndpoint("/momento/", "https://momento.internal/tracker.js", "https://service.internal"),
+    "/momento",
+    "a path proxies the collector on the tracked origin",
+  );
+  assert.equal(
+    resolveEndpoint("momento", "", "https://service.internal"),
+    "/momento",
+  );
+  assert.equal(
+    resolveEndpoint("/", "", "https://service.internal"),
+    "https://service.internal",
+  );
+});
+
+test("a proxied endpoint posts to the same origin", async () => {
+  setGlobal("localStorage", new MemoryStorage());
+  const requests = [];
+  setGlobal("fetch", async (url, init) => {
+    requests.push({ url, body: JSON.parse(init.body) });
+    return { ok: true, status: 202 };
+  });
+
+  const tracker = new MomentoTracker();
+  tracker.init({
+    siteId: "SITE_PROXY",
+    endpoint: "/momento",
+    autoTrack: false,
+  });
+  tracker.track("click", { button: "proxied" });
+  await tracker.flush();
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/momento/collect/v1/events");
+  assert.equal(requests[0].body.site_id, "SITE_PROXY");
+});

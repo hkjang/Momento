@@ -21,6 +21,7 @@ import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import SaveRounded from "@mui/icons-material/SaveRounded";
 import AutorenewRounded from "@mui/icons-material/AutorenewRounded";
+import VisibilityRounded from "@mui/icons-material/VisibilityRounded";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, patch, post } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
@@ -34,6 +35,8 @@ interface APIKey {
   expires_at: string | null;
   last_used_at: string | null;
   created_at: string;
+  /** True when the key is sealed with MOMENTO_ENCRYPTION_KEY and can be shown again. */
+  recoverable: boolean;
 }
 export default function ProfilePage() {
   const initial =
@@ -147,11 +150,17 @@ function Keys() {
   const [name, setName] = useState("");
   const [days, setDays] = useState(365);
   const [secret, setSecret] = useState("");
+  const [secretRecoverable, setSecretRecoverable] = useState(false);
+  const [revealError, setRevealError] = useState("");
   const create = useMutation({
     mutationFn: () =>
-      post<{ key: string }>("/api/v1/me/keys", { name, expires_in_days: days }),
+      post<{ key: string; recoverable: boolean }>("/api/v1/me/keys", {
+        name,
+        expires_in_days: days,
+      }),
     onSuccess: (d) => {
       setOpen(false);
+      setSecretRecoverable(d.recoverable);
       setSecret(d.key);
       qc.invalidateQueries({ queryKey: ["my-keys"] });
     },
@@ -162,10 +171,29 @@ function Keys() {
   });
   const rotate = useMutation({
     mutationFn: (id: string) =>
-      post<{ key: string }>(`/api/v1/me/keys/${id}/rotate`),
+      post<{ key: string; recoverable: boolean }>(
+        `/api/v1/me/keys/${id}/rotate`,
+      ),
     onSuccess: (d) => {
+      setSecretRecoverable(d.recoverable);
       setSecret(d.key);
       qc.invalidateQueries({ queryKey: ["my-keys"] });
+    },
+  });
+  // Encrypted storage means a lost key can be read again instead of rotated.
+  const reveal = useMutation({
+    mutationFn: (id: string) =>
+      post<{ available: boolean; key?: string; reason?: string }>(
+        `/api/v1/me/keys/${id}/reveal`,
+      ),
+    onSuccess: (d) => {
+      if (d.available && d.key) {
+        setRevealError("");
+        setSecretRecoverable(true);
+        setSecret(d.key);
+        return;
+      }
+      setRevealError(d.reason || "저장된 키를 찾을 수 없습니다.");
     },
   });
   if (q.isLoading) return <Loading />;
@@ -180,6 +208,11 @@ function Keys() {
           입니다.
         </Typography>
       </Card>
+      {revealError && (
+        <Alert severity="warning" onClose={() => setRevealError("")}>
+          {revealError}
+        </Alert>
+      )}
       <Stack direction="row" justifyContent="space-between">
         <Typography variant="h6">개인 API 키</Typography>
         <Button
@@ -223,8 +256,20 @@ function Keys() {
             key: "id",
             label: "",
             align: "right",
-            format: (v) => (
+            format: (v, row) => (
               <Stack direction="row" justifyContent="flex-end">
+                <IconButton
+                  size="small"
+                  title={
+                    row.recoverable
+                      ? "저장된 키 보기"
+                      : "MOMENTO_ENCRYPTION_KEY 설정 후 회전한 키만 다시 볼 수 있습니다"
+                  }
+                  disabled={!row.recoverable || reveal.isPending}
+                  onClick={() => reveal.mutate(String(v))}
+                >
+                  <VisibilityRounded />
+                </IconButton>
                 <IconButton
                   size="small"
                   color="primary"
@@ -278,10 +323,15 @@ function Keys() {
         fullWidth
         maxWidth="sm"
       >
-        <DialogTitle>새 API 키</DialogTitle>
+        <DialogTitle>개인 API 키</DialogTitle>
         <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>
-            이 키는 다시 확인할 수 없습니다.
+          <Alert
+            severity={secretRecoverable ? "info" : "warning"}
+            sx={{ mb: 2 }}
+          >
+            {secretRecoverable
+              ? "이 키는 암호화되어 저장되었으므로 재기동 후에도 다시 조회할 수 있습니다."
+              : "MOMENTO_ENCRYPTION_KEY가 없어 이 키는 다시 확인할 수 없습니다."}
           </Alert>
           <Stack direction="row">
             <TextField

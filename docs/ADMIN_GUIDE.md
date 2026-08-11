@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.8.0
+- **문서 버전**: v0.9.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -8,17 +8,28 @@
 
 ## 1. 시스템 아키텍처 및 부트스트랩 (Bootstrap)
 
-Momento 컨테이너 프로세스는 오직 **3개의 필수 환경변수**만을 통해 최소 인프라로 구동됩니다.
+Momento 컨테이너 프로세스는 **3개의 필수 환경변수**와 **1개의 권장 환경변수**만을 통해 최소 인프라로 구동됩니다.
 
 ```bash
 # .env 환경 설정
 MOMENTO_POSTGRES_DSN=postgres://momento:Secr3tPass@10.10.20.5:5432/momento?sslmode=disable
 MOMENTO_BOOTSTRAP_ADMIN=admin@corporate.internal
 MOMENTO_BOOTSTRAP_ADMIN_PASSWORD=SuperSecretAdminPassword123!
+# 권장: 발급한 키를 암호화 저장해 재기동 후에도 다시 조회할 수 있게 합니다.
+MOMENTO_ENCRYPTION_KEY=$(openssl rand -base64 32)
 ```
 
 > **설정 원칙 (Design Principles)**:  
 > 그 밖의 모든 공개 URL, Keycloak OIDC Client 정보, Claim Mapping, PII 차단 필터, CIDR 망 대역은 DB에 저장되는 동적 관리자 설정입니다. 부트스트랩 비밀번호는 최초 관리자 계정 생성 시에만 사용되며 기존 계정을 덮어쓰지 않습니다.
+
+### 1.1 비밀값 암호화 (MOMENTO_ENCRYPTION_KEY)
+
+`MOMENTO_ENCRYPTION_KEY`를 설정하면 개인 API key, Site Tracking Key, Server API Key, OIDC Client Secret, Delivery Channel Header를 AES-256-GCM으로 암호화해 저장합니다. 값은 32 byte base64/hex 또는 16자 이상 passphrase를 허용하며, 플랫폼이 공용으로 주입하는 `ENCRYPTION_KEY`도 alias로 인식합니다.
+
+- 같은 키를 유지하면 **서비스를 재기동해도 키가 사라지지 않고 다시 입력할 필요가 없습니다.** 관리 → 사이트의 `키 보기`와 프로필 → API 키의 `저장된 키 보기`로 재조회하며, 조회 사실은 Audit Log에 남습니다.
+- 변수가 없으면 기존 동작대로 해시만 저장하므로 키는 발급 시 1회만 표시됩니다.
+- 키 교체는 `MOMENTO_ENCRYPTION_KEY`에 새 키, `MOMENTO_ENCRYPTION_KEY_PREVIOUS`에 이전 키를 두고 기동한 뒤 관리 → 설정 → 비밀값 암호화에서 재암호화를 실행하고 이전 키 변수를 제거합니다.
+- 암호화 이전에 발급된 키는 한 번 회전해야 재조회 대상이 됩니다.
 
 ---
 

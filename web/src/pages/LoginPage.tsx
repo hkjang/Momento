@@ -15,12 +15,12 @@ import ShieldOutlined from "@mui/icons-material/ShieldOutlined";
 import QueryStatsRounded from "@mui/icons-material/QueryStatsRounded";
 import HubOutlined from "@mui/icons-material/HubOutlined";
 import { useAuth } from "../contexts/AuthContext";
-import { get } from "../api/client";
+import { api } from "../api/client";
 import { Logo } from "../components/Logo";
+import { consoleVersion, shortCommit, useRuntimeVersion } from "../version";
 
 interface Options {
   oidc_enabled: boolean;
-  version: { version: string; commit: string };
 }
 export default function LoginPage() {
   const { login } = useAuth();
@@ -29,9 +29,15 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [options, setOptions] = useState<Options | null>(null);
+  const runtimeVersion = useRuntimeVersion();
   useEffect(() => {
-    void get<Options>("/api/v1/auth/options").then(setOptions);
+    void api<Options>("/api/v1/auth/options", { cache: "no-store" })
+      .then(setOptions)
+      .catch(() => setOptions({ oidc_enabled: false }));
   }, []);
+  const deployedVersion = runtimeVersion.data?.version;
+  const versionMismatch =
+    !!deployedVersion && deployedVersion !== consoleVersion;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
@@ -127,8 +133,18 @@ export default function LoginPage() {
             </Stack>
           </Box>
         </Box>
-        <Typography variant="caption" color="text.secondary">
-          Momento {options?.version.version || "…"} · On-premise analytics
+        <Typography
+          variant="caption"
+          color={versionMismatch ? "warning.main" : "text.secondary"}
+          title={
+            runtimeVersion.data
+              ? `서버 빌드 ${shortCommit(runtimeVersion.data.commit)} · 콘솔 v${consoleVersion}`
+              : `콘솔 v${consoleVersion}`
+          }
+        >
+          Momento {deployedVersion ? `v${deployedVersion}` : `Console v${consoleVersion}`}
+          {versionMismatch ? ` · Console v${consoleVersion}` : ""} · On-premise
+          analytics
         </Typography>
       </Box>
       <Box

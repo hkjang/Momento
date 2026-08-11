@@ -875,7 +875,25 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `WITH seq AS (SELECT session_id,CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END node,lead(CASE WHEN event_name='page_view' THEN coalesce(page_url,'(unknown)') ELSE event_name END) OVER(PARTITION BY session_id ORDER BY event_timestamp,id) next_node FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT node,next_node,count(*) FROM seq WHERE next_node IS NOT NULL GROUP BY 1,2 ORDER BY 3 DESC LIMIT 80`, siteID, from, to, requestEnvironment(r))
+	view, err := normalizePathView(r.URL.Query().Get("view"))
+	if err != nil {
+		writeError(w, 400, "INVALID_PATH_VIEW", err.Error())
+		return
+	}
+	includeSystem := r.URL.Query().Get("include_system") == "true"
+	rows, err := s.DB.Query(r.Context(), `WITH seq AS (
+		SELECT session_id,
+			CASE WHEN event_name='page_view' THEN coalesce(nullif(btrim(page_url),''),'(unknown page)') ELSE event_name END node,
+			lead(CASE WHEN event_name='page_view' THEN coalesce(nullif(btrim(page_url),''),'(unknown page)') ELSE event_name END) OVER(PARTITION BY session_id ORDER BY event_timestamp,id) next_node
+		FROM raw_events
+		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+			AND ($5='all' OR ($5='pages' AND event_name='page_view') OR ($5='events' AND event_name<>'page_view'))
+			AND ($6 OR event_name NOT IN ('user_engagement','web_vital'))
+	)
+	SELECT node,next_node,count(*)
+	FROM seq
+	WHERE next_node IS NOT NULL AND node<>next_node
+	GROUP BY 1,2 ORDER BY 3 DESC LIMIT 80`, siteID, from, to, requestEnvironment(r), view, includeSystem)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -887,4 +905,17 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"source": source, "target": target, "count": count}, err
 	})
 	writeJSON(w, 200, out)
+}
+
+func normalizePathView(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "all", nil
+	}
+	switch value {
+	case "all", "pages", "events":
+		return value, nil
+	default:
+		return "", fmt.Errorf("view must be one of all, pages, or events")
+	}
 }

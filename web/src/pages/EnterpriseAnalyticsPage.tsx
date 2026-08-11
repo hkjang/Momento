@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Alert, Box, Card, Chip, MenuItem, Stack, TextField, Typography } from "@mui/material";
-import { useQuery } from "@tanstack/react-query";
-import { get, rangeQuery } from "../api/client";
+import { Alert, Box, Button, Card, Chip, Divider, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
@@ -33,8 +33,61 @@ function WorkspaceRollup() {
       <MetricCard label="Sessions" value={q.data?.summary.sessions || 0} />
       <MetricCard label="Events" value={q.data?.summary.events || 0} />
     </Box>
+    <WorkspaceJourneys />
     <DataTable rows={q.data?.services || []} columns={[{ key: "site_name", label: "서비스" }, { key: "site_id", label: "Site ID" }, { key: "users", label: "Users", align: "right" }, { key: "events", label: "Events", align: "right" }, { key: "repeat_rate", label: "재사용률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "conversion_rate", label: "전환율", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "error_rate", label: "오류율", align: "right", format: (v) => `${Number(v).toFixed(2)}%` }, { key: "service_score", label: "Service Score", align: "right", format: (v) => <Chip size="small" color={Number(v) >= 80 ? "success" : Number(v) >= 60 ? "warning" : "error"} label={Number(v).toFixed(1)} /> }]} />
   </Stack>;
+}
+
+type WorkspaceJourney = { id: string; name: string; description: string; steps: { name: string; event: string; site_id?: string }[]; conversion_window_days: number; shared: boolean };
+type JourneyAnalysis = { steps: Record<string, unknown>[]; identity_policy: string };
+
+/**
+ * WorkspaceJourneys analyses a business flow that crosses services. The backend
+ * has always supported it; this is the console entry point for defining, saving
+ * and running one.
+ */
+function WorkspaceJourneys() {
+  const { site, environment } = useSite();
+  const qc = useQueryClient();
+  const [selected, setSelected] = useState("");
+  const [name, setName] = useState("");
+  const [steps, setSteps] = useState('[\n  { "name": "포털 진입", "event": "page_view" },\n  { "name": "업무 완료", "event": "feature_used" }\n]');
+  const [windowDays, setWindowDays] = useState(30);
+  const journeys = useQuery({ queryKey: ["workspace-journeys", site?.site_id], enabled: !!site, queryFn: () => get<WorkspaceJourney[]>(`/api/v1/sites/${site!.site_id}/workspace-journeys`) });
+  const save = useMutation({
+    mutationFn: () => post(`/api/v1/sites/${site!.site_id}/workspace-journeys`, { name, steps: JSON.parse(steps), conversion_window_days: windowDays, shared: true }),
+    onSuccess: () => { setName(""); void qc.invalidateQueries({ queryKey: ["workspace-journeys"] }); },
+  });
+  const analysis = useMutation({
+    mutationFn: (journeyID: string) => post<JourneyAnalysis>(`/api/v1/sites/${site!.site_id}/workspace-journeys/analyze?${rangeQuery(30, site!.timezone)}`, journeyID ? { journey_id: journeyID } : { steps: JSON.parse(steps), conversion_window_days: windowDays }),
+  });
+  if (!site) return null;
+  return <Card sx={{ p: 2.5 }}>
+    <Typography variant="h6">Workspace Business Journey</Typography>
+    <Typography variant="body2" color="text.secondary" mb={2}>서비스 경계를 넘는 업무 흐름의 단계별 전환을 SSO User 기준으로 분석합니다. 현재 환경은 {environment.toUpperCase()}입니다.</Typography>
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
+      <Stack spacing={1.5}>
+        <TextField label="Journey 이름" value={name} onChange={(e) => setName(e.target.value)} />
+        <TextField type="number" label="전환 기간(일)" value={windowDays} onChange={(e) => setWindowDays(Number(e.target.value))} />
+        <Button variant="contained" disabled={!name || save.isPending} onClick={() => save.mutate()}>Journey 저장</Button>
+        {save.error && <ErrorState error={save.error} />}
+      </Stack>
+      <TextField multiline minRows={6} label="Steps JSON" value={steps} onChange={(e) => setSteps(e.target.value)} helperText="2~12단계. name과 event는 필수이고 site_id·service·feature로 좁힐 수 있습니다." />
+    </Box>
+    <Divider sx={{ my: 2 }} />
+    <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ md: "center" }}>
+      <TextField select fullWidth label="저장된 Journey" value={selected} onChange={(e) => setSelected(e.target.value)}>
+        <MenuItem value="">위 Steps JSON으로 즉시 분석</MenuItem>
+        {(journeys.data || []).map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}
+      </TextField>
+      <Button variant="outlined" disabled={analysis.isPending} onClick={() => analysis.mutate(selected)}>분석 실행</Button>
+    </Stack>
+    {analysis.error && <Box mt={2}><ErrorState error={analysis.error} /></Box>}
+    {analysis.data && <Box mt={2}>
+      <Alert severity="info" sx={{ mb: 2 }}>{analysis.data.identity_policy}</Alert>
+      <DataTable rows={analysis.data.steps} exportFilename="momento-workspace-journey" columns={[{ key: "step", label: "단계", align: "right" }, { key: "name", label: "이름" }, { key: "event", label: "Event" }, { key: "site_id", label: "Site", format: (v) => String(v || "전체") }, { key: "users", label: "Users", align: "right" }, { key: "conversion_rate", label: "전환율", align: "right", format: percentCell }, { key: "average_elapsed_seconds", label: "평균 소요(초)", align: "right", format: (v) => Number(v).toFixed(1) }]} />
+    </Box>}
+  </Card>;
 }
 
 function FeatureIntelligence() {

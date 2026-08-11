@@ -18,9 +18,10 @@
 
 - JavaScript SDK: Event 발생 시점 Context snapshot, DEV/STG/PRD, Event Contract version, Release context, Page View/SPA/custom event, identify, session/visitor, first-touch UTM, click/form/error, Core Web Vitals·Resource Error RUM, fail-closed consent, cookieless, batch, Beacon, offline queue
 - Durable Collector: `POST /collect/v1/events`, 환경별 계약 `allow/warn/reject`, domain/key 검증, 중복 제거, 수집 전 값 기반 PII Detect/Mask/Reject, Cardinality Guard, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
-- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
+- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Sessions, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
 - 거버넌스: 버전형 Event Contract와 CI 검증, Formula 지원 Semantic Metric Registry, Metric Goal, Event Catalog·Lineage, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
+- 비밀값 관리: `MOMENTO_ENCRYPTION_KEY` 기반 AES-256-GCM 저장, 재기동 후 키 재조회, 키 교체용 이전 키 병행과 재암호화, 설치 진단(CSP·허용 도메인·환경·적재 파이프라인)
 - 관리: 운영 준비도·품질 지표·우선순위 조치함을 갖춘 역할 기반 관리 센터, `Ctrl/Cmd+K` 명령 팔레트, Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
 - 고급 분석: Exact/Fast/Preview Query Cost Guard, 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
@@ -51,6 +52,8 @@ SDK 설치:
 </script>
 ```
 
+측정 대상 애플리케이션이 CSP를 사용하면 `script-src`와 `connect-src`에 Momento Origin을 허용해야 합니다. CSP를 바꿀 수 없으면 Collector를 같은 Origin으로 프록시하고 `data-endpoint="/momento"`를 지정하십시오. 관리 → 사이트 → SDK 설치의 **CSP 허용**과 **설치 진단**에서 정책 스니펫과 수집 상태를 확인할 수 있습니다.
+
 ```javascript
 analytics.identify("INTERNAL_USER_001", {
   department: "Digital Platform",
@@ -73,11 +76,13 @@ analytics.track("feature_use", {
 
 ## 설정 원칙
 
-프로세스가 받는 환경변수는 정확히 세 개입니다.
+프로세스가 받는 필수 환경변수는 세 개입니다.
 
 - `MOMENTO_POSTGRES_DSN`
 - `MOMENTO_BOOTSTRAP_ADMIN`
 - `MOMENTO_BOOTSTRAP_ADMIN_PASSWORD`
+
+여기에 권장 환경변수 `MOMENTO_ENCRYPTION_KEY`(플랫폼 공용 `ENCRYPTION_KEY`도 alias로 인식)를 더하면 발급한 개인 API key, Tracking Key, Server API Key, OIDC Client Secret, Delivery Header를 AES-256-GCM으로 암호화해 저장합니다. 같은 값을 유지하는 한 **서비스를 재기동해도 키가 사라지지 않고 다시 입력하거나 회전할 필요가 없으며**, 관리 → 사이트의 `키 보기`와 프로필 → API 키의 `저장된 키 보기`로 재조회할 수 있습니다(조회는 Audit Log에 기록). 키 교체 시에는 `MOMENTO_ENCRYPTION_KEY_PREVIOUS`에 이전 키를 두고 관리 → 설정 → 비밀값 암호화에서 재암호화를 실행합니다.
 
 그 밖의 공개 URL, Keycloak client, claim mapping, 개인정보, 저장소, 보안 및 망 대역은 DB에 저장되는 관리자 설정입니다. Bootstrap 비밀번호는 최초 관리자 생성에만 쓰며 기존 비밀번호를 덮어쓰지 않습니다.
 
@@ -92,7 +97,7 @@ cd ../web && npm install && npm run lint && npm test && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.8.0` 태그는 `momento-v0.8.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.9.0` 태그는 `momento-v0.9.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

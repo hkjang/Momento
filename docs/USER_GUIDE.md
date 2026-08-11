@@ -42,8 +42,35 @@ Momento는 사내 애플리케이션 및 인트라넷 환경에서 발생하는 
 | `data-auto-rum` | Boolean | 선택 | Core Web Vitals와 Resource Error 자동 수집. 기본 `true` |
 | `data-release-version` | String | 선택 | Release Impact 비교용 애플리케이션 릴리스 |
 | `data-git-sha` | String | 선택 | 배포 소스 revision |
+| `data-endpoint` | String | 선택 | Collector 주소 override. 절대 URL 또는 같은 Origin의 프록시 경로(`/momento`) |
 
 Collector endpoint는 `tracker.js`를 제공한 Origin의 `/collect/v1/events`로 자동 설정됩니다. Page View, SPA History 변경, 클릭, 스크롤, Form, Download, Outbound Link, Error, Heartbeat, LCP/INP/CLS/FCP/TTFB와 Resource Error는 기본 자동 수집됩니다.
+
+### 2.1.1 Content-Security-Policy 허용
+
+측정 대상 애플리케이션이 CSP를 사용하면 `tracker.js` 로드와 수집 요청을 명시적으로 허용해야 합니다. 예를 들어 `connect-src 'self' ws: wss:`만 허용된 페이지에서는 브라우저가 `/collect/v1/events` 요청을 차단하고 콘솔에 `Refused to connect ... violates the document's Content Security Policy`를 남깁니다.
+
+```
+Content-Security-Policy: script-src 'self' https://momento.internal; connect-src 'self' https://momento.internal
+```
+
+CSP를 변경할 수 없는 애플리케이션은 Collector를 같은 Origin으로 프록시하고 `data-endpoint`로 그 경로를 지정하면 `connect-src 'self'`만으로 동작합니다.
+
+```nginx
+location /momento/ {
+  proxy_pass https://momento.internal/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+```html
+<script async src="https://momento.internal/tracker.js"
+  data-site-id="SITE_CORPORATE_001" data-endpoint="/momento"></script>
+```
+
+관리 → 사이트 → SDK 설치 화면의 **CSP 허용** 항목에서 위 정책과 프록시 설정을 복사할 수 있고, **설치 진단** 탭에서 수집 수신 여부와 허용 도메인, 환경 일치, 적재 파이프라인 상태를 서버 기준으로 확인할 수 있습니다. SDK도 CSP 위반을 감지하면 브라우저 콘솔에 필요한 정책을 안내합니다.
 
 각 이벤트에는 `track()` 호출 순간의 URL, 제목, Referrer, Device와 최초 UTM Context가 snapshot으로 저장됩니다. 따라서 1초 배치 전송을 기다리는 동안 SPA Route가 바뀌어도 이전 페이지의 Click이 새 페이지로 잘못 분류되지 않습니다. SDK가 자동 수집하는 URL에서는 Query String과 Fragment를 제거합니다.
 

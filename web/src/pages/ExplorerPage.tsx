@@ -50,6 +50,61 @@ const metrics = [
   "session_conversion_rate",
   "revenue",
 ];
+/**
+ * RawEventExport exposes the raw event export endpoint. Owning the raw data is a
+ * core promise of an on-premise deployment, so the console needs a way out that
+ * is not limited to the aggregated table above.
+ */
+function RawEventExport() {
+  const { site, environment } = useSite();
+  const [days, setDays] = useState(7);
+  const [format, setFormat] = useState<"csv" | "json">("csv");
+  if (!site) return null;
+  const { from, to } = dateRangeValues(days, site.timezone);
+  const href = `/api/v1/sites/${site.site_id}/export?from=${from}&to=${to}&environment=${encodeURIComponent(environment)}&format=${format}`;
+  return (
+    <Card sx={{ p: 2.5 }}>
+      <Typography variant="h6">Raw Event Export</Typography>
+      <Typography variant="body2" color="text.secondary" mb={2}>
+        선택한 기간과 환경의 Raw Event를 최대 100,000건까지 내려받습니다. 내보낸
+        파일에는 원본 Property가 포함되므로 사내 보안 정책에 따라 취급하십시오.
+      </Typography>
+      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ md: "center" }}>
+        <TextField
+          select
+          label="기간"
+          value={days}
+          onChange={(event) => setDays(Number(event.target.value))}
+          sx={{ minWidth: 140 }}
+        >
+          {[1, 7, 30, 90].map((value) => (
+            <MenuItem key={value} value={value}>
+              최근 {value}일
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          select
+          label="형식"
+          value={format}
+          onChange={(event) => setFormat(event.target.value as "csv" | "json")}
+          sx={{ minWidth: 140 }}
+        >
+          <MenuItem value="csv">CSV</MenuItem>
+          <MenuItem value="json">NDJSON</MenuItem>
+        </TextField>
+        <Typography variant="body2" color="text.secondary">
+          {from} ~ {to} · {environment.toUpperCase()}
+        </Typography>
+        <Box flexGrow={1} />
+        <Button variant="outlined" component="a" href={href} download>
+          내보내기
+        </Button>
+      </Stack>
+    </Card>
+  );
+}
+
 export default function ExplorerPage() {
   const { site, environment } = useSite();
   const qc = useQueryClient();
@@ -307,6 +362,7 @@ export default function ExplorerPage() {
           </Button>
         </Box>
       </Card>
+      <RawEventExport />
       {(mutation.error || saveReport.error || deleteReport.error) && (
         <Alert severity="error">
           {(mutation.error || saveReport.error || deleteReport.error)?.message}

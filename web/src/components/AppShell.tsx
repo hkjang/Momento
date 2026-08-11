@@ -45,6 +45,7 @@ import ManageAccountsRounded from "@mui/icons-material/ManageAccountsRounded";
 import MenuRounded from "@mui/icons-material/MenuRounded";
 import MouseOutlined from "@mui/icons-material/MouseOutlined";
 import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
+import ScheduleOutlined from "@mui/icons-material/ScheduleOutlined";
 import PersonOutlineRounded from "@mui/icons-material/PersonOutlineRounded";
 import PsychologyRounded from "@mui/icons-material/PsychologyRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
@@ -55,7 +56,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
-import { get } from "../api/client";
+import { consoleVersion, shortCommit, useRuntimeVersion } from "../version";
 
 const drawerWidth = 272;
 
@@ -143,6 +144,12 @@ const navGroups: NavGroup[] = [
         label: "사용자",
         description: "방문자와 식별 사용자",
         icon: <PeopleAltOutlined />,
+      },
+      {
+        to: "/sessions",
+        label: "세션",
+        description: "세션별 참여·전환과 유입",
+        icon: <ScheduleOutlined />,
       },
       {
         to: "/user-explorer",
@@ -728,7 +735,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(false);
   const [profileAnchor, setProfileAnchor] = useState<HTMLElement | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
-  const [version, setVersion] = useState("");
+  const runtimeVersion = useRuntimeVersion();
   const { user, logout } = useAuth();
   const { sites, site, select, environments, environment, selectEnvironment } =
     useSite();
@@ -736,11 +743,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const isAdmin = !!user && !["analyst", "viewer"].includes(user.role);
 
-  useEffect(() => {
-    void get<{ version: string }>("/api/v1/version").then((value) =>
-      setVersion(value.version),
-    );
-  }, []);
+  const deployedVersion = runtimeVersion.data?.version;
+  const versionMismatch =
+    !!deployedVersion && deployedVersion !== consoleVersion;
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (
@@ -1093,21 +1098,53 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </MenuItem>
               )}
               <Divider />
-              <Stack
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                sx={{ px: 2, py: 1 }}
+              <Tooltip
+                placement="left"
+                title={
+                  <Stack spacing={0.25}>
+                    <span>
+                      서버 {deployedVersion ? `v${deployedVersion}` : runtimeVersion.isError ? "확인 실패" : "확인 중"}
+                    </span>
+                    <span>콘솔 v{consoleVersion}</span>
+                    {runtimeVersion.data && (
+                      <span>커밋 {shortCommit(runtimeVersion.data.commit)}</span>
+                    )}
+                  </Stack>
+                }
               >
-                <Typography variant="caption" color="text.secondary">
-                  Momento
-                </Typography>
-                <Chip
-                  size="small"
-                  label={version || "…"}
-                  sx={{ height: 20, fontSize: 10 }}
-                />
-              </Stack>
+                <Stack
+                  direction="row"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  sx={{ px: 2, py: 1 }}
+                >
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Momento {deployedVersion ? "서버" : "콘솔"}
+                    </Typography>
+                    {versionMismatch && (
+                      <Typography
+                        display="block"
+                        variant="caption"
+                        color="warning.main"
+                        fontSize={10}
+                      >
+                        콘솔 v{consoleVersion}와 버전이 다릅니다
+                      </Typography>
+                    )}
+                  </Box>
+                  <Chip
+                    size="small"
+                    color={versionMismatch ? "warning" : "default"}
+                    label={
+                      deployedVersion
+                        ? `v${deployedVersion}`
+                        : `Console v${consoleVersion}`
+                    }
+                    sx={{ height: 22, fontSize: 10 }}
+                  />
+                </Stack>
+              </Tooltip>
               <MenuItem
                 sx={{ color: "error.main" }}
                 onClick={() => void logout()}

@@ -15,13 +15,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/Momento/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Automation struct {
-	DB     *pgxpool.Pool
-	Logger *slog.Logger
+	DB      *pgxpool.Pool
+	Logger  *slog.Logger
+	Secrets *secret.Cipher
 }
 
 type automationConfig struct {
@@ -39,6 +41,7 @@ type scheduledDelivery struct {
 	ChannelType    string
 	EndpointURL    string
 	Headers        []byte
+	HeadersSecret  *string
 	Name           string
 	ReportKind     string
 	Definition     []byte
@@ -95,9 +98,9 @@ func (a Automation) runNext(ctx context.Context) (bool, error) {
 	}
 	defer tx.Rollback(ctx)
 	var delivery scheduledDelivery
-	err = tx.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,r.name,r.report_kind,r.definition,r.interval_minutes
+	err = tx.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,c.headers_secret,r.name,r.report_kind,r.definition,r.interval_minutes
 		FROM scheduled_reports r JOIN delivery_channels c ON c.id=r.channel_id AND c.site_id=r.site_id AND c.active JOIN sites s ON s.id=r.site_id AND s.active
-		WHERE r.enabled AND r.next_run_at<=now() ORDER BY r.next_run_at LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
+		WHERE r.enabled AND r.next_run_at<=now() ORDER BY r.next_run_at LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.HeadersSecret, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -123,8 +126,8 @@ func (a Automation) RunByID(ctx context.Context, reportID uuid.UUID) error {
 		return fmt.Errorf("automation is disabled in administrator settings")
 	}
 	var delivery scheduledDelivery
-	err = a.DB.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,r.name,r.report_kind,r.definition,r.interval_minutes
-		FROM scheduled_reports r JOIN delivery_channels c ON c.id=r.channel_id AND c.site_id=r.site_id AND c.active JOIN sites s ON s.id=r.site_id AND s.active WHERE r.id=$1`, reportID).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
+	err = a.DB.QueryRow(ctx, `SELECT r.id,r.site_id,s.site_key,c.id,c.channel_type,c.endpoint_url,c.headers,c.headers_secret,r.name,r.report_kind,r.definition,r.interval_minutes
+		FROM scheduled_reports r JOIN delivery_channels c ON c.id=r.channel_id AND c.site_id=r.site_id AND c.active JOIN sites s ON s.id=r.site_id AND s.active WHERE r.id=$1`, reportID).Scan(&delivery.ReportID, &delivery.SiteID, &delivery.SiteKey, &delivery.ChannelID, &delivery.ChannelType, &delivery.EndpointURL, &delivery.Headers, &delivery.HeadersSecret, &delivery.Name, &delivery.ReportKind, &delivery.Definition, &delivery.IntervalMinute)
 	if err != nil {
 		return err
 	}
@@ -140,7 +143,11 @@ func (a Automation) execute(ctx context.Context, delivery scheduledDelivery, con
 	}
 	var status int
 	if err == nil {
-		status, err = postDelivery(ctx, delivery, payload, config.DeliveryTimeoutSeconds)
+		var headers map[string]string
+		headers, err = a.deliveryHeaders(delivery)
+		if err == nil {
+			status, err = postDelivery(ctx, delivery, payload, config.DeliveryTimeoutSeconds, headers)
+		}
 	}
 	state := "success"
 	errorText := ""
@@ -260,7 +267,25 @@ func validateDeliveryEndpoint(raw string, allowedHosts []string) error {
 	return fmt.Errorf("delivery host %q is not in automation.allowed_webhook_hosts", host)
 }
 
-func postDelivery(ctx context.Context, delivery scheduledDelivery, payload map[string]any, timeoutSeconds int) (int, error) {
+// deliveryHeaders opens the channel credentials. They are sealed with the
+// encryption key so a restart keeps them usable without re-entering them.
+func (a Automation) deliveryHeaders(delivery scheduledDelivery) (map[string]string, error) {
+	headers := map[string]string{}
+	if delivery.HeadersSecret != nil && *delivery.HeadersSecret != "" {
+		plain, err := a.Secrets.Decrypt(*delivery.HeadersSecret)
+		if err != nil {
+			return nil, fmt.Errorf("channel headers cannot be decrypted: %w", err)
+		}
+		if err := json.Unmarshal([]byte(plain), &headers); err != nil {
+			return nil, fmt.Errorf("channel headers are malformed: %w", err)
+		}
+		return headers, nil
+	}
+	_ = json.Unmarshal(delivery.Headers, &headers)
+	return headers, nil
+}
+
+func postDelivery(ctx context.Context, delivery scheduledDelivery, payload map[string]any, timeoutSeconds int, headers map[string]string) (int, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, err
@@ -271,8 +296,6 @@ func postDelivery(ctx context.Context, delivery scheduledDelivery, payload map[s
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "Momento-Automation/1")
-	headers := map[string]string{}
-	_ = json.Unmarshal(delivery.Headers, &headers)
 	for key, value := range headers {
 		if strings.EqualFold(key, "Host") || strings.ContainsAny(key, "\r\n") || strings.ContainsAny(value, "\r\n") {
 			continue

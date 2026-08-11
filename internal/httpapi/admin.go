@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
+	"github.com/hkjang/Momento/internal/secret"
 	"github.com/hkjang/Momento/internal/service"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -63,7 +65,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listMyKeys(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT id,name,key_prefix,scopes,expires_at,last_used_at,created_at FROM api_keys WHERE user_id=$1 AND revoked_at IS NULL ORDER BY created_at DESC`, p.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT id,name,key_prefix,scopes,expires_at,last_used_at,created_at,token_secret FROM api_keys WHERE user_id=$1 AND revoked_at IS NULL ORDER BY created_at DESC`, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -76,10 +78,12 @@ func (s *Server) listMyKeys(w http.ResponseWriter, r *http.Request) {
 		var scopes []string
 		var expires, lastUsed *time.Time
 		var created time.Time
-		if err := rows.Scan(&id, &name, &prefix, &scopes, &expires, &lastUsed, &created); err != nil {
+		var stored *string
+		if err := rows.Scan(&id, &name, &prefix, &scopes, &expires, &lastUsed, &created, &stored); err != nil {
 			continue
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "prefix": prefix, "scopes": scopes, "expires_at": expires, "last_used_at": lastUsed, "created_at": created})
+		plain, _ := s.openSecret(stored)
+		out = append(out, map[string]any{"id": id, "name": name, "prefix": prefix, "scopes": scopes, "expires_at": expires, "last_used_at": lastUsed, "created_at": created, "recoverable": plain != ""})
 	}
 	writeJSON(w, 200, out)
 }
@@ -106,13 +110,13 @@ func (s *Server) createMyKey(w http.ResponseWriter, r *http.Request) {
 		expires = time.Now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
 	}
 	var id uuid.UUID
-	err = s.DB.QueryRow(r.Context(), `INSERT INTO api_keys(user_id,name,key_hash,key_prefix,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING id`, p.ID, in.Name, hash, prefix, expires).Scan(&id)
+	err = s.DB.QueryRow(r.Context(), `INSERT INTO api_keys(user_id,name,key_hash,key_prefix,expires_at,token_secret) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, p.ID, in.Name, hash, prefix, expires, s.sealSecret(plain)).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "KEY_FAILED", err.Error())
 		return
 	}
 	s.audit(r.Context(), &p, "api_key.create", "api_key", id.String(), map[string]any{"name": in.Name}, clientIP(r))
-	writeJSON(w, 201, map[string]any{"id": id, "key": plain, "prefix": prefix, "message": "This key is shown only once."})
+	writeJSON(w, 201, map[string]any{"id": id, "key": plain, "prefix": prefix, "recoverable": s.Secrets.Enabled(), "message": keyStorageMessage(s.Secrets.Enabled())})
 }
 func (s *Server) deleteMyKey(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
@@ -152,7 +156,7 @@ func (s *Server) rotateMyKey(w http.ResponseWriter, r *http.Request) {
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_key_", 32)
 	var newID uuid.UUID
-	if err := tx.QueryRow(r.Context(), `INSERT INTO api_keys(user_id,name,key_hash,key_prefix,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, p.ID, name, hash, prefix, scopes, expires).Scan(&newID); err != nil {
+	if err := tx.QueryRow(r.Context(), `INSERT INTO api_keys(user_id,name,key_hash,key_prefix,scopes,expires_at,token_secret) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id`, p.ID, name, hash, prefix, scopes, expires, s.sealSecret(plain)).Scan(&newID); err != nil {
 		writeError(w, 500, "KEY_FAILED", err.Error())
 		return
 	}
@@ -161,7 +165,7 @@ func (s *Server) rotateMyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r.Context(), &p, "api_key.rotate", "api_key", newID.String(), map[string]any{"replaces": oldID}, clientIP(r))
-	writeJSON(w, 200, map[string]any{"id": newID, "key": plain, "prefix": prefix, "message": "The previous key is revoked. This key is shown only once."})
+	writeJSON(w, 200, map[string]any{"id": newID, "key": plain, "prefix": prefix, "recoverable": s.Secrets.Enabled(), "message": "The previous key is revoked. " + keyStorageMessage(s.Secrets.Enabled())})
 }
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
@@ -229,11 +233,12 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_track_", 24)
 	serverPlain, serverHash, serverPrefix, _ := auth.NewToken("mom_server_", 32)
+	publicSiteID := siteKey()
 	var id uuid.UUID
 	var workspaceID uuid.UUID
 	err := s.DB.QueryRow(r.Context(), `SELECT id FROM workspaces ORDER BY created_at LIMIT 1`).Scan(&workspaceID)
 	if err == nil {
-		err = s.DB.QueryRow(r.Context(), `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,session_timeout_minutes,timezone,engagement_threshold_seconds) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, workspaceID, siteKey(), in.Name, in.ServiceName, hash, prefix, serverHash, serverPrefix, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Timezone, in.Engagement).Scan(&id)
+		err = s.DB.QueryRow(r.Context(), `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,session_timeout_minutes,timezone,engagement_threshold_seconds,tracking_key_secret,server_api_key_secret) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`, workspaceID, publicSiteID, in.Name, in.ServiceName, hash, prefix, serverHash, serverPrefix, normalizeDomains(in.AllowedDomains), in.SessionTimeout, in.Timezone, in.Engagement, s.sealSecret(plain), s.sealSecret(serverPlain)).Scan(&id)
 	}
 	if err != nil {
 		writeError(w, 500, "SITE_CREATE_FAILED", err.Error())
@@ -252,7 +257,19 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request) {
 		($1,'conversion_users','Conversion Users','전환 사용자 수','{"type":"unique_users","conversion":true}','number'),
 		($1,'revenue','Revenue','구매 매출 합계','{"type":"sum","event_name":"purchase","property":"value","fallback_property":"revenue"}','currency') ON CONFLICT DO NOTHING`, id)
 	s.audit(r.Context(), &p, "site.create", "site", id.String(), map[string]any{"name": in.Name}, clientIP(r))
-	writeJSON(w, 201, map[string]any{"id": id, "tracking_key": plain, "server_api_key": serverPlain, "message": "Store the keys now; they will not be shown again."})
+	endpoint := s.publicURL(r.Context(), r)
+	writeJSON(w, 201, map[string]any{
+		"id":                 id,
+		"site_id":            publicSiteID,
+		"name":               in.Name,
+		"collector_endpoint": endpoint,
+		"tracking_code":      trackingSnippet(endpoint, publicSiteID, "prd", "full"),
+		"tracking_key":       plain,
+		"server_api_key":     serverPlain,
+		"recoverable":        s.Secrets.Enabled(),
+		"csp":                cspGuidance(endpoint),
+		"message":            keyStorageMessage(s.Secrets.Enabled()),
+	})
 }
 func normalizeDomains(in []string) []string {
 	out := []string{}
@@ -364,13 +381,13 @@ func (s *Server) rotateSiteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_track_", 24)
-	tag, err := s.DB.Exec(r.Context(), `UPDATE sites SET tracking_key_hash=$2,tracking_key_prefix=$3,updated_at=now() WHERE id=$1`, id, hash, prefix)
+	tag, err := s.DB.Exec(r.Context(), `UPDATE sites SET tracking_key_hash=$2,tracking_key_prefix=$3,tracking_key_secret=$4,updated_at=now() WHERE id=$1`, id, hash, prefix, s.sealSecret(plain))
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	s.audit(r.Context(), &p, "site.key.rotate", "site", id.String(), nil, clientIP(r))
-	writeJSON(w, 200, map[string]any{"tracking_key": plain, "message": "The previous key is invalid. This key is shown only once."})
+	writeJSON(w, 200, map[string]any{"tracking_key": plain, "recoverable": s.Secrets.Enabled(), "message": "The previous key is invalid. " + keyStorageMessage(s.Secrets.Enabled())})
 }
 func (s *Server) rotateServerKey(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
@@ -380,13 +397,13 @@ func (s *Server) rotateServerKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_server_", 32)
-	tag, err := s.DB.Exec(r.Context(), `UPDATE sites SET server_api_key_hash=$2,server_api_key_prefix=$3,updated_at=now() WHERE id=$1`, id, hash, prefix)
+	tag, err := s.DB.Exec(r.Context(), `UPDATE sites SET server_api_key_hash=$2,server_api_key_prefix=$3,server_api_key_secret=$4,updated_at=now() WHERE id=$1`, id, hash, prefix, s.sealSecret(plain))
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	s.audit(r.Context(), &p, "site.server_key.rotate", "site", id.String(), nil, clientIP(r))
-	writeJSON(w, 200, map[string]any{"server_api_key": plain, "message": "The previous server key is invalid. This key is shown only once."})
+	writeJSON(w, 200, map[string]any{"server_api_key": plain, "recoverable": s.Secrets.Enabled(), "message": "The previous server key is invalid. " + keyStorageMessage(s.Secrets.Enabled())})
 }
 func (s *Server) trackingCode(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -400,18 +417,55 @@ func (s *Server) trackingCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
-	endpoint := externalURL(r)
-	var raw []byte
-	if s.DB.QueryRow(r.Context(), `SELECT value FROM settings WHERE key='general'`).Scan(&raw) == nil {
-		var v map[string]any
-		_ = json.Unmarshal(raw, &v)
-		if p, ok := v["public_url"].(string); ok && p != "" {
-			endpoint = strings.TrimSuffix(p, "/")
-		}
-	}
+	endpoint := s.publicURL(r.Context(), r)
 	environment := requestEnvironment(r)
-	code := fmt.Sprintf(`<script async src="%s/tracker.js" data-site-id="%s" data-environment="%s" data-contract-version="1"></script>`, endpoint, siteID, environment)
-	writeJSON(w, 200, map[string]string{"site_id": siteID, "environment": environment, "collector_endpoint": endpoint, "tracking_code": code})
+	code := trackingSnippet(endpoint, siteID, environment, "full")
+	writeJSON(w, 200, map[string]any{"site_id": siteID, "environment": environment, "collector_endpoint": endpoint, "tracking_code": code, "csp": cspGuidance(endpoint)})
+}
+
+func trackingSnippet(endpoint, siteID, environment, mode string) string {
+	return fmt.Sprintf(`<script async src="%s/tracker.js" data-site-id="%s" data-environment="%s" data-contract-version="1" data-mode="%s" data-auto-rum="true"></script>`,
+		html.EscapeString(strings.TrimSuffix(endpoint, "/")),
+		html.EscapeString(siteID),
+		html.EscapeString(environment),
+		html.EscapeString(mode),
+	)
+}
+
+func keyStorageMessage(recoverable bool) string {
+	if recoverable {
+		return "The key is stored encrypted with MOMENTO_ENCRYPTION_KEY and can be shown again after a restart."
+	}
+	return "Store the key now; without MOMENTO_ENCRYPTION_KEY it cannot be shown again."
+}
+
+// cspGuidance explains what the measured application has to allow. A tracked page
+// that only allows connect-src 'self' blocks the collector request, and the fix is
+// either to allow the collector origin or to proxy it as a first party path.
+func cspGuidance(endpoint string) map[string]string {
+	origin := collectorOrigin(endpoint)
+	return map[string]string{
+		"collector_origin": origin,
+		"connect_src":      origin,
+		"script_src":       origin,
+		"header":           fmt.Sprintf("Content-Security-Policy: script-src 'self' %s; connect-src 'self' %s", origin, origin),
+		"meta":             fmt.Sprintf(`<meta http-equiv="Content-Security-Policy" content="script-src 'self' %s; connect-src 'self' %s">`, origin, origin),
+		"proxy_snippet": fmt.Sprintf(`location /momento/ {
+  proxy_pass %s/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+}`, origin),
+		"proxy_snippet_note": "If the tracked application cannot change its CSP, proxy the collector on the same origin and add data-endpoint=\"/momento\" to the tracker script tag.",
+	}
+}
+
+func collectorOrigin(endpoint string) string {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(endpoint), "/")
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https") {
+		return parsed.Scheme + "://" + parsed.Host
+	}
+	return trimmed
 }
 
 func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
@@ -461,12 +515,21 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
 		return
 	}
-	if key == "oidc" && value["client_secret"] == "********" {
-		var raw []byte
-		if s.DB.QueryRow(r.Context(), `SELECT value FROM settings WHERE key='oidc'`).Scan(&raw) == nil {
-			var old map[string]any
-			_ = json.Unmarshal(raw, &old)
-			value["client_secret"] = old["client_secret"]
+	if key == "oidc" {
+		if value["client_secret"] == "********" {
+			var raw []byte
+			if s.DB.QueryRow(r.Context(), `SELECT value FROM settings WHERE key='oidc'`).Scan(&raw) == nil {
+				var old map[string]any
+				_ = json.Unmarshal(raw, &old)
+				value["client_secret"] = old["client_secret"]
+			}
+		} else if plain, ok := value["client_secret"].(string); ok && plain != "" && !secret.Sealed(plain) && s.Secrets.Enabled() {
+			sealed, sealErr := s.Secrets.Encrypt(plain)
+			if sealErr != nil {
+				writeError(w, 500, "SECRET_SEAL_FAILED", sealErr.Error())
+				return
+			}
+			value["client_secret"] = sealed
 		}
 	}
 	if err := validateAdminSetting(key, value); err != nil {
@@ -479,7 +542,8 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "SETTING_UPDATE_FAILED", err.Error())
 		return
 	}
-	if key == "security" {
+	if key == "security" || key == "general" {
+		// public_url and the extra connect origins both shape the console CSP.
 		s.reloadSecurity(r.Context())
 	}
 	s.audit(r.Context(), &p, "setting.update", "setting", key, map[string]any{"group": key}, clientIP(r))
@@ -551,6 +615,21 @@ func validateAdminSetting(key string, value map[string]any) error {
 			}
 		} else if _, ok := value["trusted_proxy_cidrs"].([]string); !ok && value["trusted_proxy_cidrs"] != nil {
 			return fmt.Errorf("trusted_proxy_cidrs must be an array")
+		}
+		if values, ok := value["additional_connect_origins"].([]any); ok {
+			for _, item := range values {
+				origin, ok := item.(string)
+				if !ok {
+					return fmt.Errorf("additional_connect_origins must contain strings")
+				}
+				if normalizeConnectOrigin(origin) == "" {
+					return fmt.Errorf("invalid connect origin %q; use scheme://host[:port]", origin)
+				}
+			}
+		} else if value["additional_connect_origins"] != nil {
+			if _, ok := value["additional_connect_origins"].([]string); !ok {
+				return fmt.Errorf("additional_connect_origins must be an array")
+			}
 		}
 	case "storage":
 		engine, _ := value["engine"].(string)

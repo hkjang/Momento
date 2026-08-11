@@ -5,15 +5,18 @@ import {
   Button,
   Card,
   Chip,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
 import AddRounded from "@mui/icons-material/AddRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
+import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { dateRangeValues, get, post, rangeQuery } from "../api/client";
@@ -63,6 +66,11 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const [funnelMode, setFunnelMode] = useState("closed");
   const [withinMinutes, setWithinMinutes] = useState(0);
   const [segmentId, setSegmentId] = useState("");
+  const [pathDays, setPathDays] = useState(30);
+  const [pathView, setPathView] = useState<"pages" | "events" | "all">(
+    "pages",
+  );
+  const [includeSystemEvents, setIncludeSystemEvents] = useState(false);
   const segments = useQuery({
     queryKey: ["segments", site?.site_id],
     queryFn: () =>
@@ -104,10 +112,18 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       }),
   });
   const paths = useQuery({
-    queryKey: ["paths", site?.site_id, site?.timezone, environment],
+    queryKey: [
+      "paths",
+      site?.site_id,
+      site?.timezone,
+      environment,
+      pathDays,
+      pathView,
+      includeSystemEvents,
+    ],
     queryFn: () =>
       get<PathTransition[]>(
-        `/api/v1/sites/${site!.site_id}/path?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/path?${rangeQuery(pathDays, site!.timezone)}&view=${pathView}&include_system=${includeSystemEvents}`,
       ),
     enabled: !!site && mode === "path",
   });
@@ -125,14 +141,28 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       .map((item) => item.query_name),
   ];
   if (mode === "path") {
-    if (paths.isLoading) return <Loading />;
-    if (paths.error) return <ErrorState error={paths.error} />;
     const rows = paths.data || [];
     const flow = buildPathFlow(rows);
-    const totalMoves = flow.links.reduce(
-      (sum, link) => sum + link.value,
-      0,
-    );
+    const totalMoves = rows.reduce((sum, row) => sum + row.count, 0);
+    const pathLabels = {
+      pages: {
+        title: "페이지 이동 경로",
+        description:
+          "업무 이벤트 사이를 건너뛰고 같은 세션의 다음 Page View를 연결합니다.",
+      },
+      events: {
+        title: "이벤트 행동 경로",
+        description: "Page View를 제외한 업무 이벤트의 연속 흐름입니다.",
+      },
+      all: {
+        title: "페이지 · 이벤트 통합 경로",
+        description: "같은 세션에서 연속으로 발생한 페이지와 이벤트입니다.",
+      },
+    }[pathView];
+    const tableRows = rows.map((row) => ({
+      ...row,
+      share: totalMoves ? (row.count * 100) / totalMoves : 0,
+    }));
     return (
       <Stack spacing={2}>
         <Card sx={{ p: 2.5 }}>
@@ -144,13 +174,13 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
             mb={2}
           >
             <Box>
-              <Typography fontWeight={700}>상위 사용자 이동</Typography>
+              <Typography fontWeight={700}>{pathLabels.title}</Typography>
               <Typography variant="body2" color="text.secondary">
-                동일 세션에서 연속으로 발생한 페이지·이벤트 전환입니다.
+                {pathLabels.description}
               </Typography>
             </Box>
             <Stack direction="row" gap={0.75} flexWrap="wrap">
-              <Chip size="small" label={`전환 ${flow.links.length}개`} />
+              <Chip size="small" label={`경로 ${rows.length}개`} />
               <Chip
                 size="small"
                 variant="outlined"
@@ -159,11 +189,77 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
               <Chip
                 size="small"
                 variant="outlined"
-                label={`${environment.toUpperCase()} · 최근 30일`}
+                label={`${environment.toUpperCase()} · 최근 ${pathDays}일`}
               />
             </Stack>
           </Stack>
-          {flow.links.length ? (
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={1.5}
+            alignItems={{ md: "center" }}
+            mb={2}
+          >
+            <TextField
+              select
+              size="small"
+              label="분석 기간"
+              value={pathDays}
+              onChange={(event) => setPathDays(Number(event.target.value))}
+              sx={{ minWidth: 140 }}
+            >
+              <MenuItem value={7}>최근 7일</MenuItem>
+              <MenuItem value={30}>최근 30일</MenuItem>
+              <MenuItem value={90}>최근 90일</MenuItem>
+            </TextField>
+            <TextField
+              select
+              size="small"
+              label="경로 기준"
+              value={pathView}
+              onChange={(event) =>
+                setPathView(event.target.value as "pages" | "events" | "all")
+              }
+              sx={{ minWidth: 190 }}
+            >
+              <MenuItem value="pages">페이지 이동</MenuItem>
+              <MenuItem value="events">업무 이벤트</MenuItem>
+              <MenuItem value="all">페이지 + 이벤트</MenuItem>
+            </TextField>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={includeSystemEvents}
+                  onChange={(event) =>
+                    setIncludeSystemEvents(event.target.checked)
+                  }
+                />
+              }
+              label="시스템 이벤트 포함"
+              sx={{ mr: "auto" }}
+            />
+            {paths.dataUpdatedAt > 0 && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                {new Date(paths.dataUpdatedAt).toLocaleTimeString("ko-KR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                에 갱신
+              </Typography>
+            )}
+            <Button
+              variant="outlined"
+              startIcon={<RefreshRounded />}
+              disabled={paths.isFetching}
+              onClick={() => void paths.refetch()}
+            >
+              새로고침
+            </Button>
+          </Stack>
+          {paths.isLoading ? (
+            <Loading label="이동 경로를 계산하는 중" />
+          ) : paths.error ? (
+            <ErrorState error={paths.error} retry={() => paths.refetch()} />
+          ) : flow.links.length ? (
             <ReactECharts
               style={{ height: 480 }}
               option={{
@@ -189,7 +285,7 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
                     emphasis: { focus: "adjacency" },
                     label: {
                       formatter: (params: { data: PathNode }) =>
-                        params.data.displayName,
+                        params.data.shortName,
                     },
                     lineStyle: {
                       color: "gradient",
@@ -205,17 +301,32 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
           ) : (
             <Empty
               title="표시할 이동 경로가 없습니다"
-              description="선택한 환경에서 한 세션에 두 개 이상의 이벤트가 수집되면 경로가 표시됩니다."
+              description={`선택한 기간과 환경에서 한 세션에 두 개 이상의 ${pathView === "pages" ? "Page View가" : "이벤트가"} 수집되면 경로가 표시됩니다.`}
             />
           )}
         </Card>
         <DataTable
+          title="상위 이동 상세"
+          description="자기 자신으로 반복된 이동은 제외하며 비중은 조회된 상위 경로 기준입니다."
+          exportFilename={`momento-path-${pathView}-${pathDays}d.csv`}
+          searchable
           columns={[
             { key: "source", label: "시작" },
             { key: "target", label: "다음" },
-            { key: "count", label: "이동", align: "right" },
+            {
+              key: "count",
+              label: "이동",
+              align: "right",
+              format: (value) => Number(value).toLocaleString(),
+            },
+            {
+              key: "share",
+              label: "비중",
+              align: "right",
+              format: (value) => `${Number(value).toFixed(1)}%`,
+            },
           ]}
-          rows={rows}
+          rows={tableRows}
         />
       </Stack>
     );

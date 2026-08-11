@@ -70,6 +70,15 @@
 - Feature Flag/Experiment Registry, Variant Lift와 Confidence
 - Change Calendar Annotation과 19-tool Analytics MCP surface
 
+## v0.9 — implemented
+
+- `MOMENTO_ENCRYPTION_KEY` 기반 AES-256-GCM 비밀값 저장으로 재기동 후에도 API key·Tracking Key·Server API Key·OIDC Secret·Delivery Header 유지
+- 감사 기록이 남는 사이트·개인 키 재조회, `MOMENTO_ENCRYPTION_KEY_PREVIOUS` 병행 복호화와 관리자 재암호화
+- 측정 대상 애플리케이션 CSP 차단 해소: 정책·meta·Reverse Proxy 스니펫 제공, SDK `data-endpoint` first-party 프록시와 CSP 위반 진단
+- Public URL Origin과 `additional_connect_origins` 기반 콘솔 CSP 구성, Collector 응답의 불필요한 Document CSP 제거
+- 수집 수신·CSP·허용 도메인·환경 일치·적재 파이프라인·키 저장 상태를 함께 보고하는 설치 진단 API와 콘솔
+- 콘솔에서 사용 가능해진 Session 리포트, Raw Event Export, Delivery 이력·삭제, Event Contract 활성화·CI 검증, Semantic Metric 조회, Workspace Business Journey
+
 ## Next schema-compatible increments
 
 - First/last/last-non-direct attribution and enterprise channel classification

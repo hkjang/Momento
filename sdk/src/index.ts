@@ -91,6 +91,33 @@ function sanitizedError(value: unknown): string {
     .slice(0, 500);
 }
 
+/**
+ * resolveEndpoint decides where events are sent.
+ *
+ * `data-endpoint` accepts an absolute collector URL or a same-origin path. A path
+ * is the escape hatch for applications whose Content-Security-Policy only allows
+ * `connect-src 'self'`: proxy the collector under, for example, `/momento` and the
+ * request stays first party instead of being blocked.
+ */
+export function resolveEndpoint(
+  configured: string | undefined,
+  scriptSrc: string,
+  fallbackOrigin: string,
+): string {
+  const value = (configured || "").trim();
+  if (!value) {
+    try {
+      return scriptSrc ? new URL(scriptSrc, fallbackOrigin).origin : fallbackOrigin;
+    } catch {
+      return fallbackOrigin;
+    }
+  }
+  const trimmed = value.replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (!trimmed || trimmed === "/") return fallbackOrigin;
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
 function hasTraffic(context: TrafficContext): boolean {
   return Object.values(context).some(Boolean);
 }
@@ -147,6 +174,7 @@ export class MomentoTracker {
   private trackedScroll = new Set<number>();
   private consentState: ConsentState = "unknown";
   private acquisition: TrafficContext = {};
+  private cspReported = false;
 
   init(options: MomentoOptions) {
     if (!options.siteId || !options.endpoint)
@@ -178,6 +206,7 @@ export class MomentoTracker {
     this.consentState = this.readConsentState();
     this.loadIdentity();
     this.restoreOffline();
+    if (!this.initialized) this.installCSPDiagnostics();
     if (this.options.autoTrack && !this.initialized) this.installAutoTracking();
     if (this.options.autoRUM && !this.initialized) this.installRUM();
     this.initialized = true;
@@ -227,6 +256,43 @@ export class MomentoTracker {
     else this.scheduleFlush();
   }
 
+  /** collectorURL keeps the absolute and proxied forms in one place. */
+  private collectorURL(): string {
+    return `${this.options?.endpoint || ""}/collect/v1/events`;
+  }
+
+  /**
+   * installCSPDiagnostics turns a silent browser block into an actionable message.
+   * A tracked page that ships `connect-src 'self'` rejects the collector request,
+   * and the console error names the exact policy to add.
+   */
+  private installCSPDiagnostics() {
+    if (typeof addEventListener !== "function") return;
+    addEventListener("securitypolicyviolation", (event: Event) => {
+      if (this.cspReported) return;
+      const violation = event as SecurityPolicyViolationEvent;
+      const blocked = String(violation.blockedURI || "");
+      const endpoint = this.options?.endpoint || "";
+      if (!blocked || !endpoint) return;
+      let origin = "";
+      try {
+        origin = new URL(
+          endpoint.startsWith("http") ? endpoint : location.origin + endpoint,
+        ).origin;
+      } catch {
+        return;
+      }
+      if (!blocked.startsWith(origin)) return;
+      this.cspReported = true;
+      const directive = String(
+        violation.effectiveDirective || violation.violatedDirective || "connect-src",
+      );
+      console.error(
+        `[Momento] ${directive} 위반으로 수집이 차단되었습니다. 측정 대상 애플리케이션의 CSP에 "script-src 'self' ${origin}; connect-src 'self' ${origin}"을 추가하거나, ${origin} 을 같은 Origin 경로로 프록시하고 tracker script에 data-endpoint="/momento"를 지정하십시오.`,
+      );
+    });
+  }
+
   async flush(useBeacon = false) {
     if (!this.options || !this.queue.length || !this.canTrack()) return;
     const events = this.queue.splice(0, this.options.batchSize || 10);
@@ -244,20 +310,17 @@ export class MomentoTracker {
     try {
       if (useBeacon && navigator.sendBeacon) {
         const ok = navigator.sendBeacon(
-          `${this.options.endpoint}/collect/v1/events`,
+          this.collectorURL(),
           new Blob([payload], { type: "text/plain;charset=UTF-8" }),
         );
         if (!ok) throw new Error("sendBeacon rejected payload");
       } else {
-        const response = await fetch(
-          `${this.options.endpoint}/collect/v1/events`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: payload,
-            keepalive: true,
-          },
-        );
+        const response = await fetch(this.collectorURL(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        });
         if (!response.ok)
           throw new Error(`collector returned ${response.status}`);
       }
@@ -757,7 +820,11 @@ window.analytics = tracker;
 
 const script = document.currentScript as HTMLScriptElement | null;
 if (script?.dataset.siteId) {
-  const endpoint = script.src ? new URL(script.src).origin : location.origin;
+  const endpoint = resolveEndpoint(
+    script.dataset.endpoint,
+    script.src,
+    location.origin,
+  );
   tracker.init({
     siteId: script.dataset.siteId,
     endpoint,

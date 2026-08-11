@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.8.0
+  version: 0.9.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -409,6 +409,29 @@ paths:
     get:
       summary: List site-scoped delivery outcomes with redacted errors and HTTP status
       responses: {'200': {description: Delivery runs}}
+  /api/v1/sites/{siteId}/install-diagnostics:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Diagnose SDK installation, CSP allowance, allowed domains, environment match, and ingestion pipeline
+      responses: {'200': {description: Diagnostic report}, '404': {$ref: '#/components/responses/Error'}}
+  /api/v1/sites/{id}/reveal-keys:
+    parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: Show the stored tracking and server API keys again; requires MOMENTO_ENCRYPTION_KEY and an interactive session
+      responses: {'200': {description: Stored keys or the reason they are unavailable}, '403': {$ref: '#/components/responses/Error'}}
+  /api/v1/me/keys/{id}/reveal:
+    parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post:
+      summary: Show a stored personal API key again instead of rotating it
+      responses: {'200': {description: Stored key or the reason it is unavailable}, '403': {$ref: '#/components/responses/Error'}}
+  /api/v1/system/encryption:
+    get:
+      summary: Report secret encryption state, key fingerprint, and recoverable key counts
+      responses: {'200': {description: Encryption status}}
+  /api/v1/system/encryption/rekey:
+    post:
+      summary: Re-seal stored secrets with the current primary encryption key
+      responses: {'200': {description: Reseal result}, '400': {$ref: '#/components/responses/Error'}}
   /mcp:
     post:
       summary: MCP Streamable HTTP JSON-RPC endpoint

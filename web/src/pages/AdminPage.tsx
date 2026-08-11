@@ -21,6 +21,8 @@ import {
   ListItemText,
   MenuItem,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
@@ -35,6 +37,7 @@ import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import ErrorOutlineRounded from "@mui/icons-material/ErrorOutlineRounded";
 import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
 import HomeRounded from "@mui/icons-material/HomeRounded";
+import IntegrationInstructionsRounded from "@mui/icons-material/IntegrationInstructionsRounded";
 import KeyRounded from "@mui/icons-material/KeyRounded";
 import LanRounded from "@mui/icons-material/LanRounded";
 import PeopleAltRounded from "@mui/icons-material/PeopleAltRounded";
@@ -60,7 +63,14 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
-import { ErrorState, Loading, NoSite } from "../components/States";
+import { Empty, ErrorState, Loading, NoSite } from "../components/States";
+import {
+  buildCSPGuidance,
+  buildSDKSnippet,
+  consentExample,
+  identifyAndEventExample,
+  type SDKTrackingMode,
+} from "./sdkGuide";
 
 const adminSections = [
   {
@@ -349,6 +359,16 @@ type AuditSummary = {
   created_at: string;
 };
 
+type EncryptionStatus = {
+  enabled: boolean;
+  algorithm: string;
+  key_id: string;
+  previous_key_ids: string[];
+  recoverable_keys: number;
+  unrecoverable_keys: number;
+  pending_reseal: number;
+};
+
 function relativeTime(value: string) {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return "—";
@@ -411,6 +431,10 @@ function AdminOverview() {
     queryKey: ["audit"],
     queryFn: () => get<AuditSummary[]>("/api/v1/audit"),
   });
+  const encryption = useQuery({
+    queryKey: ["encryption-status"],
+    queryFn: () => get<EncryptionStatus>("/api/v1/system/encryption"),
+  });
   const privacy = settings.data?.privacy?.value || {};
   const oidc = settings.data?.oidc?.value || {};
   const activeSites = sites.filter((item) => item.active);
@@ -465,6 +489,14 @@ function AdminOverview() {
       to: "/admin?section=users",
     },
     {
+      label: "키 영구 저장",
+      detail: encryption.data?.enabled
+        ? `MOMENTO_ENCRYPTION_KEY(${encryption.data.key_id})로 ${encryption.data.recoverable_keys}개 키를 암호화 저장했습니다.`
+        : "MOMENTO_ENCRYPTION_KEY가 없어 발급한 키를 재기동 후 다시 조회할 수 없습니다.",
+      ready: encryption.data?.enabled === true,
+      to: "/admin?section=settings",
+    },
+    {
       label: "Enterprise SSO",
       detail: oidc.enabled
         ? "OIDC 로그인이 활성화되어 있습니다."
@@ -473,7 +505,8 @@ function AdminOverview() {
       to: "/admin?section=settings",
     },
   ];
-  const readinessLoading = settings.isLoading || users.isLoading;
+  const readinessLoading =
+    settings.isLoading || users.isLoading || encryption.isLoading;
   const readinessScore = Math.round(
     (readiness.filter((item) => item.ready).length / readiness.length) * 100,
   );
@@ -1028,11 +1061,13 @@ function AdminOverview() {
   );
 }
 
-function CopyField({ value }: { value: string }) {
+function CopyField({ value, label }: { value: string; label?: string }) {
   return (
     <TextField
       fullWidth
+      label={label}
       multiline={value.includes("\n")}
+      minRows={value.includes("\n") ? 3 : undefined}
       value={value}
       slotProps={{
         input: {
@@ -1051,21 +1086,440 @@ function CopyField({ value }: { value: string }) {
     />
   );
 }
+
+interface SiteGuide {
+  id: string;
+  siteId: string;
+  name: string;
+  endpoint?: string;
+  trackingKey?: string;
+  serverAPIKey?: string;
+}
+
+interface TrackingCode {
+  site_id: string;
+  environment: string;
+  collector_endpoint: string;
+  tracking_code: string;
+}
+
+interface DiagnosticCheck {
+  id: string;
+  title: string;
+  status: "ok" | "warn" | "fail" | "info";
+  detail: string;
+  action?: string;
+}
+
+interface InstallDiagnostics {
+  site_id: string;
+  environment: string;
+  collector_endpoint: string;
+  status: "ok" | "warn" | "fail";
+  checks: DiagnosticCheck[];
+  metrics: Record<string, number | string | null>;
+  observed_origins: string[];
+  unlisted_origins: string[];
+}
+
+const diagnosticColor = {
+  ok: "success",
+  warn: "warning",
+  fail: "error",
+  info: "info",
+} as const;
+
+function SiteSDKGuideDialog({
+  guide,
+  close,
+}: {
+  guide: SiteGuide;
+  close(): void;
+}) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState(0);
+  const [environment, setEnvironment] = useState("prd");
+  const [mode, setMode] = useState<SDKTrackingMode>("full");
+  const [useProxy, setUseProxy] = useState(false);
+  const [proxyPath, setProxyPath] = useState("/momento");
+  const tracking = useQuery({
+    queryKey: ["tracking-code", guide.id, environment],
+    queryFn: () =>
+      get<TrackingCode>(
+        `/api/v1/sites/${guide.id}/tracking-code?environment=${environment}`,
+      ),
+    enabled: !guide.endpoint,
+  });
+  const endpoint = guide.endpoint || tracking.data?.collector_endpoint || "";
+  const snippet = endpoint
+    ? buildSDKSnippet({
+        endpoint,
+        siteId: guide.siteId,
+        environment,
+        mode,
+        proxyPath: useProxy ? proxyPath : undefined,
+      })
+    : "Collector 주소를 확인하고 있습니다…";
+  const csp = buildCSPGuidance(endpoint || location.origin, proxyPath);
+  const diagnostics = useQuery({
+    queryKey: ["install-diagnostics", guide.siteId, environment],
+    queryFn: () =>
+      get<InstallDiagnostics>(
+        `/api/v1/sites/${guide.siteId}/install-diagnostics?environment=${environment}`,
+      ),
+    enabled: tab === 2,
+  });
+  const modes: Array<{
+    value: SDKTrackingMode;
+    label: string;
+    description: string;
+  }> = [
+    {
+      value: "full",
+      label: "Full",
+      description: "허용된 내부 서비스에서 Visitor와 Session을 유지합니다.",
+    },
+    {
+      value: "consent-required",
+      label: "동의 필수",
+      description: "동의 전에는 아무 이벤트도 수집하지 않습니다.",
+    },
+    {
+      value: "cookieless",
+      label: "Cookieless",
+      description: "이벤트는 수집하지만 브라우저에 식별자를 저장하지 않습니다.",
+    },
+  ];
+
+  return (
+    <Dialog open maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Stack direction="row" gap={1.2} alignItems="center">
+          <IntegrationInstructionsRounded color="primary" />
+          <Box>
+            <Typography variant="h6">JavaScript SDK 연동</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {guide.name} · {guide.siteId}
+            </Typography>
+          </Box>
+        </Stack>
+      </DialogTitle>
+      <DialogContent dividers>
+        {(guide.trackingKey || guide.serverAPIKey) && (
+          <Alert severity="warning" sx={{ mb: 2.5 }}>
+            <Typography fontWeight={700} mb={1}>
+              생성된 키는 이 창을 닫으면 다시 볼 수 없습니다.
+            </Typography>
+            <Stack spacing={2}>
+              {guide.trackingKey && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Tracking Key · 직접 Collector 연동용, 기본 JS SDK는 사용하지 않음
+                  </Typography>
+                  <CopyField value={guide.trackingKey} />
+                </Box>
+              )}
+              {guide.serverAPIKey && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Server API Key · Origin이 없는 서버 전송의 X-Momento-Key
+                  </Typography>
+                  <CopyField value={guide.serverAPIKey} />
+                </Box>
+              )}
+            </Stack>
+          </Alert>
+        )}
+
+        <Tabs
+          value={tab}
+          onChange={(_, value) => setTab(value)}
+          variant="scrollable"
+          allowScrollButtonsMobile
+          sx={{ mb: 2.5 }}
+        >
+          <Tab label="1. SDK 설치" />
+          <Tab label="2. 사용자 · 이벤트" />
+          <Tab label="3. 설치 진단" />
+          <Tab label="4. 수집 확인" />
+        </Tabs>
+
+        {tab === 0 && (
+          <Stack spacing={2.2}>
+            <Alert severity="info">
+              아래 코드를 서비스의 <strong>&lt;head&gt;</strong> 안에 넣으세요.
+              Page View, SPA 이동, 클릭, Form, 오류와 Web Vitals가 자동
+              수집됩니다. 브라우저 SDK에는 비밀 키를 넣지 않습니다.
+            </Alert>
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+              <TextField
+                select
+                fullWidth
+                label="수집 환경"
+                value={environment}
+                onChange={(event) => setEnvironment(event.target.value)}
+                helperText="배포 환경과 Momento 환경 이름을 맞추세요."
+              >
+                <MenuItem value="dev">dev · Development</MenuItem>
+                <MenuItem value="stg">stg · Staging</MenuItem>
+                <MenuItem value="prd">prd · Production</MenuItem>
+              </TextField>
+              <TextField
+                select
+                fullWidth
+                label="개인정보 수집 모드"
+                value={mode}
+                onChange={(event) =>
+                  setMode(event.target.value as SDKTrackingMode)
+                }
+                helperText={
+                  modes.find((item) => item.value === mode)?.description
+                }
+              >
+                {modes.map((item) => (
+                  <MenuItem key={item.value} value={item.value}>
+                    {item.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </Stack>
+            {tracking.error && (
+              <Alert severity="error">
+                설치 코드 주소를 가져오지 못했습니다. {tracking.error.message}
+              </Alert>
+            )}
+            <CopyField label="설치 코드" value={snippet} />
+            <Card variant="outlined" sx={{ p: 2 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                justifyContent="space-between"
+                alignItems={{ sm: "center" }}
+                gap={1}
+                mb={1}
+              >
+                <Typography fontWeight={700}>
+                  Content-Security-Policy 허용
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={useProxy}
+                      onChange={(event) => setUseProxy(event.target.checked)}
+                    />
+                  }
+                  label="CSP를 바꿀 수 없어 같은 Origin으로 프록시"
+                />
+              </Stack>
+              <Typography variant="body2" color="text.secondary" mb={1.5}>
+                측정 대상 애플리케이션의 CSP가 <code>connect-src &apos;self&apos;</code>
+                {" "}
+                수준이면 수집 요청이 차단됩니다. 아래 정책을 추가하거나, 프록시
+                방식을 선택해 <code>data-endpoint</code>로 first-party 경로를
+                사용하세요.
+              </Typography>
+              {useProxy ? (
+                <Stack spacing={1.5}>
+                  <TextField
+                    size="small"
+                    label="프록시 경로"
+                    value={proxyPath}
+                    onChange={(event) => setProxyPath(event.target.value)}
+                    helperText="애플리케이션 도메인 아래에서 Collector로 전달할 경로"
+                  />
+                  <CopyField label="Reverse Proxy 설정 (nginx)" value={csp.proxy} />
+                </Stack>
+              ) : (
+                <Stack spacing={1.5}>
+                  <CopyField label="응답 헤더" value={csp.header} />
+                  <CopyField label="meta 태그" value={csp.meta} />
+                </Stack>
+              )}
+            </Card>
+            <Card variant="outlined" sx={{ p: 2 }}>
+              <Typography fontWeight={700} mb={1}>
+                운영 배포 시 권장 속성
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                배포 영향 분석이 필요하면 script에
+                {" "}
+                <code>data-release-version</code>, <code>data-git-sha</code>,
+                {" "}
+                <code>data-deployment-id</code>를 추가하세요. 버튼 문구는
+                개인정보 위험 때문에 기본 수집하지 않으며, 필요할 때만
+                <code> data-collect-element-text=&quot;true&quot;</code>를 사용하세요.
+              </Typography>
+            </Card>
+          </Stack>
+        )}
+
+        {tab === 1 && (
+          <Stack spacing={2.2}>
+            <Alert severity="warning">
+              이메일·전화번호·주민번호를 user ID나 속성으로 보내지 마세요.
+              SSO의 사번을 그대로 쓰기보다 내부 비식별 ID를 권장합니다.
+            </Alert>
+            <CopyField label="사용자 식별과 업무 이벤트 예시" value={identifyAndEventExample} />
+            <Typography variant="body2" color="text.secondary">
+              Event 이름과 Property는 관리자 → 이벤트 스키마의 Contract와
+              맞추세요. 세션 전체에 필요한 값은 Event Property 대신
+              <code> setSessionProperties()</code>에 둡니다.
+            </Typography>
+            {mode === "consent-required" && (
+              <CopyField label="동의 배너 연결 예시" value={consentExample} />
+            )}
+          </Stack>
+        )}
+
+        {tab === 2 && (
+          <Stack spacing={2}>
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              alignItems="center"
+            >
+              <Typography variant="body2" color="text.secondary">
+                선택한 {environment.toUpperCase()} 환경의 수집 상태를 서버에서
+                직접 점검합니다.
+              </Typography>
+              <Button
+                size="small"
+                startIcon={<RefreshRounded />}
+                onClick={() => void diagnostics.refetch()}
+                disabled={diagnostics.isFetching}
+              >
+                다시 점검
+              </Button>
+            </Stack>
+            {diagnostics.isLoading ? (
+              <Loading />
+            ) : diagnostics.error ? (
+              <ErrorState error={diagnostics.error} />
+            ) : diagnostics.data ? (
+              <Stack spacing={1.4}>
+                <Alert
+                  severity={
+                    diagnostics.data.status === "ok"
+                      ? "success"
+                      : diagnostics.data.status === "warn"
+                        ? "warning"
+                        : "error"
+                  }
+                >
+                  최근 1시간 {String(diagnostics.data.metrics.events_last_hour ?? 0)}건,
+                  24시간 {String(diagnostics.data.metrics.events_last_24h ?? 0)}건 수신했습니다.
+                </Alert>
+                {diagnostics.data.checks.map((check) => (
+                  <Card key={check.id} variant="outlined" sx={{ p: 1.8 }}>
+                    <Stack direction="row" gap={1.2} alignItems="center" mb={0.5}>
+                      <Chip
+                        size="small"
+                        color={diagnosticColor[check.status]}
+                        label={check.status.toUpperCase()}
+                      />
+                      <Typography fontWeight={700}>{check.title}</Typography>
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary">
+                      {check.detail}
+                    </Typography>
+                    {check.action && (
+                      <Box mt={1}>
+                        <CopyField value={check.action} />
+                      </Box>
+                    )}
+                  </Card>
+                ))}
+                {diagnostics.data.observed_origins.length > 0 && (
+                  <Card variant="outlined" sx={{ p: 1.8 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      최근 24시간 관측된 도메인
+                    </Typography>
+                    <Stack direction="row" gap={0.5} mt={0.8} flexWrap="wrap">
+                      {diagnostics.data.observed_origins.map((origin) => (
+                        <Chip
+                          key={origin}
+                          size="small"
+                          label={origin}
+                          color={
+                            diagnostics.data!.unlisted_origins.includes(origin)
+                              ? "warning"
+                              : "default"
+                          }
+                        />
+                      ))}
+                    </Stack>
+                  </Card>
+                )}
+              </Stack>
+            ) : null}
+          </Stack>
+        )}
+
+        {tab === 3 && (
+          <Stack spacing={1.4}>
+            {[
+              "허용 도메인에 실제 서비스 Host 또는 와일드카드가 등록되어 있는지 확인",
+              "측정 대상 애플리케이션의 CSP가 collector Origin을 허용하는지 확인",
+              "브라우저 Network에서 tracker.js가 200으로 로드되는지 확인",
+              "collect/v1/events 요청이 202 Accepted를 반환하는지 확인",
+              "Tracking Debugger에서 선택한 환경의 page_view와 업무 이벤트 확인",
+              "운영 전 이벤트 스키마와 PII 정책을 등록하고 Data Quality 경고 확인",
+            ].map((item, index) => (
+              <Stack key={item} direction="row" spacing={1.2} alignItems="flex-start">
+                <CheckCircleRounded color="success" fontSize="small" />
+                <Typography variant="body2">
+                  {index + 1}. {item}
+                </Typography>
+              </Stack>
+            ))}
+            <Alert severity="info" sx={{ mt: 1 }}>
+              수집이 보이지 않으면 환경 이름, Origin 허용 목록, 브라우저 DNT,
+              동의 상태를 먼저 확인하세요. <strong>동의 필수</strong> 모드는
+              <code> analytics.consent.grant()</code> 전까지 정상적으로 아무
+              이벤트도 보내지 않습니다.
+            </Alert>
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button
+          onClick={() => {
+            close();
+            navigate("/admin?section=debugger");
+          }}
+          startIcon={<BugReportRounded />}
+        >
+          Tracking Debugger
+        </Button>
+        <Button variant="contained" onClick={close}>
+          완료
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
 function SecretDialog({
   title,
   secret,
+  recoverable,
+  note,
   close,
 }: {
   title: string;
   secret: string;
+  recoverable?: boolean;
+  note?: string;
   close(): void;
 }) {
   return (
     <Dialog open onClose={close} maxWidth="sm" fullWidth>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          이 값은 지금 한 번만 표시됩니다. 안전한 곳에 복사하세요.
+        <Alert severity={recoverable ? "info" : "warning"} sx={{ mb: 2 }}>
+          {note ||
+            (recoverable
+              ? "이 키는 MOMENTO_ENCRYPTION_KEY로 암호화 저장되어 재기동 후에도 다시 조회할 수 있습니다."
+              : "이 값은 지금 한 번만 표시됩니다. 안전한 곳에 복사하세요.")}
         </Alert>
         <CopyField value={secret} />
       </DialogContent>
@@ -1084,7 +1538,13 @@ function SitesAdmin() {
     queryFn: () => get<Site[]>("/api/v1/sites"),
   });
   const [open, setOpen] = useState(false);
-  const [secret, setSecret] = useState("");
+  const [secret, setSecret] = useState<{
+    title: string;
+    value: string;
+    recoverable?: boolean;
+    note?: string;
+  } | null>(null);
+  const [sdkGuide, setSDKGuide] = useState<SiteGuide | null>(null);
   const [name, setName] = useState("");
   const [service, setService] = useState("");
   const [domains, setDomains] = useState("");
@@ -1093,7 +1553,14 @@ function SitesAdmin() {
   const [editing, setEditing] = useState<Site | null>(null);
   const create = useMutation({
     mutationFn: () =>
-      post<{ tracking_key: string; server_api_key: string }>("/api/v1/sites", {
+      post<{
+        id: string;
+        site_id: string;
+        name: string;
+        collector_endpoint: string;
+        tracking_key: string;
+        server_api_key: string;
+      }>("/api/v1/sites", {
         name,
         service_name: service,
         allowed_domains: domains
@@ -1105,27 +1572,77 @@ function SitesAdmin() {
         engagement_threshold_seconds: engagementThreshold,
       }),
     onSuccess: async (d) => {
-      setSecret(
-        `Tracking Key: ${d.tracking_key}\nServer API Key: ${d.server_api_key}`,
-      );
+      setSDKGuide({
+        id: d.id,
+        siteId: d.site_id,
+        name: d.name,
+        endpoint: d.collector_endpoint,
+        trackingKey: d.tracking_key,
+        serverAPIKey: d.server_api_key,
+      });
       setOpen(false);
       setName("");
+      setService("");
+      setDomains("");
       await qc.invalidateQueries({ queryKey: ["admin-sites"] });
       await refresh();
     },
   });
   const rotate = useMutation({
     mutationFn: (id: string) =>
-      post<{ tracking_key: string }>(`/api/v1/sites/${id}/rotate-key`),
-    onSuccess: (d) => setSecret(d.tracking_key),
+      post<{ tracking_key: string; recoverable: boolean }>(
+        `/api/v1/sites/${id}/rotate-key`,
+      ),
+    onSuccess: (d) =>
+      setSecret({
+        title: "새 Tracking Key",
+        value: d.tracking_key,
+        recoverable: d.recoverable,
+      }),
   });
   const rotateServer = useMutation({
     mutationFn: (id: string) =>
-      post<{ server_api_key: string }>(`/api/v1/sites/${id}/rotate-server-key`),
-    onSuccess: (d) => setSecret(d.server_api_key),
+      post<{ server_api_key: string; recoverable: boolean }>(
+        `/api/v1/sites/${id}/rotate-server-key`,
+      ),
+    onSuccess: (d) =>
+      setSecret({
+        title: "새 Server API Key",
+        value: d.server_api_key,
+        recoverable: d.recoverable,
+      }),
+  });
+  // Keys are sealed with MOMENTO_ENCRYPTION_KEY, so an administrator can read them
+  // again after a restart instead of rotating a key just to see it.
+  const reveal = useMutation({
+    mutationFn: (id: string) =>
+      post<{
+        tracking_key?: string;
+        server_api_key?: string;
+        tracking_key_reason?: string;
+        server_api_key_reason?: string;
+      }>(`/api/v1/sites/${id}/reveal-keys`),
+    onSuccess: (d) => {
+      const lines = [
+        d.tracking_key
+          ? `Tracking Key: ${d.tracking_key}`
+          : `Tracking Key: 조회 불가 · ${d.tracking_key_reason || ""}`,
+        d.server_api_key
+          ? `Server API Key: ${d.server_api_key}`
+          : `Server API Key: 조회 불가 · ${d.server_api_key_reason || ""}`,
+      ];
+      setSecret({
+        title: "저장된 사이트 키",
+        value: lines.join("\n"),
+        recoverable: Boolean(d.tracking_key || d.server_api_key),
+        note: d.tracking_key || d.server_api_key
+          ? "암호화 저장된 키를 복호화해 표시했습니다. 조회 사실은 Audit Log에 기록됩니다."
+          : "저장된 키가 없습니다. MOMENTO_ENCRYPTION_KEY를 설정한 뒤 키를 한 번 회전하세요.",
+      });
+    },
   });
   if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
     <>
       <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -1150,9 +1667,13 @@ function SitesAdmin() {
           gap: 2,
         }}
       >
-        {q.data!.map((site) => (
+        {q.data!.length ? q.data!.map((site) => (
           <Card key={site.id} sx={{ p: 2.5 }}>
-            <Stack direction="row" justifyContent="space-between">
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              justifyContent="space-between"
+              gap={1.5}
+            >
               <Box>
                 <Stack direction="row" gap={1} alignItems="center">
                   <Typography fontWeight={720}>{site.name}</Typography>
@@ -1170,13 +1691,34 @@ function SitesAdmin() {
                   {site.site_id}
                 </Typography>
               </Box>
-              <Stack direction="row">
+              <Stack direction="row" flexWrap="wrap" justifyContent="flex-end">
+                <Button
+                  size="small"
+                  startIcon={<IntegrationInstructionsRounded />}
+                  onClick={() =>
+                    setSDKGuide({
+                      id: site.id,
+                      siteId: site.site_id,
+                      name: site.name,
+                    })
+                  }
+                >
+                  SDK 설치
+                </Button>
                 <Button
                   size="small"
                   startIcon={<EditOutlined />}
                   onClick={() => setEditing(site)}
                 >
                   설정
+                </Button>
+                <Button
+                  size="small"
+                  startIcon={<KeyRounded />}
+                  onClick={() => reveal.mutate(site.id)}
+                  disabled={reveal.isPending}
+                >
+                  키 보기
                 </Button>
                 <Button size="small" onClick={() => rotate.mutate(site.id)}>
                   Tracking 키 회전
@@ -1230,7 +1772,23 @@ function SitesAdmin() {
               </Box>
             </Stack>
           </Card>
-        ))}
+        )) : (
+          <Card sx={{ gridColumn: "1 / -1" }}>
+            <Empty
+              title="등록된 분석 사이트가 없습니다"
+              description="첫 사이트를 만든 뒤 안내되는 SDK 설치 절차를 완료하세요."
+              action={
+                <Button
+                  variant="contained"
+                  startIcon={<AddRounded />}
+                  onClick={() => setOpen(true)}
+                >
+                  첫 사이트 만들기
+                </Button>
+              }
+            />
+          </Card>
+        )}
       </Box>
       <Dialog
         open={open}
@@ -1262,6 +1820,12 @@ function SitesAdmin() {
               placeholder={"service.example.com\n*.intranet.example.com"}
               helperText="한 줄에 하나씩 입력하세요. 비워 두면 모든 Origin을 허용합니다."
             />
+            {!domains.trim() && (
+              <Alert severity="warning">
+                도메인을 비우면 모든 Origin에서 이벤트를 보낼 수 있습니다. 운영
+                서비스는 실제 Host를 등록하세요.
+              </Alert>
+            )}
             <TextField
               label="IANA 시간대"
               value={timezone}
@@ -1294,9 +1858,17 @@ function SitesAdmin() {
       </Dialog>
       {secret && (
         <SecretDialog
-          title="새 Tracking Key"
-          secret={secret}
-          close={() => setSecret("")}
+          title={secret.title}
+          secret={secret.value}
+          recoverable={secret.recoverable}
+          note={secret.note}
+          close={() => setSecret(null)}
+        />
+      )}
+      {sdkGuide && (
+        <SiteSDKGuideDialog
+          guide={sdkGuide}
+          close={() => setSDKGuide(null)}
         />
       )}
       {editing && (
@@ -1606,7 +2178,26 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
               }
               helperText="X-Forwarded-For를 신뢰할 프록시 대역만 입력하세요."
             />
+            <TextField
+              label="콘솔 CSP 추가 연결 Origin"
+              value={(
+                (security.additional_connect_origins as string[]) || []
+              ).join(", ")}
+              onChange={(e) =>
+                change(
+                  "security",
+                  "additional_connect_origins",
+                  e.target.value
+                    .split(",")
+                    .map((x) => x.trim())
+                    .filter(Boolean),
+                )
+              }
+              helperText="콘솔이 다른 Host의 Collector·Gateway를 호출해야 할 때만 scheme://host 형식으로 입력하세요. Public URL은 자동 허용됩니다."
+            />
           </Section>
+          <Divider />
+          <EncryptionSection />
           {save.error && <Alert severity="error">{save.error.message}</Alert>}
           <Box>
             <Button
@@ -1623,6 +2214,78 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
     </>
   );
 }
+/**
+ * EncryptionSection shows whether generated keys survive a restart and lets an
+ * administrator finish an encryption key rotation without a redeploy.
+ */
+function EncryptionSection() {
+  const qc = useQueryClient();
+  const status = useQuery({
+    queryKey: ["encryption-status"],
+    queryFn: () => get<EncryptionStatus>("/api/v1/system/encryption"),
+  });
+  const rekey = useMutation({
+    mutationFn: () =>
+      post<{ resealed: number; failed: number }>(
+        "/api/v1/system/encryption/rekey",
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["encryption-status"] }),
+  });
+  return (
+    <Section
+      title="비밀값 암호화"
+      desc="MOMENTO_ENCRYPTION_KEY로 API key, Tracking Key, OIDC Client Secret, Delivery Header를 암호화 저장합니다. 값은 프로세스 환경변수로만 주입하며 콘솔에서 변경할 수 없습니다."
+    >
+      {status.isLoading ? (
+        <LinearProgress />
+      ) : status.error ? (
+        <ErrorState error={status.error} />
+      ) : (
+        <Stack spacing={1.5}>
+          <Alert severity={status.data?.enabled ? "success" : "warning"}>
+            {status.data?.enabled
+              ? `${status.data.algorithm} · Key ID ${status.data.key_id} · 복구 가능한 키 ${status.data.recoverable_keys}개`
+              : "MOMENTO_ENCRYPTION_KEY가 설정되지 않았습니다. 지금 발급한 키는 재기동 후 다시 조회할 수 없습니다."}
+          </Alert>
+          {status.data?.enabled && status.data.unrecoverable_keys > 0 && (
+            <Alert severity="info">
+              암호화 저장 이전에 발급된 키 {status.data.unrecoverable_keys}개는
+              한 번 회전해야 다시 조회할 수 있습니다.
+            </Alert>
+          )}
+          {status.data?.enabled && (
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              alignItems={{ sm: "center" }}
+            >
+              <Button
+                variant="outlined"
+                startIcon={<KeyRounded />}
+                disabled={rekey.isPending || status.data.pending_reseal === 0}
+                onClick={() => rekey.mutate()}
+              >
+                이전 키로 저장된 {status.data.pending_reseal}건 재암호화
+              </Button>
+              <Typography variant="caption" color="text.secondary">
+                MOMENTO_ENCRYPTION_KEY_PREVIOUS에 이전 키를 남긴 상태에서
+                실행하고, 완료 후 변수를 제거하십시오.
+              </Typography>
+            </Stack>
+          )}
+          {rekey.data && (
+            <Alert severity={rekey.data.failed ? "warning" : "success"}>
+              {rekey.data.resealed}건을 재암호화했고 {rekey.data.failed}건이
+              실패했습니다.
+            </Alert>
+          )}
+          {rekey.error && <Alert severity="error">{rekey.error.message}</Alert>}
+        </Stack>
+      )}
+    </Section>
+  );
+}
+
 function Section({
   title,
   desc,
