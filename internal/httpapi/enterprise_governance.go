@@ -184,15 +184,95 @@ func (s *Server) evaluateMetricGoals(w http.ResponseWriter, r *http.Request) {
 		achieved := (comparator == "gte" && value >= target) || (comparator == "lte" && value <= target)
 		progress := 0.0
 		if target != 0 {
-			if comparator == "gte" {
+			if comparator == "gte" && format != "percent" {
 				progress = value / target * 100
 			} else if value != 0 {
 				progress = target / value * 100
 			}
 		}
-		out = append(out, map[string]any{"id": id, "name": name, "metric_name": metric, "value": value, "target_value": target, "comparator": comparator, "period": period, "format": format, "progress_percent": progress, "achieved": achieved, "from": from, "to": to})
+		forecast := goalForecast(now, fromLocal, period, format, value, target, comparator)
+		row := map[string]any{"id": id, "name": name, "metric_name": metric, "value": value, "target_value": target, "comparator": comparator, "period": period, "format": format, "progress_percent": progress, "achieved": achieved, "from": from, "to": to}
+		for key, item := range forecast {
+			row[key] = item
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, 200, out)
+}
+
+// goalPeriodEnd is the exclusive end of the goal period in local time.
+func goalPeriodEnd(start time.Time, period string) time.Time {
+	switch period {
+	case "day":
+		return start.AddDate(0, 0, 1)
+	case "week":
+		return start.AddDate(0, 0, 7)
+	case "quarter":
+		return start.AddDate(0, 3, 0)
+	default:
+		return start.AddDate(0, 1, 0)
+	}
+}
+
+// goalForecast projects where a cumulative goal lands if the current pace holds.
+// Reporting only "45% of target" halfway through a month hides whether that is on
+// track, so the projection and the required remaining pace are stated explicitly.
+func goalForecast(now, start time.Time, period, format string, value, target float64, comparator string) map[string]any {
+	end := goalPeriodEnd(start, period)
+	total := end.Sub(start).Seconds()
+	elapsed := now.Sub(start).Seconds()
+	if total <= 0 || elapsed <= 0 {
+		return map[string]any{"forecast_available": false, "forecast_reason": "기간이 아직 시작되지 않았습니다."}
+	}
+	if elapsed > total {
+		elapsed = total
+	}
+	fraction := elapsed / total
+	out := map[string]any{
+		"period_start":       start,
+		"period_end":         end,
+		"elapsed_percent":    fraction * 100,
+		"remaining_seconds":  end.Sub(now).Seconds(),
+		"forecast_available": true,
+		"forecast_basis":     "현재 기간의 진행률과 누적 값을 그대로 연장한 선형 추정입니다.",
+	}
+	if fraction < 0.1 {
+		out["forecast_available"] = false
+		out["forecast_reason"] = "기간 진행률이 10% 미만이어서 추정이 불안정합니다."
+		return out
+	}
+	// A rate such as a conversion percentage does not accumulate, so extending it
+	// linearly would be wrong. The value measured so far is the best estimate.
+	projected := value / fraction
+	if format == "percent" {
+		projected = value
+		out["forecast_basis"] = "비율 지표는 누적되지 않으므로 현재 관측값을 그대로 착지 추정으로 사용합니다."
+	}
+	out["projected_value"] = projected
+	onTrack := (comparator == "gte" && projected >= target) || (comparator == "lte" && projected <= target)
+	out["projected_achieved"] = onTrack
+	if comparator == "gte" && format != "percent" {
+		remaining := target - value
+		if remaining < 0 {
+			remaining = 0
+		}
+		out["remaining_to_target"] = remaining
+		days := end.Sub(now).Hours() / 24
+		if days > 0 && remaining > 0 {
+			out["required_daily_pace"] = remaining / days
+		}
+		achievedPace := 0.0
+		if elapsed > 0 {
+			achievedPace = value / (elapsed / 86400)
+		}
+		out["current_daily_pace"] = achievedPace
+	}
+	if !onTrack {
+		out["forecast_status"] = "behind"
+	} else {
+		out["forecast_status"] = "on_track"
+	}
+	return out
 }
 
 func goalPeriodStart(now time.Time, period string) time.Time {

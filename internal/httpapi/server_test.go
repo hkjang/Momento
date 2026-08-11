@@ -178,6 +178,11 @@ func TestHandlerRegistersSecretAndDiagnosticRoutes(t *testing.T) {
 		"GET /api/v1/sites/{siteID}/sessions",
 		"GET /api/v1/sites/{siteID}/export",
 		"GET /api/v1/sites/{siteID}/delivery-runs",
+		"GET /api/v1/sites/{siteID}/visitor-insights",
+		"GET /api/v1/sites/{siteID}/visitor-search",
+		"GET /api/v1/sites/{siteID}/visitors/{visitorID}/timeline",
+		"GET /api/v1/sites/{siteID}/anomalies",
+		"GET /api/v1/sites/{siteID}/attribution",
 	} {
 		if !registered[route] {
 			t.Fatalf("route %q is not registered", route)

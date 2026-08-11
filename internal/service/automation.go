@@ -21,6 +21,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrSkipDelivery lets a report decide that there is nothing worth sending. An
+// alert channel that fires every hour with "nothing wrong" stops being read.
+var ErrSkipDelivery = errors.New("nothing to deliver")
+
 type Automation struct {
 	DB      *pgxpool.Pool
 	Logger  *slog.Logger
@@ -152,7 +156,11 @@ func (a Automation) execute(ctx context.Context, delivery scheduledDelivery, con
 	}
 	state := "success"
 	errorText := ""
-	if err != nil {
+	switch {
+	case errors.Is(err, ErrSkipDelivery):
+		// Nothing to report is a normal outcome, not a failure.
+		state, errorText, err = "skipped", "", nil
+	case err != nil:
 		state, errorText = "failed", truncateAutomationError(err.Error())
 	}
 	_, _ = a.DB.Exec(ctx, `INSERT INTO delivery_runs(site_id,report_id,channel_id,status,response_status,error,started_at,finished_at) VALUES($1,$2,$3,$4,$5,nullif($6,''),$7,now())`, delivery.SiteID, delivery.ReportID, delivery.ChannelID, state, nullableStatus(status), errorText, started)
@@ -212,6 +220,23 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 			return nil, err
 		}
 		data = map[string]any{"calls": calls, "users": users, "input_tokens": inputTokens, "output_tokens": outputTokens}
+	case "anomaly":
+		location := time.UTC
+		var timezone string
+		if a.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, delivery.SiteID).Scan(&timezone) == nil {
+			if loaded, loadErr := time.LoadLocation(timezone); loadErr == nil {
+				location = loaded
+			}
+		}
+		report, err := insight.New(a.DB).DetectSiteAnomalies(ctx, delivery.SiteID, environment, location)
+		if err != nil {
+			return nil, err
+		}
+		alwaysSend, _ := definition["always_send"].(bool)
+		if len(report.Detected) == 0 && !alwaysSend {
+			return nil, ErrSkipDelivery
+		}
+		data = map[string]any{"evaluated_date": report.EvaluatedDate, "timezone": report.Timezone, "baseline_weeks": report.BaselineWeeks, "detected": report.Detected, "checked": report.Checked, "note": report.Note}
 	case "visitor_insight":
 		// Deliver the same visitor insight report the console shows, so a mailed or
 		// Confluence-published digest needs no manual assembly.

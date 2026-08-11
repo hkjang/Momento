@@ -1,15 +1,10 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 )
 
@@ -107,79 +102,6 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"session_id": sessionID, "visitor_id": visitorID, "user_id": userID, "started_at": started, "last_event_at": last, "duration_seconds": duration, "events": events, "page_views": pageViews, "conversions": conversions, "engaged": engaged, "active_engagement_ms": activeMS, "heartbeat_count": heartbeats, "interaction_count": interactions, "landing_page": landing, "exit_page": exitPage, "source": source, "medium": medium, "campaign": campaign, "device_type": device}, err
 	})
 	writeJSON(w, 200, out)
-}
-
-func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
-	var profiles bool
-	if err := s.DB.QueryRow(r.Context(), `SELECT coalesce((value->>'visitor_profiles')::boolean,true) FROM settings WHERE key='privacy'`).Scan(&profiles); err != nil || !profiles {
-		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
-		return
-	}
-	siteID, err := s.resolveSite(r, "siteID")
-	if err != nil {
-		writeError(w, 404, "UNKNOWN_SITE", "site not found")
-		return
-	}
-	visitorID := strings.TrimSpace(chi.URLParam(r, "visitorID"))
-	if visitorID == "" || len(visitorID) > 128 {
-		writeError(w, 400, "INVALID_VISITOR", "visitor id is required")
-		return
-	}
-	from, to, err := s.dateRange(r, siteID)
-	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
-		return
-	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 500 {
-		limit = 200
-	}
-	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_name,event_timestamp,session_id,user_id,page_url,page_title,source,medium,campaign,device_type,browser,network_name,properties,user_properties,is_conversion,traffic_class,environment,contract_version FROM raw_events WHERE site_id=$1 AND visitor_id=$2 AND environment=$6 AND event_timestamp >= $3 AND event_timestamp < $4 ORDER BY event_timestamp DESC,id DESC LIMIT $5`, siteID, visitorID, from, to, limit, requestEnvironment(r))
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	defer rows.Close()
-	events := []map[string]any{}
-	var latestUserID *string
-	var latestUserProperties any
-	for rows.Next() {
-		var eventID uuid.UUID
-		var eventName, sessionID string
-		var timestamp time.Time
-		var userID, pageURL, pageTitle, source, medium, campaign, device, browser, network *string
-		var properties, userProperties []byte
-		var conversion bool
-		var trafficClass, environment string
-		var contractVersion int
-		if rows.Scan(&eventID, &eventName, &timestamp, &sessionID, &userID, &pageURL, &pageTitle, &source, &medium, &campaign, &device, &browser, &network, &properties, &userProperties, &conversion, &trafficClass, &environment, &contractVersion) != nil {
-			continue
-		}
-		var props, userProps any
-		_ = json.Unmarshal(properties, &props)
-		_ = json.Unmarshal(userProperties, &userProps)
-		if latestUserID == nil && userID != nil {
-			latestUserID = userID
-		}
-		if latestUserProperties == nil {
-			latestUserProperties = userProps
-		}
-		events = append(events, map[string]any{"event_id": exportUUID(eventID), "event_name": eventName, "timestamp": timestamp, "session_id": sessionID, "user_id": userID, "page_url": pageURL, "page_title": pageTitle, "source": source, "medium": medium, "campaign": campaign, "device_type": device, "browser": browser, "network": network, "properties": props, "is_conversion": conversion, "traffic_class": trafficClass, "environment": environment, "contract_version": contractVersion})
-	}
-	var sessions, conversions int64
-	var firstSeen, lastSeen *time.Time
-	var canonicalUserID *string
-	var linkedVisitors []string
-	_ = s.DB.QueryRow(r.Context(), `SELECT max(canonical_user_id),min(event_timestamp),max(event_timestamp),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND visitor_id=$2 AND environment=$3`, siteID, visitorID, requestEnvironment(r)).Scan(&canonicalUserID, &firstSeen, &lastSeen, &sessions, &conversions)
-	if canonicalUserID != nil {
-		_ = s.DB.QueryRow(r.Context(), `SELECT array_agg(visitor_id ORDER BY first_seen) FROM visitor_identities WHERE site_id=$1 AND user_id=$2`, siteID, *canonicalUserID).Scan(&linkedVisitors)
-		var canonicalProperties []byte
-		if s.DB.QueryRow(r.Context(), `SELECT user_properties FROM identified_users WHERE site_id=$1 AND user_id=$2`, siteID, *canonicalUserID).Scan(&canonicalProperties) == nil {
-			_ = json.Unmarshal(canonicalProperties, &latestUserProperties)
-		}
-		latestUserID = canonicalUserID
-	}
-	writeJSON(w, 200, map[string]any{"visitor_id": visitorID, "user_id": latestUserID, "linked_visitor_ids": linkedVisitors, "user_properties": latestUserProperties, "first_seen": firstSeen, "last_seen": lastSeen, "sessions": sessions, "conversions": conversions, "events": events})
 }
 
 func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {

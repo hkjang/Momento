@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Card, Chip, Stack, Typography } from "@mui/material";
+import { Button, Card, Chip, Stack, Typography } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
 import { dateRangeValues, get, post, rangeQuery } from "../api/client";
@@ -73,6 +74,20 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
     { key: "exit_page", label: "종료 페이지", format: (v) => String(v || "—") },
     { key: "source", label: "소스", format: (v) => String(v || "direct") },
     { key: "device_type", label: "기기", format: (v) => String(v || "—") },
+    {
+      key: "visitor_id",
+      label: "",
+      align: "right",
+      format: (v) => (
+        <Button
+          size="small"
+          component={RouterLink}
+          to={`/user-explorer?visitor=${encodeURIComponent(String(v))}`}
+        >
+          추적
+        </Button>
+      ),
+    },
   ],
   visitors: [
     {
@@ -92,6 +107,20 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
       key: "last_seen",
       label: "마지막 활동",
       format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+    },
+    {
+      key: "visitor_id",
+      label: "",
+      align: "right",
+      format: (v) => (
+        <Button
+          size="small"
+          component={RouterLink}
+          to={`/user-explorer?visitor=${encodeURIComponent(String(v))}`}
+        >
+          추적
+        </Button>
+      ),
     },
   ],
 };

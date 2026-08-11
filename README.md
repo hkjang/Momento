@@ -18,6 +18,9 @@
 
 - JavaScript SDK: Event 발생 시점 Context snapshot, DEV/STG/PRD, Event Contract version, Release context, Page View/SPA/custom event, identify, session/visitor, first-touch UTM, click/form/error, Core Web Vitals·Resource Error RUM, fail-closed consent, cookieless, batch, Beacon, offline queue
 - Durable Collector: `POST /collect/v1/events`, 환경별 계약 `allow/warn/reject`, domain/key 검증, 중복 제거, 수집 전 값 기반 PII Detect/Mask/Reject, Cardinality Guard, PostgreSQL inbox 기반 비동기 적재 및 작업별 savepoint 재시도
+- 방문자 추적: SSO로 연결된 모든 기기를 한 사람으로 합친 세션 단위 타임라인, User·부서·페이지·이벤트 검색, 식별 시점, 커서 페이징, 교차 서비스 활동, 추적 기록 Markdown
+- 이상 감지: 같은 요일 최근 8주 중위수·MAD 기반 robust z-score로 방문자·세션·이벤트·전환·오류 감시, 이상이 있을 때만 배달되는 알림
+- 기여도: first-touch·last-touch·last-non-direct 채널 배분과 관여 전환, Metric Goal 착지 예측
 - 방문자 인사이트: 전기간 자동 비교 KPI, 신규·재방문 구조, 채널 그룹 분류, 진입 페이지 이탈, 방문 빈도·최근성, 기기 격차, 우선순위 인사이트와 실행 대상 Segment, Markdown 즉시 복사·다운로드·정기 배달
 - 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Sessions, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
@@ -26,7 +29,7 @@
 - 관리: 운영 준비도·품질 지표·우선순위 조치함을 갖춘 역할 기반 관리 센터, `Ctrl/Cmd+K` 명령 팔레트, Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
 - 고급 분석: Exact/Fast/Preview Query Cost Guard, 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
-- AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 20개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
+- AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 22개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
 - Action: 보안 Host Allowlist 기반 Scheduled Report와 Segment 집계를 Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent로 전달
 - 운영: Late Event 자동 재집계, Aggregate Manager, Change Calendar, Feature Flag/Experiment Registry, 승인형 개인정보 요청 Workflow
 - 배포: 단일 non-root Docker image, PostgreSQL migration 자동 적용, tag 기반 offline `.tar.gz` GitHub Release
@@ -98,7 +101,7 @@ cd ../web && npm install && npm run lint && npm test && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.10.0` 태그는 `momento-v0.10.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.11.0` 태그는 `momento-v0.11.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

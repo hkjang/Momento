@@ -131,6 +131,9 @@ func compileSegment(node segmentNode, resolver dimensionResolver, alias string, 
 	if node.Field == "event.has" {
 		return compileEventExistence(node, alias, args)
 	}
+	if expression, ok := entityAggregateSQL[node.Field]; ok {
+		return compileEntityAggregate(node, expression, alias, args)
+	}
 	expr, err := resolver.expression(node.Field, alias)
 	if err != nil {
 		return "", err
@@ -182,6 +185,39 @@ func compileSegment(node segmentNode, resolver dimensionResolver, alias string, 
 	default:
 		return "", fmt.Errorf("unsupported operator: %s", op)
 	}
+}
+
+// entityAggregateSQL holds behavioural fields measured over a person's whole
+// history rather than a single event. They make audiences such as "visited three
+// times but never converted" or "dormant for 30 days" expressible as a segment.
+var entityAggregateSQL = map[string]string{
+	"entity.sessions":              "count(DISTINCT segment_entity.session_id)",
+	"entity.events":                "count(*)",
+	"entity.conversions":           "count(*) FILTER(WHERE segment_entity.is_conversion)",
+	"entity.days_since_last_seen":  "extract(epoch FROM (now()-max(segment_entity.event_timestamp)))/86400",
+	"entity.days_since_first_seen": "extract(epoch FROM (now()-min(segment_entity.event_timestamp)))/86400",
+}
+
+// compileEntityAggregate compares one behavioural aggregate of the same person.
+func compileEntityAggregate(node segmentNode, expression, alias string, args *[]any) (string, error) {
+	switch node.Operator {
+	case "=", "!=", ">", ">=", "<", "<=":
+	default:
+		return "", fmt.Errorf("%s requires a numeric comparison operator", node.Field)
+	}
+	value, ok := numericValue(node.Value)
+	if !ok {
+		return "", fmt.Errorf("%s requires a numeric value", node.Field)
+	}
+	*args = append(*args, value)
+	placeholder := "$" + strconv.Itoa(len(*args))
+	subquery := "(SELECT " + expression + " FROM analytics_events segment_entity WHERE segment_entity.site_id=" + alias +
+		".site_id AND segment_entity.environment=" + alias + ".environment AND segment_entity.entity_id=" + alias + ".entity_id)"
+	operator := node.Operator
+	if operator == "!=" {
+		operator = "<>"
+	}
+	return "coalesce(" + subquery + ",0) " + operator + " " + placeholder, nil
 }
 
 func compileEventExistence(node segmentNode, alias string, args *[]any) (string, error) {

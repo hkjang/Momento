@@ -68,12 +68,85 @@ export interface InsightDevice {
   share_percent: number;
 }
 
+export interface SegmentRule {
+  combinator?: string;
+  rules?: SegmentRule[];
+  field?: string;
+  operator?: string;
+  value?: unknown;
+}
+
 export interface InsightAudience {
   key: string;
   label: string;
   users: number;
   action: string;
+  /** Ready-to-save segment definition for this audience. */
+  segment?: SegmentRule;
+  segment_note?: string;
 }
+
+export interface Anomaly {
+  metric: string;
+  label: string;
+  date: string;
+  value: number;
+  baseline: number;
+  change_percent: number;
+  robust_z: number;
+  severity: "critical" | "warning" | "positive" | "normal" | "insufficient_history" | "unknown";
+  direction: "above" | "below" | "flat";
+  samples: number;
+  weekday: string;
+  evidence: string;
+  action?: string;
+}
+
+export interface AnomalyReport {
+  environment: string;
+  evaluated_date: string;
+  timezone: string;
+  baseline_weeks: number;
+  detected: Anomaly[];
+  checked: Anomaly[];
+  note: string;
+}
+
+export interface AttributionChannel {
+  channel: string;
+  credited_conversions: number;
+  credited_users: number;
+  assisted_conversions: number;
+  credit_share_percent: number;
+  assist_only_conversions: number;
+}
+
+export interface AttributionReport {
+  model: string;
+  label: string;
+  description: string;
+  lookback_days: number;
+  total_conversions: number;
+  attributed_conversions: number;
+  unattributed_conversions: number;
+  channels: AttributionChannel[];
+  note: string;
+}
+
+export interface AttributionModel {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export const anomalySeverityLabel: Record<Anomaly["severity"], string> = {
+  critical: "심각",
+  warning: "경고",
+  positive: "긍정 변화",
+  normal: "정상",
+  insufficient_history: "데이터 부족",
+  unknown: "집계 없음",
+};
 
 export interface VisitorInsightReport {
   environment: string;
@@ -161,6 +234,7 @@ function localDate(value: string) {
 export function buildInsightMarkdown(
   report: VisitorInsightReport,
   siteName: string,
+  anomalies?: AnomalyReport,
 ): string {
   const sections: string[] = [];
   sections.push(
@@ -170,6 +244,20 @@ export function buildInsightMarkdown(
   sections.push(
     `분석 기간 ${localDate(report.from)} ~ ${localDate(report.to)} (비교 기간 ${localDate(report.previous_from)} ~ ${localDate(report.previous_to)}${report.timezone ? `, ${report.timezone} 기준` : ""})`,
   );
+
+  if (anomalies?.detected.length) {
+    sections.push(
+      `## 이상 감지 (${anomalies.evaluated_date.slice(0, 10)} 기준, 같은 요일 최근 ${anomalies.baseline_weeks}주 비교)`,
+    );
+    sections.push(
+      anomalies.detected
+        .map(
+          (anomaly) =>
+            `- [${anomalySeverityLabel[anomaly.severity] || anomaly.severity}] ${anomaly.label}: ${anomaly.evidence}${anomaly.action ? ` → ${anomaly.action}` : ""}`,
+        )
+        .join("\n"),
+    );
+  }
 
   if (report.findings.length) {
     sections.push("## 핵심 인사이트");

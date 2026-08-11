@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.11.0
+
+- Rebuilt the visitor timeline as a person-level trace: every visitor ID the deterministic identity graph links to one SSO user is merged into a single chronology, grouped into sessions with entry and exit pages, channel, device, engagement and the gap between consecutive events.
+- Added the moment an anonymous visit became a known person as an explicit marker, plus a per-device identity link list showing when each browser profile joined the person.
+- Added visitor search by SSO user id, department, organization, visitor id fragment, page URL, event name or feature, with an activity summary per candidate and trace deep links from the session and visitor reports.
+- Added cursor paging so a long history can be walked backwards instead of silently stopping at the newest events, cross-service activity for the same SSO user, Markdown export of the trace, and an audit record for every individual-level lookup.
+- Added anomaly detection that compares the last complete day against the same weekday median of the previous eight weeks using a median absolute deviation, so weekday seasonality and one-off outages no longer produce false alarms; thin history is reported as unjudged rather than guessed.
+- Added the `anomaly` scheduled report kind that delivers only when something is detected, with `skipped` recorded as a normal delivery outcome instead of a failure.
+- Added behavioural segment fields (`entity.sessions`, `entity.events`, `entity.conversions`, `entity.days_since_last_seen`, `entity.days_since_first_seen`) and one-click segment creation from every actionable audience in Visitor Insights.
+- Added conversion attribution over session-level touchpoints with first-touch, last-touch and last-non-direct models, assisted conversions, assist-only credit and explicit unattributed conversions.
+- Added metric goal landing forecasts with elapsed period share, projected value, required daily pace and an on-track verdict; rate metrics are not extrapolated and forecasts are withheld below ten percent of the period.
+- Added the `detect_anomalies` and `analyze_attribution` MCP tools, bringing the analytics MCP surface to 22 tools.
+- Preserved the v0.10.0 SDK, collector, tracking protocol and privacy contracts. Migration `011_anomaly_alerting.sql` only widens the delivery outcome constraint.
+
 ## v0.10.0
 
 - Added a Visitor Insights report that pairs every visitor metric with the previous equivalent period and states the conclusion first: ranked findings that each carry their evidence, a likely cause, and the next action.

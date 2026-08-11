@@ -88,12 +88,22 @@
 - 실행 대상 Audience: 반복 방문 미전환, 1회 방문 신규, 휴면, 복귀
 - Markdown 요약 즉시 복사·다운로드, `visitor_insight` Scheduled Report 배달, `get_visitor_insights` MCP 도구
 
+## v0.11 — implemented
+
+- 사람 단위 방문자 추적: 연결된 모든 Visitor를 합친 세션 그룹 타임라인, 이벤트 간격, 식별 시점 표시, 커서 기반 과거 탐색
+- User ID·부서·조직·Visitor ID·페이지·이벤트·기능으로 실제 방문자를 찾는 검색과 리포트에서의 추적 딥링크
+- 교차 서비스 활동 확인과 추적 기록 Markdown 내보내기, 개인 단위 조회 Audit
+- 같은 요일 계절성을 반영한 중위수·MAD 기반 이상 감지와 이상이 있을 때만 전송하는 알림 배달
+- 행동 기반 Segment 필드(entity.sessions/events/conversions/days_since_last_seen/days_since_first_seen)와 인사이트 대상의 Segment 자동 생성
+- first-touch·last-touch·last-non-direct 전환 기여도와 관여 전환 비교
+- Metric Goal 기간 진행률 기반 착지 예측과 필요 일일 속도
+
 ## Next schema-compatible increments
 
-- First/last/last-non-direct attribution across channel groups
+- Multi-touch (linear, time decay, position based) attribution and cross-service credit
 - PostgreSQL 월별 Partition 전환과 Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation
-- Mobile/server SDK packages, statistical anomaly detection and governed external LLM diagnosis
+- Mobile/server SDK packages, forecast-based anomaly bands and governed external LLM diagnosis
 
 Raw Event remains the source of truth so these increments do not require changing the tracking protocol.

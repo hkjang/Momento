@@ -662,18 +662,62 @@ func (rep Reporter) Build(ctx context.Context, siteID uuid.UUID, environment str
 		"frequency":     frequency,
 		"recency":       recency,
 		"devices":       devices,
-		"audiences": []map[string]any{
-			{"key": "loyal_not_converted", "label": "3회 이상 방문했지만 미전환", "users": signals["loyal_not_converted"], "action": "Funnel과 Frustration으로 장애 요인을 찾고 담당자에게 전달"},
-			{"key": "single_visit_new", "label": "한 번만 방문한 신규", "users": signals["single_visit_new"], "action": "첫 세션 진입 페이지와 첫 이벤트를 개선"},
-			{"key": "lapsed", "label": "이전 기간에만 활동(휴면)", "users": lapsed, "action": "복귀 안내 발송 대상"},
-			{"key": "returned", "label": "휴면 후 이번 기간 복귀", "users": returned, "action": "복귀 계기를 확인해 재방문 유도 요인으로 확대"},
-		},
+		"audiences":     audiences(days, signals, lapsed, returned),
 		"notes": []string{
 			"채널·기기별 사용자 합계는 한 사용자가 여러 채널로 방문하면 중복 계산될 수 있습니다.",
 			"신규 여부는 선택한 환경의 전체 수집 이력에서 처음 관측된 시점으로 판단합니다.",
 			"익명 방문자는 사이트 범위로 격리하고, SSO User ID가 있으면 사이트를 넘어 한 사람으로 계산합니다.",
 		},
 	}, nil
+}
+
+// segmentRule mirrors the segment definition the API accepts so an audience can be
+// saved as a real, re-usable segment instead of being retyped by hand.
+type segmentRule struct {
+	Combinator string        `json:"combinator,omitempty"`
+	Rules      []segmentRule `json:"rules,omitempty"`
+	Field      string        `json:"field,omitempty"`
+	Operator   string        `json:"operator,omitempty"`
+	Value      any           `json:"value,omitempty"`
+}
+
+func and(rules ...segmentRule) segmentRule {
+	return segmentRule{Combinator: "and", Rules: rules}
+}
+
+func rule(field, operator string, value any) segmentRule {
+	return segmentRule{Field: field, Operator: operator, Value: value}
+}
+
+// audiences describes who to act on, with the exact segment definition behind each
+// group. Where a definition can only approximate the counted group, it says so.
+func audiences(days int, signals map[string]int64, lapsed, returned int64) []map[string]any {
+	window := float64(days)
+	return []map[string]any{
+		{
+			"key": "loyal_not_converted", "label": "3회 이상 방문했지만 미전환", "users": signals["loyal_not_converted"],
+			"action":  "Funnel과 Frustration으로 장애 요인을 찾고 담당자에게 전달",
+			"segment": and(rule("entity.sessions", ">=", 3), rule("entity.conversions", "=", 0)),
+		},
+		{
+			"key": "single_visit_new", "label": "한 번만 방문한 신규", "users": signals["single_visit_new"],
+			"action":       "첫 세션 진입 페이지와 첫 이벤트를 개선",
+			"segment":      and(rule("entity.sessions", "<=", 1), rule("entity.days_since_first_seen", "<=", window)),
+			"segment_note": "Segment는 전체 이력 기준이므로 조회 기간과 경계에서 인원이 다를 수 있습니다.",
+		},
+		{
+			"key": "lapsed", "label": "이전 기간에만 활동(휴면)", "users": lapsed,
+			"action":       "복귀 안내 발송 대상",
+			"segment":      and(rule("entity.days_since_last_seen", ">=", window)),
+			"segment_note": "Segment는 현재 시점 기준 휴면 일수로 계산하므로 조회 기간과 완전히 일치하지 않습니다.",
+		},
+		{
+			"key": "returned", "label": "휴면 후 이번 기간 복귀", "users": returned,
+			"action":       "복귀 계기를 확인해 재방문 유도 요인으로 확대",
+			"segment":      and(rule("entity.days_since_last_seen", "<=", window), rule("entity.days_since_first_seen", ">=", window*2)),
+			"segment_note": "복귀 판정은 기간 비교 결과이고 Segment는 근사값입니다. 인원이 다를 수 있습니다.",
+		},
+	}
 }
 
 func kpi(key, label, format string, current, previous float64, goal string) KPI {

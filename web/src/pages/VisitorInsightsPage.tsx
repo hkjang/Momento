@@ -6,30 +6,49 @@ import {
   Card,
   Chip,
   Divider,
+  MenuItem,
   Snackbar,
   Stack,
+  TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import InsightsRounded from "@mui/icons-material/InsightsRounded";
-import { useQuery } from "@tanstack/react-query";
-import { get, rangeQuery } from "../api/client";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import AnalysisToolbar from "../components/AnalysisToolbar";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import {
+  anomalySeverityLabel,
   buildInsightMarkdown,
   changeTone,
   formatChange,
   formatInsightValue,
   lifecycleName,
   severityLabel,
+  type Anomaly,
+  type AnomalyReport,
+  type AttributionModel,
+  type AttributionReport,
   type FindingSeverity,
+  type InsightAudience,
   type VisitorInsightReport,
 } from "./visitorInsights";
+
+const anomalyColor: Record<Anomaly["severity"], "error" | "warning" | "success" | "default"> = {
+  critical: "error",
+  warning: "warning",
+  positive: "success",
+  normal: "default",
+  insufficient_history: "default",
+  unknown: "default",
+};
 
 const severityColor: Record<FindingSeverity, "error" | "warning" | "info" | "success"> = {
   critical: "error",
@@ -45,8 +64,10 @@ const kpiType: Record<string, "percent" | "duration" | undefined> = {
 
 export default function VisitorInsightsPage() {
   const { site, environment } = useSite();
+  const navigate = useNavigate();
   const [days, setDays] = useState(30);
   const [toast, setToast] = useState("");
+  const [model, setModel] = useState("last_non_direct");
   const q = useQuery({
     queryKey: ["visitor-insights", site?.site_id, environment, days],
     enabled: !!site,
@@ -54,6 +75,35 @@ export default function VisitorInsightsPage() {
       get<VisitorInsightReport>(
         `/api/v1/sites/${site!.site_id}/visitor-insights?${rangeQuery(days, site!.timezone)}`,
       ),
+  });
+  const anomalies = useQuery({
+    queryKey: ["anomalies", site?.site_id, environment],
+    enabled: !!site,
+    queryFn: () =>
+      get<AnomalyReport>(`/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`),
+  });
+  const attribution = useQuery({
+    queryKey: ["attribution", site?.site_id, environment, days, model],
+    enabled: !!site,
+    queryFn: () =>
+      get<{ report: AttributionReport; models: AttributionModel[] }>(
+        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}`,
+      ),
+  });
+  const saveSegment = useMutation({
+    mutationFn: (audience: InsightAudience) =>
+      post<{ id: string }>("/api/v1/segments", {
+        site_id: site!.site_id,
+        name: `${audience.label} (자동 생성)`,
+        description: `방문자 인사이트에서 생성 · ${audience.action}`,
+        definition: audience.segment,
+        shared: false,
+      }),
+    onSuccess: () => {
+      setToast("Segment를 저장했습니다. Segment 화면으로 이동합니다.");
+      window.setTimeout(() => navigate("/segments"), 900);
+    },
+    onError: (error: Error) => setToast(`Segment 저장 실패: ${error.message}`),
   });
   if (!site) return <NoSite />;
   const toolbar = (
@@ -83,7 +133,7 @@ export default function VisitorInsightsPage() {
       </Stack>
     );
   const report = q.data!;
-  const markdown = buildInsightMarkdown(report, site.name);
+  const markdown = buildInsightMarkdown(report, site.name, anomalies.data);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(markdown);
@@ -144,6 +194,79 @@ export default function VisitorInsightsPage() {
           </Stack>
         </Stack>
       </Card>
+
+      {anomalies.data && (
+        <Card sx={{ p: 2.5 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} mb={1}>
+            <Typography variant="h6">이상 감지</Typography>
+            <Chip
+              size="small"
+              label={`${anomalies.data.evaluated_date.slice(0, 10)} · 같은 요일 최근 ${anomalies.data.baseline_weeks}주 비교`}
+            />
+          </Stack>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            {anomalies.data.note}
+          </Typography>
+          {anomalies.data.detected.length ? (
+            <Stack spacing={1.2}>
+              {anomalies.data.detected.map((anomaly) => (
+                <Card key={anomaly.metric} variant="outlined" sx={{ p: 1.8 }}>
+                  <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                    <Chip
+                      size="small"
+                      color={anomalyColor[anomaly.severity]}
+                      label={anomalySeverityLabel[anomaly.severity]}
+                    />
+                    <Typography fontWeight={700}>{anomaly.label}</Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={`${anomaly.direction === "above" ? "▲" : "▼"} ${formatChange(anomaly.change_percent)}`}
+                    />
+                    <Chip size="small" variant="outlined" label={`${anomaly.robust_z.toFixed(1)}σ`} />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" mt={0.6}>
+                    {anomaly.evidence}
+                  </Typography>
+                  {anomaly.action && (
+                    <Typography variant="body2" color="primary.main" mt={0.3}>
+                      다음 행동 · {anomaly.action}
+                    </Typography>
+                  )}
+                </Card>
+              ))}
+            </Stack>
+          ) : (
+            <Alert severity="success">
+              감시 지표에서 기준선을 벗어난 변화가 없습니다.
+            </Alert>
+          )}
+          <Box mt={1.5}>
+            <DataTable
+              rows={anomalies.data.checked as unknown as Record<string, unknown>[]}
+              exportFilename="momento-anomaly-check"
+              columns={[
+                { key: "label", label: "지표" },
+                { key: "value", label: "당일", align: "right", format: (v) => Number(v).toLocaleString("ko-KR") },
+                { key: "baseline", label: "기준선", align: "right", format: (v) => Number(v).toLocaleString("ko-KR") },
+                { key: "robust_z", label: "편차", align: "right", format: (v) => `${Number(v).toFixed(1)}σ` },
+                { key: "samples", label: "비교 표본", align: "right" },
+                {
+                  key: "severity",
+                  label: "판정",
+                  format: (v) => (
+                    <Chip
+                      size="small"
+                      color={anomalyColor[v as Anomaly["severity"]]}
+                      label={anomalySeverityLabel[v as Anomaly["severity"]]}
+                    />
+                  ),
+                },
+              ]}
+            />
+          </Box>
+        </Card>
+      )}
 
       <Box
         sx={{
@@ -254,11 +377,29 @@ export default function VisitorInsightsPage() {
                     {audience.action}
                   </Typography>
                 </Box>
-                <Chip
-                  size="small"
-                  color={audience.users > 0 ? "primary" : "default"}
-                  label={`${audience.users.toLocaleString("ko-KR")}명`}
-                />
+                <Stack direction="row" gap={0.5} alignItems="center">
+                  <Chip
+                    size="small"
+                    color={audience.users > 0 ? "primary" : "default"}
+                    label={`${audience.users.toLocaleString("ko-KR")}명`}
+                  />
+                  {audience.segment && audience.users > 0 && (
+                    <Tooltip
+                      title={
+                        audience.segment_note ||
+                        "이 조건으로 Segment를 저장해 Query·Funnel·Action에서 재사용합니다."
+                      }
+                    >
+                      <Button
+                        size="small"
+                        disabled={saveSegment.isPending}
+                        onClick={() => saveSegment.mutate(audience)}
+                      >
+                        Segment 만들기
+                      </Button>
+                    </Tooltip>
+                  )}
+                </Stack>
               </Stack>
             ))}
           </Stack>
@@ -311,6 +452,91 @@ export default function VisitorInsightsPage() {
           />
         </Card>
       </Box>
+
+      {attribution.data && (
+        <Card sx={{ p: 2.5 }}>
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            justifyContent="space-between"
+            alignItems={{ md: "center" }}
+            gap={1.5}
+          >
+            <Box>
+              <Typography variant="h6">전환 기여도</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {attribution.data.report.description}
+              </Typography>
+            </Box>
+            <TextField
+              select
+              size="small"
+              label="기여 모델"
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              sx={{ minWidth: 220 }}
+            >
+              {attribution.data.models.map((item) => (
+                <MenuItem key={item.key} value={item.key}>
+                  {item.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+          <Stack direction="row" gap={1} mt={1.5} flexWrap="wrap">
+            <Chip size="small" label={`전환 ${attribution.data.report.total_conversions.toLocaleString("ko-KR")}건`} />
+            <Chip
+              size="small"
+              color="primary"
+              label={`배분 ${attribution.data.report.attributed_conversions.toLocaleString("ko-KR")}건`}
+            />
+            {attribution.data.report.unattributed_conversions > 0 && (
+              <Tooltip title={`Lookback ${attribution.data.report.lookback_days}일 안에 방문 기록이 없어 배분하지 못한 전환입니다.`}>
+                <Chip
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  label={`미배분 ${attribution.data.report.unattributed_conversions.toLocaleString("ko-KR")}건`}
+                />
+              </Tooltip>
+            )}
+            <Chip size="small" variant="outlined" label={`Lookback ${attribution.data.report.lookback_days}일`} />
+          </Stack>
+          <Box mt={2}>
+            <DataTable
+              rows={attribution.data.report.channels as unknown as Record<string, unknown>[]}
+              exportFilename={`momento-attribution-${model}`}
+              columns={[
+                { key: "channel", label: "채널" },
+                { key: "credited_conversions", label: "배분 전환", align: "right" },
+                {
+                  key: "credit_share_percent",
+                  label: "비중",
+                  align: "right",
+                  format: (v) => `${Number(v).toFixed(1)}%`,
+                },
+                { key: "credited_users", label: "전환 사용자", align: "right" },
+                { key: "assisted_conversions", label: "관여 전환", align: "right" },
+                {
+                  key: "assist_only_conversions",
+                  label: "관여만",
+                  align: "right",
+                  format: (v) =>
+                    Number(v) > 0 ? (
+                      <Tooltip title="경로에는 있었지만 이 모델에서 배분받지 못한 전환입니다. 모델을 바꾸면 평가가 달라집니다.">
+                        <span>{Number(v).toLocaleString("ko-KR")}</span>
+                      </Tooltip>
+                    ) : (
+                      "0"
+                    ),
+                },
+              ]}
+            />
+          </Box>
+          <Typography variant="caption" color="text.secondary" display="block" mt={1}>
+            {attribution.data.report.note}
+          </Typography>
+        </Card>
+      )}
 
       <DataTable
         title="진입 페이지"

@@ -31,6 +31,8 @@ Content-Type: application/json
 - `get_metric_goals`: Semantic Metric 목표와 관리 범위
 - `get_event_catalog`: Event Owner·Contract Version·Volume·Last Seen
 - `get_visitor_insights`: 방문자 인사이트 전체 보고서. 전기간 대비 KPI, 신규·재방문, 채널 그룹, 진입 페이지, 방문 빈도·최근성, 기기, 실행 대상 Segment와 우선순위 인사이트를 한 번에 반환
+- `detect_anomalies`: 직전 완료된 하루를 같은 요일 최근 8주 중위수와 비교한 이상 감지 결과
+- `analyze_attribution`: `last_non_direct`, `first_touch`, `last_touch` 모델별 채널 전환 기여도와 관여 전환
 - `ask_analytics`: 외부 LLM 호출 없는 오프라인 한국어/영어 Analytics 질의
 
 초기화 예제:

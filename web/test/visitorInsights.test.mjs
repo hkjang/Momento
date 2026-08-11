@@ -168,3 +168,54 @@ test("값과 변화 표기를 형식에 맞춘다", () => {
   assert.equal(formatChange(-3.14), "-3.1%");
   assert.equal(formatChange(3.14), "+3.1%");
 });
+
+test("이상 감지 결과는 요약 앞부분에 근거와 함께 들어간다", async () => {
+  const { buildInsightMarkdown } = await import("../src/pages/visitorInsights.ts");
+  const anomalies = {
+    environment: "prd",
+    evaluated_date: "2026-08-10T00:00:00Z",
+    timezone: "Asia/Seoul",
+    baseline_weeks: 8,
+    note: "직전 완료된 하루를 비교합니다.",
+    detected: [
+      {
+        metric: "users",
+        label: "방문자",
+        date: "2026-08-10T00:00:00Z",
+        value: 120,
+        baseline: 1000,
+        change_percent: -88,
+        robust_z: -6.2,
+        severity: "critical",
+        direction: "below",
+        samples: 8,
+        weekday: "월",
+        evidence: "2026-08-10(월) 120 · 같은 요일 기준선 1000 · 편차 -6.2σ · -88.0%",
+        action: "채널 변화를 확인하십시오.",
+      },
+    ],
+    checked: [],
+  };
+
+  const markdown = buildInsightMarkdown(report, "사내 포털", anomalies);
+  const anomalyIndex = markdown.indexOf("## 이상 감지");
+  const findingIndex = markdown.indexOf("## 핵심 인사이트");
+  assert.ok(anomalyIndex > 0, "이상 감지 구간이 있어야 한다");
+  assert.ok(anomalyIndex < findingIndex, "이상 감지는 인사이트보다 앞에 온다");
+  assert.match(markdown, /2026-08-10 기준, 같은 요일 최근 8주 비교/);
+  assert.match(markdown, /\[심각\] 방문자: .*편차 -6\.2σ.* → 채널 변화를 확인하십시오\./);
+});
+
+test("이상이 없으면 요약에 이상 감지 구간을 만들지 않는다", async () => {
+  const { buildInsightMarkdown } = await import("../src/pages/visitorInsights.ts");
+  const markdown = buildInsightMarkdown(report, "사내 포털", {
+    environment: "prd",
+    evaluated_date: "2026-08-10T00:00:00Z",
+    timezone: "Asia/Seoul",
+    baseline_weeks: 8,
+    note: "",
+    detected: [],
+    checked: [],
+  });
+  assert.doesNotMatch(markdown, /## 이상 감지/);
+});

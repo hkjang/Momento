@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Box, Button, Card, Chip, Divider, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, Divider, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
@@ -149,7 +149,22 @@ function Goals() {
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
-  return <DataTable rows={q.data || []} columns={[{ key: "name", label: "Goal" }, { key: "metric_name", label: "Metric" }, { key: "value", label: "현재", align: "right" }, { key: "target_value", label: "목표", align: "right" }, { key: "period", label: "Period" }, { key: "progress_percent", label: "Progress", align: "right", format: percentCell }, { key: "achieved", label: "상태", format: (v) => <Chip size="small" color={v ? "success" : "warning"} label={v ? "달성" : "진행 중"} /> }]} />;
+  return <Stack spacing={2}>
+    <Alert severity="info">착지 예상치는 기간 진행률과 현재 누적 값을 연장한 추정입니다. 비율 지표는 누적되지 않으므로 현재 관측값을 그대로 사용합니다.</Alert>
+    <DataTable rows={q.data || []} exportFilename="momento-metric-goals" columns={[
+      { key: "name", label: "Goal" },
+      { key: "metric_name", label: "Metric" },
+      { key: "value", label: "현재", align: "right" },
+      { key: "target_value", label: "목표", align: "right" },
+      { key: "period", label: "Period" },
+      { key: "elapsed_percent", label: "기간 진행", align: "right", format: (v) => v === undefined || v === null ? "—" : `${Number(v).toFixed(0)}%` },
+      { key: "progress_percent", label: "Progress", align: "right", format: percentCell },
+      { key: "projected_value", label: "착지 예상", align: "right", format: (v, row) => row.forecast_available === false || v === undefined || v === null ? <Tooltip title={String(row.forecast_reason || "추정할 수 없습니다.")}><span>—</span></Tooltip> : Number(v).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) },
+      { key: "required_daily_pace", label: "필요 일일 속도", align: "right", format: (v) => v === undefined || v === null ? "—" : Number(v).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) },
+      { key: "forecast_status", label: "전망", format: (v, row) => row.forecast_available === false ? <Chip size="small" label="추정 보류" /> : <Chip size="small" color={v === "on_track" ? "success" : "error"} label={v === "on_track" ? "달성 전망" : "미달 전망"} /> },
+      { key: "achieved", label: "현재 상태", format: (v) => <Chip size="small" color={v ? "success" : "warning"} label={v ? "달성" : "진행 중"} /> },
+    ]} />
+  </Stack>;
 }
 
 function ChangeCalendar() {

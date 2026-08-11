@@ -40,6 +40,12 @@ export const builtInSegmentFields = [
   "feature",
   "button",
   "is_conversion",
+  // Behavioural fields measured over a person's whole history.
+  "entity.sessions",
+  "entity.events",
+  "entity.conversions",
+  "entity.days_since_last_seen",
+  "entity.days_since_first_seen",
 ];
 
 const operators = [
