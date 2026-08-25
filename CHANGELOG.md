@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.0
+
+- Added multi-touch attribution with linear, time-decay (configurable half life) and position-based 40/20/40 models, expressed as weights over one shared path numbering so single-touch and multi-touch models never diverge in definition.
+- Made attribution credit fractional: a conversion reached through three visits now contributes a third to each channel instead of naming one winner, and every model's weights sum to exactly one per conversion.
+- Added average path length, touched conversions and touch share so the difference between models is visible rather than implied.
+- Added anomaly alert state: a detection is reported as new, ongoing for a stated number of days, or recovered, so an hourly schedule stops re-announcing the same drop and announces its recovery once.
+- Restricted anomaly delivery to new and recovered transitions by default, with `notify_on` to opt into ongoing alerts and same-day duplicate suppression; reading the report never rewrites alert history because only the delivery path persists state.
+- Preserved the v0.11.0 SDK, collector, tracking protocol and privacy contracts. Migration `012_anomaly_state.sql` only adds the alert state table.
+- Changed `credited_conversions` and the attribution totals from integers to numbers so fractional credit is representable; single-touch models still return whole numbers.
+
 ## v0.11.0
 
 - Rebuilt the visitor timeline as a person-level trace: every visitor ID the deterministic identity graph links to one SSO user is merged into a single chronology, grouped into sessions with entry and exit pages, channel, device, engagement and the gap between consecutive events.

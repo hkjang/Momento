@@ -228,15 +228,32 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 				location = loaded
 			}
 		}
-		report, err := insight.New(a.DB).DetectSiteAnomalies(ctx, delivery.SiteID, environment, location)
+		reporter := insight.New(a.DB)
+		report, err := reporter.DetectSiteAnomalies(ctx, delivery.SiteID, environment, location)
+		if err != nil {
+			return nil, err
+		}
+		notifyOn := insight.NotifiableStates()
+		if raw, ok := definition["notify_on"].([]any); ok && len(raw) > 0 {
+			notifyOn = notifyOn[:0]
+			for _, item := range raw {
+				if state, ok := item.(string); ok {
+					notifyOn = append(notifyOn, state)
+				}
+			}
+		}
+		// Alert state turns detections into transitions, so an open anomaly is
+		// announced once instead of on every schedule tick.
+		announce, err := reporter.ApplyAnomalyState(ctx, delivery.SiteID, environment, report, notifyOn)
 		if err != nil {
 			return nil, err
 		}
 		alwaysSend, _ := definition["always_send"].(bool)
-		if len(report.Detected) == 0 && !alwaysSend {
+		if len(announce) == 0 && !alwaysSend {
 			return nil, ErrSkipDelivery
 		}
-		data = map[string]any{"evaluated_date": report.EvaluatedDate, "timezone": report.Timezone, "baseline_weeks": report.BaselineWeeks, "detected": report.Detected, "checked": report.Checked, "note": report.Note}
+		data = map[string]any{"evaluated_date": report.EvaluatedDate, "timezone": report.Timezone, "baseline_weeks": report.BaselineWeeks,
+			"announced": announce, "notify_on": notifyOn, "detected": report.Detected, "checked": report.Checked, "note": report.Note}
 	case "visitor_insight":
 		// Deliver the same visitor insight report the console shows, so a mailed or
 		// Confluence-published digest needs no manual assembly.

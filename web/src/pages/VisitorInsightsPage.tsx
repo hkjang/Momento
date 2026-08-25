@@ -26,7 +26,10 @@ import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import {
   anomalySeverityLabel,
+  anomalyStateLabel,
   buildInsightMarkdown,
+  formatCredit,
+  stateSummary,
   changeTone,
   formatChange,
   formatInsightValue,
@@ -34,6 +37,7 @@ import {
   severityLabel,
   type Anomaly,
   type AnomalyReport,
+  type AnomalyTransition,
   type AttributionModel,
   type AttributionReport,
   type FindingSeverity,
@@ -68,6 +72,7 @@ export default function VisitorInsightsPage() {
   const [days, setDays] = useState(30);
   const [toast, setToast] = useState("");
   const [model, setModel] = useState("last_non_direct");
+  const [halfLife, setHalfLife] = useState(7);
   const q = useQuery({
     queryKey: ["visitor-insights", site?.site_id, environment, days],
     enabled: !!site,
@@ -83,11 +88,11 @@ export default function VisitorInsightsPage() {
       get<AnomalyReport>(`/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`),
   });
   const attribution = useQuery({
-    queryKey: ["attribution", site?.site_id, environment, days, model],
+    queryKey: ["attribution", site?.site_id, environment, days, model, halfLife],
     enabled: !!site,
     queryFn: () =>
       get<{ report: AttributionReport; models: AttributionModel[] }>(
-        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}`,
+        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}`,
       ),
   });
   const saveSegment = useMutation({
@@ -204,8 +209,15 @@ export default function VisitorInsightsPage() {
               label={`${anomalies.data.evaluated_date.slice(0, 10)} · 같은 요일 최근 ${anomalies.data.baseline_weeks}주 비교`}
             />
           </Stack>
-          <Typography variant="body2" color="text.secondary" mb={2}>
+          <Typography variant="body2" color="text.secondary">
             {anomalies.data.note}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" display="block" mb={2}>
+            Action 채널에는{" "}
+            {(anomalies.data.notify_on || ["new", "recovered"])
+              .map((state) => anomalyStateLabel[state as AnomalyTransition["state"]] || state)
+              .join(" · ")}{" "}
+            상태만 전송합니다. 같은 이상을 매 실행마다 반복 통보하지 않습니다.
           </Typography>
           {anomalies.data.detected.length ? (
             <Stack spacing={1.2}>
@@ -217,6 +229,20 @@ export default function VisitorInsightsPage() {
                       color={anomalyColor[anomaly.severity]}
                       label={anomalySeverityLabel[anomaly.severity]}
                     />
+                    {transitionOf(anomalies.data.transitions, anomaly.metric) && (
+                      <Tooltip title="신규는 이번에 처음 감지된 이상이고, 지속은 이전에 이미 알린 이상입니다. 알림은 기본적으로 신규와 회복만 전송합니다.">
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={
+                            transitionOf(anomalies.data.transitions, anomaly.metric)!.state === "new"
+                              ? "error"
+                              : "default"
+                          }
+                          label={stateSummary(transitionOf(anomalies.data.transitions, anomaly.metric)!)}
+                        />
+                      </Tooltip>
+                    )}
                     <Typography fontWeight={700}>{anomaly.label}</Typography>
                     <Chip
                       size="small"
@@ -241,6 +267,13 @@ export default function VisitorInsightsPage() {
               감시 지표에서 기준선을 벗어난 변화가 없습니다.
             </Alert>
           )}
+          {(anomalies.data.transitions || [])
+            .filter((transition) => transition.state === "recovered")
+            .map((transition) => (
+              <Alert key={transition.metric} severity="info" sx={{ mt: 1.2 }}>
+                <strong>{transition.label}</strong> 회복 · {transition.evidence}
+              </Alert>
+            ))}
           <Box mt={1.5}>
             <DataTable
               rows={anomalies.data.checked as unknown as Record<string, unknown>[]}
@@ -467,35 +500,69 @@ export default function VisitorInsightsPage() {
                 {attribution.data.report.description}
               </Typography>
             </Box>
-            <TextField
-              select
-              size="small"
-              label="기여 모델"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-              sx={{ minWidth: 220 }}
-            >
-              {attribution.data.models.map((item) => (
-                <MenuItem key={item.key} value={item.key}>
-                  {item.label}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Stack direction="row" gap={1.5}>
+              <TextField
+                select
+                size="small"
+                label="기여 모델"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                sx={{ minWidth: 220 }}
+              >
+                {attribution.data.models.map((item) => (
+                  <MenuItem key={item.key} value={item.key}>
+                    {item.label}
+                    {item.multi_touch ? " · 다중" : ""}
+                  </MenuItem>
+                ))}
+              </TextField>
+              {model === "time_decay" && (
+                <TextField
+                  select
+                  size="small"
+                  label="반감기"
+                  value={halfLife}
+                  onChange={(event) => setHalfLife(Number(event.target.value))}
+                  sx={{ minWidth: 120 }}
+                >
+                  {[1, 3, 7, 14, 30].map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {value}일
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
+            </Stack>
           </Stack>
           <Stack direction="row" gap={1} mt={1.5} flexWrap="wrap">
             <Chip size="small" label={`전환 ${attribution.data.report.total_conversions.toLocaleString("ko-KR")}건`} />
             <Chip
               size="small"
               color="primary"
-              label={`배분 ${attribution.data.report.attributed_conversions.toLocaleString("ko-KR")}건`}
+              label={`배분 ${formatCredit(attribution.data.report.attributed_conversions)}건`}
             />
+            {attribution.data.report.multi_touch && (
+              <Tooltip title="다중 터치 모델은 하나의 전환을 여러 방문에 나눠 배분하므로 채널별 배분 전환이 소수로 표시됩니다.">
+                <Chip size="small" color="secondary" variant="outlined" label="다중 터치 배분" />
+              </Tooltip>
+            )}
+            {attribution.data.report.average_path_touches > 0 && (
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`평균 경로 ${attribution.data.report.average_path_touches.toFixed(1)} 방문`}
+              />
+            )}
+            {attribution.data.report.half_life_days ? (
+              <Chip size="small" variant="outlined" label={`반감기 ${attribution.data.report.half_life_days}일`} />
+            ) : null}
             {attribution.data.report.unattributed_conversions > 0 && (
               <Tooltip title={`Lookback ${attribution.data.report.lookback_days}일 안에 방문 기록이 없어 배분하지 못한 전환입니다.`}>
                 <Chip
                   size="small"
                   color="warning"
                   variant="outlined"
-                  label={`미배분 ${attribution.data.report.unattributed_conversions.toLocaleString("ko-KR")}건`}
+                  label={`미배분 ${formatCredit(attribution.data.report.unattributed_conversions)}건`}
                 />
               </Tooltip>
             )}
@@ -507,7 +574,12 @@ export default function VisitorInsightsPage() {
               exportFilename={`momento-attribution-${model}`}
               columns={[
                 { key: "channel", label: "채널" },
-                { key: "credited_conversions", label: "배분 전환", align: "right" },
+                {
+                  key: "credited_conversions",
+                  label: "배분 전환",
+                  align: "right",
+                  format: (v) => formatCredit(Number(v)),
+                },
                 {
                   key: "credit_share_percent",
                   label: "비중",
@@ -515,7 +587,13 @@ export default function VisitorInsightsPage() {
                   format: (v) => `${Number(v).toFixed(1)}%`,
                 },
                 { key: "credited_users", label: "전환 사용자", align: "right" },
-                { key: "assisted_conversions", label: "관여 전환", align: "right" },
+                { key: "touched_conversions", label: "관여 전환", align: "right" },
+                {
+                  key: "touch_share_percent",
+                  label: "관여 비중",
+                  align: "right",
+                  format: (v) => `${Number(v).toFixed(1)}%`,
+                },
                 {
                   key: "assist_only_conversions",
                   label: "관여만",
@@ -648,6 +726,14 @@ export default function VisitorInsightsPage() {
       />
     </Stack>
   );
+}
+
+/** transitionOf finds the alert state for one metric, if Momento has one. */
+function transitionOf(
+  transitions: AnomalyTransition[] | undefined,
+  metric: string,
+): AnomalyTransition | undefined {
+  return (transitions || []).find((transition) => transition.metric === metric);
 }
 
 function BucketCard({

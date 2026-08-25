@@ -98,9 +98,16 @@
 - first-touch·last-touch·last-non-direct 전환 기여도와 관여 전환 비교
 - Metric Goal 기간 진행률 기반 착지 예측과 필요 일일 속도
 
+## v0.12 — implemented
+
+- 다중 터치 기여도: 선형, 시간 감쇠(반감기 조정), 위치 기반 40/20/40 모델과 소수 배분, 평균 경로 길이, 관여 비중
+- 모든 모델을 하나의 경로 numbering 위에서 가중치로 표현해 단일·다중 터치가 같은 정의를 공유
+- 이상 감지 알림 상태 관리: 신규·지속·회복 전이 판정, 같은 이상의 반복 통보 제거, 회복 알림, 상태 저장 테이블
+- 알림 전송 기준(`notify_on`) 설정과 읽기 경로에서 상태를 변경하지 않는 분리
+
 ## Next schema-compatible increments
 
-- Multi-touch (linear, time decay, position based) attribution and cross-service credit
+- Cross-service conversion credit and data-driven attribution weights
 - PostgreSQL 월별 Partition 전환과 Parquet export
 - ClickHouse sink selected from administrator storage settings once event volume requires it
 - Optional Kafka/Redpanda transport and separate collector/worker deployments for 10k+ EPS validation

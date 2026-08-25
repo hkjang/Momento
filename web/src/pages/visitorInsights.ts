@@ -102,6 +102,18 @@ export interface Anomaly {
   action?: string;
 }
 
+export interface AnomalyTransition {
+  metric: string;
+  label: string;
+  state: "new" | "ongoing" | "recovered";
+  severity: string;
+  days_open: number;
+  robust_z: number;
+  evidence: string;
+  action?: string;
+  notifiable: boolean;
+}
+
 export interface AnomalyReport {
   environment: string;
   evaluated_date: string;
@@ -110,33 +122,63 @@ export interface AnomalyReport {
   detected: Anomaly[];
   checked: Anomaly[];
   note: string;
+  transitions?: AnomalyTransition[];
+  notify_on?: string[];
+}
+
+export const anomalyStateLabel: Record<AnomalyTransition["state"], string> = {
+  new: "신규",
+  ongoing: "지속",
+  recovered: "회복",
+};
+
+/** stateSummary says how long a problem has been open, which decides urgency. */
+export function stateSummary(transition: AnomalyTransition): string {
+  if (transition.state === "recovered") return "회복";
+  if (transition.state === "new") return "신규";
+  return `지속 ${transition.days_open}일`;
 }
 
 export interface AttributionChannel {
   channel: string;
+  /** Fractional under multi touch models: three visits each earn a third. */
   credited_conversions: number;
   credited_users: number;
+  touched_conversions: number;
   assisted_conversions: number;
   credit_share_percent: number;
   assist_only_conversions: number;
+  touch_share_percent: number;
 }
 
 export interface AttributionReport {
   model: string;
   label: string;
   description: string;
+  multi_touch: boolean;
   lookback_days: number;
+  half_life_days?: number;
   total_conversions: number;
   attributed_conversions: number;
   unattributed_conversions: number;
+  average_path_touches: number;
   channels: AttributionChannel[];
   note: string;
+}
+
+/** formatCredit keeps whole numbers clean and shows fractions only when they exist. */
+export function formatCredit(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded)
+    ? rounded.toLocaleString("ko-KR")
+    : rounded.toLocaleString("ko-KR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 export interface AttributionModel {
   key: string;
   label: string;
   description: string;
+  multi_touch: boolean;
 }
 
 export const anomalySeverityLabel: Record<Anomaly["severity"], string> = {
@@ -249,14 +291,24 @@ export function buildInsightMarkdown(
     sections.push(
       `## 이상 감지 (${anomalies.evaluated_date.slice(0, 10)} 기준, 같은 요일 최근 ${anomalies.baseline_weeks}주 비교)`,
     );
+    const stateOf = (metric: string) => {
+      const transition = anomalies.transitions?.find((item) => item.metric === metric);
+      return transition ? ` (${stateSummary(transition)})` : "";
+    };
     sections.push(
       anomalies.detected
         .map(
           (anomaly) =>
-            `- [${anomalySeverityLabel[anomaly.severity] || anomaly.severity}] ${anomaly.label}: ${anomaly.evidence}${anomaly.action ? ` → ${anomaly.action}` : ""}`,
+            `- [${anomalySeverityLabel[anomaly.severity] || anomaly.severity}]${stateOf(anomaly.metric)} ${anomaly.label}: ${anomaly.evidence}${anomaly.action ? ` → ${anomaly.action}` : ""}`,
         )
         .join("\n"),
     );
+    const recovered = (anomalies.transitions || []).filter((item) => item.state === "recovered");
+    if (recovered.length) {
+      sections.push(
+        recovered.map((item) => `- [회복] ${item.label}: ${item.evidence}`).join("\n"),
+      );
+    }
   }
 
   if (report.findings.length) {

@@ -219,3 +219,72 @@ test("이상이 없으면 요약에 이상 감지 구간을 만들지 않는다"
   });
   assert.doesNotMatch(markdown, /## 이상 감지/);
 });
+
+test("이상 감지 요약은 신규·지속 상태와 회복을 함께 적는다", async () => {
+  const { buildInsightMarkdown } = await import("../src/pages/visitorInsights.ts");
+  const anomalies = {
+    environment: "prd",
+    evaluated_date: "2026-08-10T00:00:00Z",
+    timezone: "Asia/Seoul",
+    baseline_weeks: 8,
+    note: "",
+    detected: [
+      {
+        metric: "users",
+        label: "방문자",
+        date: "2026-08-10T00:00:00Z",
+        value: 120,
+        baseline: 900,
+        change_percent: -86.7,
+        robust_z: -5.1,
+        severity: "critical",
+        direction: "below",
+        samples: 8,
+        weekday: "월",
+        evidence: "근거 문장",
+        action: "채널 변화를 확인하십시오.",
+      },
+    ],
+    checked: [],
+    notify_on: ["new", "recovered"],
+    transitions: [
+      {
+        metric: "users",
+        label: "방문자",
+        state: "ongoing",
+        severity: "critical",
+        days_open: 3,
+        robust_z: -5.1,
+        evidence: "근거 문장",
+        notifiable: false,
+      },
+      {
+        metric: "errors",
+        label: "오류",
+        state: "recovered",
+        severity: "warning",
+        days_open: 2,
+        robust_z: 0,
+        evidence: "기준선 범위로 돌아왔습니다.",
+        notifiable: true,
+      },
+    ],
+  };
+
+  const markdown = buildInsightMarkdown(report, "사내 포털", anomalies);
+  assert.match(markdown, /\[심각\] \(지속 3일\) 방문자: 근거 문장 → 채널 변화를 확인하십시오\./);
+  assert.match(markdown, /\[회복\] 오류: 기준선 범위로 돌아왔습니다\./);
+});
+
+test("전환 배분은 소수 기여만 소수로 표기한다", async () => {
+  const { formatCredit, stateSummary } = await import("../src/pages/visitorInsights.ts");
+
+  assert.equal(formatCredit(12), "12");
+  assert.equal(formatCredit(12.04), "12");
+  assert.equal(formatCredit(12.35), "12.4");
+  assert.equal(formatCredit(0.333), "0.3");
+
+  assert.equal(stateSummary({ state: "new", days_open: 1 }), "신규");
+  assert.equal(stateSummary({ state: "ongoing", days_open: 4 }), "지속 4일");
+  assert.equal(stateSummary({ state: "recovered", days_open: 3 }), "회복");
+});

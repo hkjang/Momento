@@ -673,12 +673,30 @@ func (s *Server) siteAnomalies(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "INVALID_TIMEZONE", err.Error())
 		return
 	}
-	report, err := insight.New(s.DB).DetectSiteAnomalies(r.Context(), siteID, requestEnvironment(r), location)
+	environment := requestEnvironment(r)
+	reporter := insight.New(s.DB)
+	report, err := reporter.DetectSiteAnomalies(r.Context(), siteID, environment, location)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	writeJSON(w, 200, report)
+	// Reading the report never rewrites alert history; only delivery does that.
+	states, err := reporter.AnomalyStates(r.Context(), siteID, environment)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"environment":    report.Environment,
+		"evaluated_date": report.EvaluatedDate,
+		"timezone":       report.Timezone,
+		"baseline_weeks": report.BaselineWeeks,
+		"detected":       report.Detected,
+		"checked":        report.Checked,
+		"note":           report.Note,
+		"transitions":    insight.AnnotateStates(report, states),
+		"notify_on":      insight.NotifiableStates(),
+	})
 }
 
 // channelAttribution credits conversions to channel groups using the requested model.
@@ -698,11 +716,12 @@ func (s *Server) channelAttribution(w http.ResponseWriter, r *http.Request) {
 		model = "last_non_direct"
 	}
 	if _, ok := insight.AttributionOrder(model); !ok {
-		writeError(w, 400, "INVALID_MODEL", "model must be first_touch, last_touch or last_non_direct")
+		writeError(w, 400, "INVALID_MODEL", "unsupported attribution model")
 		return
 	}
 	lookback, _ := strconv.Atoi(r.URL.Query().Get("lookback_days"))
-	report, err := insight.New(s.DB).Attribution(r.Context(), siteID, requestEnvironment(r), from, to, lookback, model)
+	halfLife, _ := strconv.Atoi(r.URL.Query().Get("half_life_days"))
+	report, err := insight.New(s.DB).Attribution(r.Context(), siteID, requestEnvironment(r), from, to, lookback, model, halfLife)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
