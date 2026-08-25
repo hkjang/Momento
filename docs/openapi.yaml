@@ -318,7 +318,7 @@ paths:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
       summary: Privacy-preserving Frustration signals without Session Replay
-      description: Includes ready-to-save audience definitions for people the product blocked.
+      description: Includes ready-to-save audience definitions and per-signal conversion impact ranked by the conversions each gap accounts for.
       responses: {'200': {description: Frustration Analytics with audiences}}
   /api/v1/sites/{siteId}/feature-flags:
     parameters: [{$ref: '#/components/parameters/SiteId'}]

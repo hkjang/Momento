@@ -923,3 +923,97 @@ func mustJSON(t *testing.T, value any) string {
 	}
 	return string(encoded)
 }
+
+// TestFrictionImpactSeparatesAHarmfulSignalFromAHarmlessOne seeds two signals
+// with deliberately different consequences and checks the report tells them
+// apart. Ranking is the point of the feature: a report that lists every signal
+// as a problem has not helped anyone decide what to fix.
+func TestFrictionImpactSeparatesAHarmfulSignalFromAHarmlessOne(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 3)
+	site := "/api/v1/sites/" + f.siteKey
+
+	// A clean population large enough to judge: 60 people, 30 of whom hit
+	// error_after_click and almost never convert, 30 of whom hit slow_interaction
+	// and convert at the same rate as everyone else.
+	base := time.Now().Add(-2 * time.Hour)
+	insert := func(visitor, event string, converted bool, offset int) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,page_url)
+			VALUES($1,$2,'prd',$3,$4,$5,$6,$6,'{}'::jsonb,$7,'https://portal.internal/apply')`,
+			uuid.NewString(), f.siteID, visitor, visitor+"-s", event, base.Add(time.Duration(offset)*time.Second), converted); err != nil {
+			t.Fatalf("insert %s for %s: %v", event, visitor, err)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		visitor := fmt.Sprintf("impact-harmed-%02d", i)
+		insert(visitor, "error_after_click", false, i)
+		// Three of the thirty still convert, so the group is not degenerate.
+		if i < 3 {
+			insert(visitor, "purchase", true, i+1000)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		visitor := fmt.Sprintf("impact-slow-%02d", i)
+		insert(visitor, "slow_interaction", false, i+2000)
+		// Half convert, which is also the rate among everyone who avoided it.
+		if i%2 == 0 {
+			insert(visitor, "purchase", true, i+3000)
+		}
+	}
+	// A clean group that hits nothing, to be the baseline for both.
+	for i := 0; i < 30; i++ {
+		visitor := fmt.Sprintf("impact-clean-%02d", i)
+		insert(visitor, "page_view", false, i+4000)
+		if i%2 == 0 {
+			insert(visitor, "purchase", true, i+5000)
+		}
+	}
+
+	report := f.get(t, site+"/frustration?from="+from+"&to="+today)
+	if fmt.Sprint(report["impact_caveat"]) == "" || fmt.Sprint(report["impact_caveat"]) == "<nil>" {
+		t.Error("the report compares groups without stating that it is an association")
+	}
+	rows, _ := report["impact"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("no impact rows: %v", report)
+	}
+	byName := map[string]map[string]any{}
+	order := []string{}
+	for _, item := range rows {
+		row, _ := item.(map[string]any)
+		name := fmt.Sprint(row["signal"])
+		byName[name] = row
+		order = append(order, name)
+	}
+
+	harmful := byName["error_after_click"]
+	if harmful == nil {
+		t.Fatalf("the harmful signal is missing from the impact report: %v", order)
+	}
+	if verdict := fmt.Sprint(harmful["verdict"]); verdict != "worse" {
+		t.Errorf("error_after_click verdict = %q, want worse (its group converts at 10%% against roughly 50%%): %v", verdict, harmful)
+	}
+	if gap, _ := harmful["gap_points"].(float64); gap > -20 {
+		t.Errorf("error_after_click gap = %v points, want a clearly negative gap", gap)
+	}
+	if lost, _ := harmful["estimated_lost_conversions"].(float64); lost < 5 {
+		t.Errorf("error_after_click estimated only %v lost conversions", lost)
+	}
+
+	harmless := byName["slow_interaction"]
+	if harmless == nil {
+		t.Fatalf("the harmless signal is missing from the impact report: %v", order)
+	}
+	if verdict := fmt.Sprint(harmless["verdict"]); verdict == "worse" {
+		t.Errorf("slow_interaction was reported as harmful although its group converts at the same rate: %v", harmless)
+	}
+
+	// The harmful signal has to come first, because the ranking is what tells a
+	// reader where to start.
+	if order[0] != "error_after_click" {
+		t.Errorf("impact is ordered %v, want the harmful signal first", order)
+	}
+}

@@ -474,7 +474,12 @@ func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"total_sessions": totalSessions, "affected_sessions": affectedSessions, "affected_session_rate": percent(affectedSessions, totalSessions), "average_frustration_score": averageScore}, "signals": signals, "audiences": audiences})
+	impact, err := s.frictionImpactReport(r.Context(), siteID, from, to, environment)
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"total_sessions": totalSessions, "affected_sessions": affectedSessions, "affected_session_rate": percent(affectedSessions, totalSessions), "average_frustration_score": averageScore}, "signals": signals, "audiences": audiences, "impact": impact, "impact_caveat": frictionImpactCaveat})
 }
 
 func (s *Server) listFeatureFlags(w http.ResponseWriter, r *http.Request) {

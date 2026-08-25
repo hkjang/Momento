@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.24.0
+
+- The Frustration report now says whether a signal costs anything. For every signal it compares the people who hit it against the people who did not and returns a verdict — conversion loss, no difference, occurs alongside conversion, or withheld — with the gap in points and an estimate of the conversions that gap accounts for.
+- Signals are ranked by estimated lost conversions rather than by the size of the gap or the number of events. A modest gap that most people hit can be worth more than a severe gap almost nobody hits, and the ranking is the part that tells a reader where to start.
+- Judgement is withheld unless both sides have at least twenty people. A signal almost everyone hits is withheld too: the handful who avoided it cannot be a baseline.
+- A signal that fires on the way to converting — a retried form on the last step of a purchase — is reported as occurring alongside conversion instead of as harm, so nobody is sent to fix it.
+- The comparison states that it is an association, not a cause, on the response itself rather than leaving the reader to assume.
+- `analyze_frustration` returns the same impact analysis and caveat, so an agent asking about friction gets the ranking rather than raw counts, and no longer carries its own copy of the signal list.
+
 ## v0.23.0
 
 - Friction and search are now expressible as audiences. Five behavioural segment fields join the existing ones: `entity.frustration_signals`, `entity.frustration_sessions`, `entity.searches`, `entity.zero_result_searches` and `entity.search_clicks`. "Hit friction twice and never converted" and "searched and found nothing" are now segment definitions, which means they can go straight into the funnel, retention and experience comparisons that already accept segments.

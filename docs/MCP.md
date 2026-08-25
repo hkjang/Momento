@@ -27,7 +27,7 @@ Content-Type: application/json
 - `get_workspace_rollup`: Workspace 전체 서비스와 교차 사이트 SSO 사용자 Roll-Up
 - `get_feature_scores`: Feature Adoption·재사용·전환과 Dead Feature 후보
 - `analyze_search`: 검색량·Zero Result·CTR·성공률
-- `analyze_frustration`: Rage/Dead Click·재시도·오류·느린 상호작용 신호
+- `analyze_frustration`: Rage/Dead Click·재시도·오류·느린 상호작용 신호와 신호별 전환 영향(판정·전환 손실 추정·연관성 주의)
 - `get_metric_goals`: Semantic Metric 목표와 관리 범위
 - `get_event_catalog`: Event Owner·Contract Version·Volume·Last Seen
 - `get_visitor_insights`: 방문자 인사이트 전체 보고서. 전기간 대비 KPI, 신규·재방문, 채널 그룹, 진입 페이지, 방문 빈도·최근성, 기기, 실행 대상 Segment와 우선순위 인사이트를 한 번에 반환

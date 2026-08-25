@@ -434,8 +434,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_frustration":
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
-		signals := []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "error", "resource_error"}
-		rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY event_name ORDER BY count(*) DESC`, siteID, from, to, environment, signals)
+		rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY event_name ORDER BY count(*) DESC`, siteID, from, to, environment, frictionSignalNames)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
@@ -449,7 +448,14 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 				out = append(out, map[string]any{"signal": signal, "count": count, "users": users, "sessions": sessions})
 			}
 		}
-		body, _ := json.MarshalIndent(out, "", "  ")
+		// Counts alone tell an agent that something happened, not whether it cost
+		// anything, so the per-signal impact and its caveat travel with them.
+		impact, impactErr := s.frictionImpactReport(r.Context(), siteID, from, to, environment)
+		if impactErr != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(impactErr.Error(), true)))
+			return
+		}
+		body, _ := json.MarshalIndent(map[string]any{"signals": out, "impact": impact, "impact_caveat": frictionImpactCaveat}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "get_metric_goals":
 		rows, err := s.DB.Query(r.Context(), `SELECT g.name,g.metric_name,g.target_value,g.comparator,g.period,g.environment,g.organization,g.department,g.owner,g.active FROM metric_goals g WHERE g.site_id=$1 ORDER BY g.active DESC,g.name`, siteID)

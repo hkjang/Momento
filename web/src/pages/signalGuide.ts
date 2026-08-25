@@ -126,3 +126,42 @@ export function zeroResultReadiness(summary: { searches?: number; zero_results?:
   if (summary.zero_results) return null;
   return "결과 0건 검색이 한 건도 없습니다. 검색 결과 영역에 `data-momento-search-results=\"건수\"`를 넣으면 결과 수가 함께 기록되어 Zero Result 비율을 신뢰할 수 있습니다.";
 }
+
+export interface FrictionImpact {
+  signal: string;
+  affected_people: number;
+  unaffected_people: number;
+  affected_conversion_rate: number;
+  unaffected_conversion_rate: number;
+  gap_points: number;
+  verdict: "worse" | "better" | "similar" | "insufficient";
+  reliable: boolean;
+  estimated_lost_conversions: number;
+  evidence: string;
+}
+
+export const impactVerdictLabel: Record<FrictionImpact["verdict"], string> = {
+  worse: "전환 손실",
+  better: "전환과 함께 발생",
+  similar: "차이 없음",
+  insufficient: "판단 보류",
+};
+
+/**
+ * frictionHeadline names what to fix first. The report already ranks signals by
+ * the conversions the gap accounts for, so the headline is the first reliable
+ * harmful row — and when there is none, saying so is the finding.
+ */
+export function frictionHeadline(impact: FrictionImpact[] | undefined): string | null {
+  if (!impact?.length) return null;
+  const harmful = impact.filter((row) => row.verdict === "worse");
+  if (!harmful.length) {
+    const judged = impact.filter((row) => row.reliable);
+    if (!judged.length)
+      return "비교할 만한 인원이 모이지 않아 신호별 영향을 판단하지 않았습니다.";
+    return "측정된 신호 중 전환율을 뚜렷하게 떨어뜨리는 것은 없습니다. 신호 발생 자체를 줄이는 것보다 다른 개선이 우선입니다.";
+  }
+  const first = harmful[0];
+  const label = describeSignal(first.signal).label;
+  return `먼저 고칠 것은 ${label}입니다. 겪은 ${first.affected_people.toLocaleString("ko-KR")}명의 전환율이 ${Math.abs(first.gap_points).toFixed(1)}%p 낮아 전환 약 ${first.estimated_lost_conversions.toLocaleString("ko-KR")}건에 해당합니다.`;
+}

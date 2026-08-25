@@ -7,7 +7,7 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
-import { describeSignal, frustrationSetupHint, searchSetupHint, zeroResultReadiness } from "./signalGuide";
+import { describeSignal, frictionHeadline, frustrationSetupHint, impactVerdictLabel, searchSetupHint, zeroResultReadiness, type FrictionImpact } from "./signalGuide";
 import AudienceList from "../components/AudienceList";
 import type { InsightAudience } from "./visitorInsights";
 
@@ -127,15 +127,31 @@ function SearchAnalytics() {
 
 function Frustration() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(30, site!.timezone)}`) });
+  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[]; impact: FrictionImpact[]; impact_caveat: string }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(30, site!.timezone)}`) });
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
   const setup = frustrationSetupHint(q.data?.summary);
+  const headline = frictionHeadline(q.data?.impact);
   return <Stack spacing={2}>
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}><MetricCard label="영향 Session" value={q.data?.summary.affected_sessions || 0} /><MetricCard label="영향률" value={q.data?.summary.affected_session_rate || 0} type="percent" /><MetricCard label="평균 Frustration Score" value={q.data?.summary.average_frustration_score || 0} /></Box>
     <Alert severity="info">Session Replay 없이 행동 신호만 사용해 개인정보 노출을 줄입니다. Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction은 tracker가 자동 감지합니다.</Alert>
     {setup && <Alert severity="warning">{setup}</Alert>}
+    {headline && <Alert severity={q.data?.impact?.some((row) => row.verdict === "worse") ? "error" : "success"}>{headline}</Alert>}
+    {!!q.data?.impact?.length && <Card sx={{ p: 2.5 }}>
+      <Typography variant="h6">신호별 전환 영향</Typography>
+      <Typography variant="body2" color="text.secondary" mb={2}>{q.data.impact_caveat}</Typography>
+      <DataTable exportFilename="momento-frustration-impact" rows={q.data.impact.map((row) => ({ ...row, signal_label: describeSignal(row.signal).label, verdict_label: impactVerdictLabel[row.verdict] }))} columns={[
+        { key: "signal_label", label: "Signal" },
+        { key: "verdict_label", label: "판정", format: (v, row) => <Chip size="small" color={row.verdict === "worse" ? "error" : row.verdict === "better" ? "info" : row.verdict === "similar" ? "success" : "default"} label={String(v)} /> },
+        { key: "affected_people", label: "겪은 사람", align: "right" },
+        { key: "affected_conversion_rate", label: "전환율", align: "right", format: percentCell },
+        { key: "unaffected_conversion_rate", label: "겪지 않은 사람 전환율", align: "right", format: percentCell, minWidth: 170 },
+        { key: "gap_points", label: "차이", align: "right", format: (v) => `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}%p` },
+        { key: "estimated_lost_conversions", label: "전환 손실(추정)", align: "right", minWidth: 150 },
+        { key: "evidence", label: "근거", minWidth: 320 },
+      ]} />
+    </Card>}
     {!!q.data?.audiences?.length && <Card sx={{ p: 2.5 }}><AudienceList audiences={q.data.audiences} siteId={site.site_id} source="Frustration 분석에서 생성" /></Card>}
     <DataTable exportFilename="momento-frustration" rows={(q.data?.signals || []).map((row) => ({ ...row, signal_label: describeSignal(String(row.signal)).label, signal_action: describeSignal(String(row.signal)).action }))} columns={[{ key: "signal_label", label: "Signal", format: (v, row) => <Tooltip title={describeSignal(String(row.signal)).meaning}><span>{String(v)}</span></Tooltip> }, { key: "signal_action", label: "확인할 것", minWidth: 260 }, { key: "signal", label: "대상", format: (v) => <Button size="small" component={RouterLink} to={`/user-explorer?q=${encodeURIComponent(String(v))}`}>겪은 사람 찾기</Button> }, { key: "count", label: "Count", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "sessions", label: "Sessions", align: "right" }, { key: "weight", label: "Weight", align: "right" }, { key: "last_seen", label: "Last Seen" }]} />
   </Stack>;

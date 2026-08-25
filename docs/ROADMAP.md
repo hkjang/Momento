@@ -177,6 +177,14 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.24.0 — implemented
+
+- 신호별 전환 영향 분석: 겪은 집단 대 겪지 않은 집단 전환율 비교, 판정 4종, 전환 손실 추정
+- 차이 크기가 아니라 전환 손실 추정치 순 정렬
+- 양쪽 20명 표본 하한, 거의 전원이 겪는 신호도 보류
+- 전환과 함께 발생하는 신호를 손실과 구분
+- 연관성 주의 문구를 응답에 포함, MCP `analyze_frustration`에도 동일 분석 제공
+
 ## v0.23.0 — implemented
 
 - 행동 Segment 필드 5종 추가: `entity.frustration_signals`, `entity.frustration_sessions`, `entity.searches`, `entity.zero_result_searches`, `entity.search_clicks`
