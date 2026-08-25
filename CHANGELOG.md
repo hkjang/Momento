@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.21.3
+
+- Fixed the scheduled report kinds `visitor_insight` and `anomaly`, which the API accepted and the database rejected. The check constraint had never learned the kinds added in v0.10 and v0.11, so neither delivery could be created at all: the anomaly alert introduced in v0.11 and the form built for it in v0.19 both targeted a value the database refused.
+- Added a regression test that reads the live check constraints and fails when a value the service considers valid would be rejected, covering report kinds, channel types and delivery statuses.
+- Added write-path integration coverage: anomaly alert state through new, unchanged, opted-in, recovered and reopened transitions; secret issue, reveal, rotate, reveal again and re-seal; and scheduled delivery producing success, skipped and failed outcomes with the sealed credential actually sent and never listed back.
+- Verified that a behavioural segment compiles and evaluates against real data, matching nobody when nobody qualifies rather than silently matching everyone.
+
 ## v0.21.2
 
 - Fixed the query cost policy screen, which answered 500 for a site with no stored policy while the query guard silently applied defaults for the same site. Both now read one definition of the defaults, and the response says whether the values are stored or default.

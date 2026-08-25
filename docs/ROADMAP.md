@@ -171,6 +171,12 @@
 - Query Cost Policy 조회가 저장된 정책이 없을 때 500이 아니라 Guard와 동일한 기본값을 반환하도록 수정
 - 통합 검증 범위 확장: Collector 수집·Worker 적재·PII 필터, MCP 22개 도구 전체, 거버넌스·리포트 엔드포인트 30여 개, Export, Journey 분석, Contract CI 검증
 
+## v0.21.3 — implemented
+
+- `visitor_insight`·`anomaly` Scheduled Report를 데이터베이스 제약이 거부하던 문제 수정. v0.10·v0.11 이후 두 종류를 아예 만들 수 없었음
+- 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
+- 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights
