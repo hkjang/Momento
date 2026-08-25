@@ -14,7 +14,7 @@ COPY web/ ./
 RUN npm run build
 COPY --from=sdk-build /src/sdk/dist/tracker.js /src/web/dist/tracker.js
 
-FROM golang:1.26.5-bookworm AS go-build
+FROM golang:1.26.7-bookworm AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
