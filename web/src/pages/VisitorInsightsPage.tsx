@@ -17,7 +17,7 @@ import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import InsightsRounded from "@mui/icons-material/InsightsRounded";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
 import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import AnalysisToolbar from "../components/AnalysisToolbar";
@@ -197,6 +197,13 @@ export default function VisitorInsightsPage() {
             >
               Markdown
             </Button>
+            <Button
+              size="small"
+              component={RouterLink}
+              to="/admin/automation?kind=visitor_insight&name=%EB%B0%A9%EB%AC%B8%EC%9E%90%20%EC%9D%B8%EC%82%AC%EC%9D%B4%ED%8A%B8%20%EC%A0%95%EA%B8%B0%20%EB%B0%B0%EB%8B%AC"
+            >
+              정기 배달
+            </Button>
           </Stack>
         </Stack>
       </Card>
@@ -205,10 +212,19 @@ export default function VisitorInsightsPage() {
         <Card sx={{ p: 2.5 }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} mb={1}>
             <Typography variant="h6">이상 감지</Typography>
-            <Chip
-              size="small"
-              label={`${anomalies.data.evaluated_date.slice(0, 10)} · 같은 요일 최근 ${anomalies.data.baseline_weeks}주 비교`}
-            />
+            <Stack direction="row" gap={1} alignItems="center">
+              <Chip
+                size="small"
+                label={`${anomalies.data.evaluated_date.slice(0, 10)} · 같은 요일 최근 ${anomalies.data.baseline_weeks}주 비교`}
+              />
+              <Button
+                size="small"
+                component={RouterLink}
+                to="/admin/automation?kind=anomaly&name=%EC%9D%B4%EC%83%81%20%EA%B0%90%EC%A7%80%20%EC%95%8C%EB%A6%BC"
+              >
+                알림 설정
+              </Button>
+            </Stack>
           </Stack>
           <Typography variant="body2" color="text.secondary">
             {anomalies.data.note}

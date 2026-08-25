@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.19.0
+
+- Replaced the hand-written definition document in the scheduled report form with kind-aware inputs: choosing what to send now shows only the values that kind actually uses, and the definition is built from them.
+- Gave the anomaly alert its own inputs, which are notification states and an always-send switch rather than an aggregation range, and left the range to the reports that measure a period.
+- Added a one-line summary of what will be delivered and how often before the schedule is saved.
+- Added deep links from the anomaly card and the visitor insight header into the schedule form with the kind preselected, so a finding turns into a recurring delivery without hunting for the right screen.
+- Kept a raw JSON escape hatch for unusual definitions, and stopped writing keys a report kind ignores, which previously read as configuration that did something.
+
 ## v0.18.0
 
 - Added cohort comparison to the experience report: Core Web Vitals p75 and error exposure per segment, because a site-wide p75 averages a fast desktop on the office network together with a phone over VPN and hides both.

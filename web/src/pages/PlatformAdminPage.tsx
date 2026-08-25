@@ -4,8 +4,10 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   Chip,
   Divider,
+  FormControlLabel,
   MenuItem,
   Stack,
   TextField,
@@ -13,6 +15,21 @@ import {
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, post, put, rangeQuery, type SiteEnvironment } from "../api/client";
+import {
+  buildScheduleDefinition,
+  defaultScheduleForm,
+  describeSchedule,
+  intervalPresets,
+  kindUsesAlertState,
+  kindUsesRange,
+  kindUsesSegmentFilters,
+  parseScheduleKind,
+  scheduleKindLabel,
+  alertStateLabel,
+  type ScheduleForm,
+  type ScheduleKind,
+} from "./scheduleDefinition";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
@@ -143,11 +160,36 @@ function Automation() {
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const current = config || settings.data?.automation?.value || { enabled: false, allowed_webhook_hosts: [], delivery_timeout_seconds: 10, max_entity_ids: 0 };
   const [channel, setChannel] = useState({ name: "", channel_type: "webhook", endpoint_url: "", headers: "{}" });
-  const [schedule, setSchedule] = useState({ name: "", channel_id: "", report_kind: "overview", interval_minutes: 1440, definition: `{"environment":"${environment}","days":7}` });
-  useEffect(() => setSchedule((value) => ({ ...value, definition: `{"environment":"${environment}","days":7}` })), [environment]);
+  const [params] = useSearchParams();
+  const linkedKind = parseScheduleKind(params.get("kind"));
+  const [schedule, setSchedule] = useState({
+    name: params.get("name") || "",
+    channel_id: "",
+    report_kind: (linkedKind || "overview") as ScheduleKind,
+    interval_minutes: linkedKind === "anomaly" ? 60 : 1440,
+  });
+  const [form, setForm] = useState<ScheduleForm>({ ...defaultScheduleForm, environment });
+  const [rawDefinition, setRawDefinition] = useState("");
+  useEffect(() => setForm((value) => ({ ...value, environment })), [environment]);
   const configSave = useMutation({ mutationFn: () => put("/api/v1/settings/automation", current), onSuccess: () => { setConfig(null); void qc.invalidateQueries({ queryKey: ["settings"] }); } });
   const channelSave = useMutation({ mutationFn: () => post(`/api/v1/sites/${site!.site_id}/delivery-channels`, { ...channel, headers: JSON.parse(channel.headers), active: true }), onSuccess: () => { setChannel({ name: "", channel_type: "webhook", endpoint_url: "", headers: "{}" }); void qc.invalidateQueries({ queryKey: ["delivery-channels"] }); } });
-  const scheduleSave = useMutation({ mutationFn: () => post(`/api/v1/sites/${site!.site_id}/scheduled-reports`, { ...schedule, definition: JSON.parse(schedule.definition), enabled: true }), onSuccess: () => { setSchedule({ ...schedule, name: "" }); void qc.invalidateQueries({ queryKey: ["scheduled-reports"] }); } });
+  const scheduleSave = useMutation({
+    mutationFn: () =>
+      post(`/api/v1/sites/${site!.site_id}/scheduled-reports`, {
+        ...schedule,
+        // The advanced field wins when it is filled, so an unusual definition is
+        // still possible without making it the default path.
+        definition: rawDefinition.trim()
+          ? (JSON.parse(rawDefinition) as Record<string, unknown>)
+          : buildScheduleDefinition(schedule.report_kind, form),
+        enabled: true,
+      }),
+    onSuccess: () => {
+      setSchedule({ ...schedule, name: "" });
+      setRawDefinition("");
+      void qc.invalidateQueries({ queryKey: ["scheduled-reports"] });
+    },
+  });
   // Delivery history is the only place where a failing webhook explains itself.
   const runs = useQuery({ queryKey: ["delivery-runs", site?.site_id], enabled: !!site, refetchInterval: 30000, queryFn: () => get<Record<string, unknown>[]>(`/api/v1/sites/${site!.site_id}/delivery-runs`) });
   const channelDelete = useMutation({ mutationFn: (id: string) => del(`/api/v1/sites/${site!.site_id}/delivery-channels/${id}`), onSuccess: () => qc.invalidateQueries({ queryKey: ["delivery-channels"] }) });
@@ -162,7 +204,64 @@ function Automation() {
     <Alert severity="info">모든 전송은 관리자 Allowlist와 Audit Log를 거칩니다. 기본값은 비활성이고, Entity ID 전달은 기본 0건입니다.</Alert>
     <Card sx={{ p: 2.5 }}><Typography variant="h6">Automation Security</Typography><Stack spacing={1.5} mt={2}><TextField select label="Scheduler" value={String(Boolean(current.enabled))} onChange={(e) => setConfig({ ...current, enabled: e.target.value === "true" })}><MenuItem value="false">Disabled</MenuItem><MenuItem value="true">Enabled</MenuItem></TextField><TextField label="Allowed Webhook Hosts" value={allowedHosts} onChange={(e) => setConfig({ ...current, allowed_webhook_hosts: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} helperText="예: hooks.internal, *.corp.local" /><TextField type="number" label="Delivery Timeout (seconds)" value={Number(current.delivery_timeout_seconds || 10)} onChange={(e) => setConfig({ ...current, delivery_timeout_seconds: Number(e.target.value) })} /><TextField type="number" label="Segment Entity ID 최대 전달 수" value={Number(current.max_entity_ids || 0)} onChange={(e) => setConfig({ ...current, max_entity_ids: Number(e.target.value) })} helperText="0이면 집계만 전달합니다." /><Button variant="contained" disabled={!config || configSave.isPending} onClick={() => configSave.mutate()}>보안 설정 저장</Button></Stack></Card>
     <Card sx={{ p: 2.5 }}><Typography variant="h6">Delivery Channel</Typography><Typography variant="body2" color="text.secondary" mb={2}>Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent endpoint를 등록합니다. Header 값은 다시 표시되지 않습니다.</Typography><Stack spacing={1.5}><TextField label="이름" value={channel.name} onChange={(e) => setChannel({ ...channel, name: e.target.value })} /><TextField select label="유형" value={channel.channel_type} onChange={(e) => setChannel({ ...channel, channel_type: e.target.value })}>{["webhook", "confluence", "mail", "internal_message", "ai_agent"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField><TextField label="Endpoint URL" value={channel.endpoint_url} onChange={(e) => setChannel({ ...channel, endpoint_url: e.target.value })} /><TextField label="Headers JSON" value={channel.headers} onChange={(e) => setChannel({ ...channel, headers: e.target.value })} /><Button variant="contained" disabled={!channel.name || !channel.endpoint_url || channelSave.isPending} onClick={() => channelSave.mutate()}>Channel 등록</Button>{channelSave.error && <ErrorState error={channelSave.error} />}</Stack><Box mt={2}><DataTable rows={(channels.data || []) as unknown as Record<string, unknown>[]} columns={[{ key: "name", label: "이름" }, { key: "channel_type", label: "유형" }, { key: "endpoint_url", label: "Endpoint" }, { key: "header_names", label: "Headers", format: (v) => (v as string[]).join(", ") || "—" }, { key: "active", label: "상태", format: (v) => <Chip size="small" label={v ? "Active" : "Disabled"} /> }, { key: "id", label: "", align: "right", format: (v) => <Button size="small" color="error" disabled={channelDelete.isPending} onClick={() => channelDelete.mutate(String(v))}>삭제</Button> }]} />{channelDelete.error && <Box mt={1}><ErrorState error={channelDelete.error} /></Box>}</Box></Card>
-    <Card sx={{ p: 2.5 }}><Typography variant="h6">Scheduled Report / Segment Action</Typography><Typography variant="body2" color="text.secondary" mb={2}>분석에서 Action까지 연결합니다: Segment → Webhook → CRM/Mail/AI Agent/사내 메시지.</Typography><Stack spacing={1.5}><TextField label="이름" value={schedule.name} onChange={(e) => setSchedule({ ...schedule, name: e.target.value })} /><TextField select label="Channel" value={schedule.channel_id} onChange={(e) => setSchedule({ ...schedule, channel_id: e.target.value })}>{channels.data?.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField><TextField select label="Report" value={schedule.report_kind} onChange={(e) => setSchedule({ ...schedule, report_kind: e.target.value })}>{["overview", "insights", "adoption", "experience", "ai", "segment"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField><TextField type="number" label="Interval Minutes" value={schedule.interval_minutes} onChange={(e) => setSchedule({ ...schedule, interval_minutes: Number(e.target.value) })} /><TextField multiline label="Definition JSON" value={schedule.definition} onChange={(e) => setSchedule({ ...schedule, definition: e.target.value })} /><Button variant="contained" disabled={!schedule.name || !schedule.channel_id || scheduleSave.isPending} onClick={() => scheduleSave.mutate()}>Schedule 저장</Button>{scheduleSave.error && <ErrorState error={scheduleSave.error} />}</Stack><Box mt={2}><DataTable rows={schedules.data || []} columns={[{ key: "name", label: "이름" }, { key: "report_kind", label: "Report" }, { key: "channel_name", label: "Channel" }, { key: "interval_minutes", label: "Interval", align: "right" }, { key: "last_status", label: "Last Status" }, { key: "next_run_at", label: "Next Run" }, { key: "last_error", label: "Last Error", format: (v) => v ? <Typography variant="caption" color="error.main">{String(v)}</Typography> : "—" }, { key: "id", label: "", align: "right", format: (v) => <Stack direction="row" justifyContent="flex-end" spacing={0.5}><Button size="small" disabled={runNow.isPending} onClick={() => runNow.mutate(String(v))}>지금 실행</Button><Button size="small" color="error" disabled={scheduleDelete.isPending} onClick={() => scheduleDelete.mutate(String(v))}>삭제</Button></Stack> }]} />{runNow.error && <Box mt={1}><ErrorState error={runNow.error} /></Box>}</Box></Card>
+    <Card sx={{ p: 2.5 }}><Typography variant="h6">Scheduled Report / Segment Action</Typography><Typography variant="body2" color="text.secondary" mb={2}>분석에서 Action까지 연결합니다: Segment → Webhook → CRM/Mail/AI Agent/사내 메시지.</Typography><Stack spacing={1.5}>
+      <TextField label="이름" value={schedule.name} onChange={(e) => setSchedule({ ...schedule, name: e.target.value })} />
+      <TextField select label="Channel" value={schedule.channel_id} onChange={(e) => setSchedule({ ...schedule, channel_id: e.target.value })} helperText={channels.data?.length ? "" : "먼저 Delivery Channel을 등록하십시오."}>{channels.data?.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField>
+      <TextField select label="보낼 내용" value={schedule.report_kind} onChange={(e) => setSchedule({ ...schedule, report_kind: e.target.value as ScheduleKind })}>
+        {(Object.keys(scheduleKindLabel) as ScheduleKind[]).map((value) => <MenuItem key={value} value={value}>{scheduleKindLabel[value]}</MenuItem>)}
+      </TextField>
+      <TextField select label="주기" value={schedule.interval_minutes} onChange={(e) => setSchedule({ ...schedule, interval_minutes: Number(e.target.value) })}>
+        {intervalPresets.map((preset) => <MenuItem key={preset.minutes} value={preset.minutes}>{preset.label}</MenuItem>)}
+        {!intervalPresets.some((preset) => preset.minutes === schedule.interval_minutes) && (
+          <MenuItem value={schedule.interval_minutes}>{schedule.interval_minutes}분마다</MenuItem>
+        )}
+      </TextField>
+      <TextField select label="환경" value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
+        {["dev", "stg", "prd"].map((value) => <MenuItem key={value} value={value}>{value.toUpperCase()}</MenuItem>)}
+      </TextField>
+      {kindUsesRange(schedule.report_kind) && (
+        <TextField select label="집계 기간" value={form.days} onChange={(e) => setForm({ ...form, days: Number(e.target.value) })}>
+          {[1, 7, 30, 90].map((value) => <MenuItem key={value} value={value}>최근 {value}일</MenuItem>)}
+        </TextField>
+      )}
+      {kindUsesAlertState(schedule.report_kind) && (
+        <>
+          <TextField
+            select
+            label="전송할 상태"
+            value={form.notifyOn}
+            onChange={(e) => setForm({ ...form, notifyOn: typeof e.target.value === "string" ? e.target.value.split(",") : (e.target.value as unknown as string[]) })}
+            slotProps={{ select: { multiple: true } }}
+            helperText="기본값은 신규와 회복입니다. 지속을 추가하면 하루에 한 번 더 알립니다."
+          >
+            {["new", "ongoing", "recovered"].map((value) => <MenuItem key={value} value={value}>{alertStateLabel(value)}</MenuItem>)}
+          </TextField>
+          <FormControlLabel
+            control={<Checkbox checked={form.alwaysSend} onChange={(e) => setForm({ ...form, alwaysSend: e.target.checked })} />}
+            label="이상이 없어도 매번 전송"
+          />
+        </>
+      )}
+      {kindUsesSegmentFilters(schedule.report_kind) && (
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+          <TextField label="Event 이름" value={form.eventName} onChange={(e) => setForm({ ...form, eventName: e.target.value })} />
+          <TextField label="Feature" value={form.feature} onChange={(e) => setForm({ ...form, feature: e.target.value })} />
+          <TextField label="부서" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+        </Stack>
+      )}
+      <Alert severity="info">{describeSchedule(schedule.report_kind, form, schedule.interval_minutes)}</Alert>
+      <TextField
+        multiline
+        size="small"
+        label="고급: Definition JSON 직접 입력"
+        value={rawDefinition}
+        onChange={(e) => setRawDefinition(e.target.value)}
+        placeholder={JSON.stringify(buildScheduleDefinition(schedule.report_kind, form))}
+        helperText="비워 두면 위 설정으로 만듭니다. 값을 넣으면 그 JSON을 그대로 사용합니다."
+      />
+      <Button variant="contained" disabled={!schedule.name || !schedule.channel_id || scheduleSave.isPending} onClick={() => scheduleSave.mutate()}>Schedule 저장</Button>
+      {scheduleSave.error && <ErrorState error={scheduleSave.error} />}
+    </Stack><Box mt={2}><DataTable rows={schedules.data || []} columns={[{ key: "name", label: "이름" }, { key: "report_kind", label: "Report" }, { key: "channel_name", label: "Channel" }, { key: "interval_minutes", label: "Interval", align: "right" }, { key: "last_status", label: "Last Status" }, { key: "next_run_at", label: "Next Run" }, { key: "last_error", label: "Last Error", format: (v) => v ? <Typography variant="caption" color="error.main">{String(v)}</Typography> : "—" }, { key: "id", label: "", align: "right", format: (v) => <Stack direction="row" justifyContent="flex-end" spacing={0.5}><Button size="small" disabled={runNow.isPending} onClick={() => runNow.mutate(String(v))}>지금 실행</Button><Button size="small" color="error" disabled={scheduleDelete.isPending} onClick={() => scheduleDelete.mutate(String(v))}>삭제</Button></Stack> }]} />{runNow.error && <Box mt={1}><ErrorState error={runNow.error} /></Box>}</Box></Card>
     <Card sx={{ p: 2.5 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
         <Box>

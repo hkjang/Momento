@@ -143,6 +143,12 @@
 - 권장 기준(LCP 2500·INP 200·CLS 0.1·FCP 1800·TTFB 800) 통과 여부로 "느림"과 "기준 초과"를 구분
 - 표본 20건 미만과 30% 미만 지연은 보고하지 않아 실행 가능한 격차만 남김
 
+## v0.19 — implemented
+
+- 종류별 Scheduled Report 입력 폼: 보낼 내용·주기·환경·기간·알림 상태를 선택하면 정의를 자동 생성
+- 이상 감지와 방문자 인사이트 화면에서 정기 배달 설정으로 직접 이동하는 딥링크
+- 종류가 쓰지 않는 값은 정의에 넣지 않고, 필요할 때만 JSON 직접 입력으로 우회
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights
