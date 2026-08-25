@@ -48,6 +48,11 @@ func (m Maintenance) Run(ctx context.Context) {
 	}
 }
 
+// RunPending processes one queued aggregate job and reports whether it found one.
+// It exists so a test, or an operator draining the queue, does not have to wait for
+// the scheduler tick.
+func (m Maintenance) RunPending(ctx context.Context) (bool, error) { return m.runNext(ctx) }
+
 func (m Maintenance) runNext(ctx context.Context) (bool, error) {
 	tx, err := m.DB.Begin(ctx)
 	if err != nil {

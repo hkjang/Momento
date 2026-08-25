@@ -221,7 +221,7 @@ func (f fixture) do(t *testing.T, method, path, body string) map[string]any {
 	}
 	recorder := httptest.NewRecorder()
 	f.server.Handler().ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK && recorder.Code != http.StatusCreated {
+	if recorder.Code != http.StatusOK && recorder.Code != http.StatusCreated && recorder.Code != http.StatusAccepted {
 		t.Fatalf("%s %s = %d: %s", method, path, recorder.Code, recorder.Body.String())
 	}
 	var decoded map[string]any

@@ -851,7 +851,11 @@ func (s *Server) decidePrivacyRequest(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Decision string `json:"decision"`
 	}
-	if err := decodeJSON(r, &in, 8<<10); err != nil || (in.Decision != "approve" && in.Decision != "reject") {
+	if err := decodeJSON(r, &in, 8<<10); err != nil {
+		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
+		return
+	}
+	if in.Decision != "approve" && in.Decision != "reject" {
 		writeError(w, 400, "INVALID_DECISION", "decision must be approve or reject")
 		return
 	}

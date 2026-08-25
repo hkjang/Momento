@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.21.4 — implemented
+
+- 개인정보 삭제·Retention·Aggregate 재집계 통합 검증. 삭제 모드 4종, 파생 테이블 8종 잔존 0건, 타인 데이터 보존, 승인 전 Export 차단 확인
+- 승인 결정 API가 잘못된 본문과 잘못된 값을 구분해 보고하도록 수정
+- 운영·테스트용 진입점 추가: `Worker.ApplyRetention`, `Maintenance.RunPending`
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

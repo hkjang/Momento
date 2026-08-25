@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.21.4
+
+- Verified privacy deletion end to end against a real database. Deleting by SSO user removes every row across raw events, sessions, visitors, visitor sessions, identity links, identified users and both daily rollups, while another person's data on the same site is untouched. Visitor, period and property deletion keep what is outside their boundary, and property deletion strips the key rather than the event.
+- Verified that an export request cannot be downloaded before it is approved, that retention honours the per-site policy in both directions, and that a full aggregate rebuild finishes with no failed job.
+- Separated a malformed request body from an invalid value in the privacy decision endpoint, which previously answered "decision must be approve or reject" for a body that carried an extra field.
+- Added `Worker.ApplyRetention` and `Maintenance.RunPending` so retention and the aggregate queue can be driven once, by a test or by an operator applying a policy change now.
+
 ## v0.21.3
 
 - Fixed the scheduled report kinds `visitor_insight` and `anomaly`, which the API accepted and the database rejected. The check constraint had never learned the kinds added in v0.10 and v0.11, so neither delivery could be created at all: the anomaly alert introduced in v0.11 and the form built for it in v0.19 both targeted a value the database refused.

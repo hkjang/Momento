@@ -1161,3 +1161,8 @@ func (w Worker) cleanup(ctx context.Context) error {
 
 // ProcessPending is used by tests and operational drains.
 func (w Worker) ProcessPending(ctx context.Context) error { return w.processBatch(ctx) }
+
+// ApplyRetention runs the retention sweep once. Retention deletes data, so it is
+// exposed for tests and for an operator who needs to apply a policy change now
+// instead of waiting for the next tick.
+func (w Worker) ApplyRetention(ctx context.Context) error { return w.cleanup(ctx) }

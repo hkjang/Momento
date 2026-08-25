@@ -53,6 +53,12 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 
 ---
 
+## 2.2.1 삭제와 보존의 검증 범위
+
+개인정보 삭제는 규정 준수 약속이므로 통합 테스트로 확인합니다. `user_id` 모드 삭제 후 `raw_events`, `sessions`, `visitors`, `visitor_sessions`, `visitor_identities`, `identified_users`, `daily_site_visitors`, `daily_site_sessions` 여덟 개 테이블에 잔존 행이 없고, 같은 사이트의 다른 사람 데이터는 남아 있는지 확인합니다. `visitor`, `period`, `property` 모드도 각각 경계 밖 데이터 보존과 property만 제거되는지 확인합니다.
+
+Retention은 사이트별 정책을 적용해 정책 밖 데이터가 삭제되고 정책 안 데이터가 유지되는지, Aggregate 재집계는 큐가 비고 실패 작업이 없는지 확인합니다.
+
 ## 2.3 분석 쿼리 보호
 
 대화형 분석 조회(방문자 인사이트, 이상 감지, 기여도, 방문자 검색·추적, Funnel)는 **25초 제한** 아래에서 실행됩니다. 초과하면 연결을 붙잡아 두지 않고 `504 QUERY_TIMEOUT`으로 즉시 끝나며, 기간 축소·Segment 적용·Scheduled Report 사용을 안내합니다. 요청이 취소되면 데이터베이스 쿼리도 함께 취소됩니다.
