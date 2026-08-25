@@ -16,6 +16,7 @@ import (
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/database"
 	"github.com/hkjang/Momento/internal/secret"
+	"github.com/hkjang/Momento/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -50,6 +51,7 @@ type fixture struct {
 	siteID      uuid.UUID
 	otherKey    string
 	sessionCook string
+	trackingKey string
 	visitorID   string
 	userID      string
 	segmentID   string
@@ -79,10 +81,11 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	if err := pool.QueryRow(ctx, `INSERT INTO workspaces(organization_id,name) VALUES($1,'Workspace') RETURNING id`, orgID).Scan(&workspaceID); err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
+	const trackingKey = "mom_track_integration"
 	newSite := func(key, name string) uuid.UUID {
 		var id uuid.UUID
 		if err := pool.QueryRow(ctx, `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,timezone)
-			VALUES($1,$2,$3,$3,$4,'mom_track_x',$5,'mom_server_x',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, workspaceID, key, name, "hash-"+key, "server-"+key).Scan(&id); err != nil {
+			VALUES($1,$2,$3,$3,$4,'mom_track_x',$5,'mom_server_x',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, workspaceID, key, name, auth.HashToken(trackingKey), "server-"+key).Scan(&id); err != nil {
 			t.Fatalf("site: %v", err)
 		}
 		run(`INSERT INTO site_environments(site_id,name,label) VALUES($1,'prd','Production') ON CONFLICT DO NOTHING`, id)
@@ -199,7 +202,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	server := New(pool, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), cipher)
 	return fixture{
 		server: server, siteKey: "SITE_MAIN", siteID: siteID, otherKey: "SITE_HR",
-		sessionCook: token, visitorID: desktop, userID: person, segmentID: segmentID.String(),
+		sessionCook: token, trackingKey: trackingKey, visitorID: desktop, userID: person, segmentID: segmentID.String(),
 	}
 }
 
@@ -416,4 +419,214 @@ func TestAnalyticalEndpointsRunAgainstPostgres(t *testing.T) {
 			f.siteKey, from, today, f.segmentID)
 		f.do(t, http.MethodPost, "/api/v1/query", body)
 	})
+}
+
+// TestCollectorAndWorkerIngest covers the path every other report depends on: an
+// event arriving over HTTP, passing the privacy filter, and reaching raw_events
+// through the durable inbox.
+func TestCollectorAndWorkerIngest(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	before := f.countEvents(t, "collector_check")
+	payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"visitor-collector","session_id":"session-collector",
+		"user_id":"EMP002","user_properties":{"department":"기술","email":"leak@example.com"},
+		"context":{"page":{"url":"https://portal.internal/apply?token=secret","title":"신청","referrer":""},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{"source":"intranet","medium":"portal"}},
+		"events":[{"id":"%s","name":"collector_check","timestamp":%d,"properties":{"feature":"apply","phone":"010-1234-5678"},"contract_version":1}]}`,
+		f.siteKey, f.trackingKey, uuid.NewString(), time.Now().UnixMilli())
+
+	request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://portal.internal")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("collect = %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	if after := f.countEvents(t, "collector_check"); after != before+1 {
+		t.Fatalf("stored events = %d, want %d", after, before+1)
+	}
+
+	// The privacy policy is applied before the durable write, so the stored row must
+	// not contain the blocked property or the query string.
+	var properties, userProperties, pageURL string
+	if err := pool.QueryRow(ctx, `SELECT properties::text,user_properties::text,coalesce(page_url,'') FROM raw_events
+		WHERE site_id=$1 AND event_name='collector_check' ORDER BY received_at DESC LIMIT 1`, f.siteID).
+		Scan(&properties, &userProperties, &pageURL); err != nil {
+		t.Fatalf("read stored event: %v", err)
+	}
+	if strings.Contains(properties, "010-1234-5678") || strings.Contains(properties, "phone") {
+		t.Fatalf("a blocked property reached storage: %s", properties)
+	}
+	if strings.Contains(userProperties, "leak@example.com") || strings.Contains(userProperties, "email") {
+		t.Fatalf("a blocked user property reached storage: %s", userProperties)
+	}
+	if strings.Contains(pageURL, "token=secret") {
+		t.Fatalf("the query string reached storage: %s", pageURL)
+	}
+	if !strings.Contains(properties, "apply") {
+		t.Fatalf("the allowed property was dropped: %s", properties)
+	}
+
+	// A wrong tracking key must be refused rather than silently accepted.
+	bad := strings.Replace(payload, f.trackingKey, "mom_track_wrong", 1)
+	badRequest := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(bad))
+	badRequest.Header.Set("Content-Type", "application/json")
+	badRecorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(badRecorder, badRequest)
+	if badRecorder.Code != http.StatusForbidden {
+		t.Fatalf("a wrong tracking key returned %d, want 403: %s", badRecorder.Code, badRecorder.Body.String())
+	}
+}
+
+func (f fixture) countEvents(t *testing.T, name string) int64 {
+	t.Helper()
+	var count int64
+	if err := f.server.DB.QueryRow(context.Background(), `SELECT count(*) FROM raw_events WHERE site_id=$1 AND event_name=$2`, f.siteID, name).Scan(&count); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	return count
+}
+
+// TestMCPToolsRunAgainstPostgres calls every advertised tool. Each one runs its own
+// SQL, so a tool that is listed but broken is invisible until an agent calls it.
+func TestMCPToolsRunAgainstPostgres(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	today := time.Now().Format("2006-01-02")
+	from := time.Now().AddDate(0, 0, -60).Format("2006-01-02")
+
+	listed := f.rpc(t, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	result, _ := listed["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	if len(tools) < 22 {
+		t.Fatalf("tools/list returned %d tools, want at least 22", len(tools))
+	}
+	arguments := map[string]any{
+		"site_id": f.siteKey, "from": from, "to": today, "environment": "prd",
+		"dimension": "department", "metric": "active_users", "question": "지난주 사용 현황을 요약해줘",
+		"group_by": "model", "model": "linear", "scope": "workspace",
+		"cohort_event": "page_view", "return_event": "page_view",
+	}
+	for _, entry := range tools {
+		tool, _ := entry.(map[string]any)
+		name, _ := tool["name"].(string)
+		t.Run(name, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+				"params": map[string]any{"name": name, "arguments": arguments},
+			})
+			if err != nil {
+				t.Fatalf("encode call: %v", err)
+			}
+			response := f.rpc(t, string(body))
+			if rpcErr, ok := response["error"]; ok {
+				t.Fatalf("%s returned a protocol error: %v", name, rpcErr)
+			}
+			callResult, _ := response["result"].(map[string]any)
+			if callResult == nil {
+				t.Fatalf("%s returned no result: %v", name, response)
+			}
+			if isError, _ := callResult["isError"].(bool); isError {
+				t.Fatalf("%s failed: %v", name, callResult["content"])
+			}
+		})
+	}
+}
+
+func (f fixture) rpc(t *testing.T, body string) map[string]any {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("mcp = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode mcp response: %v (%s)", err, recorder.Body.String())
+	}
+	return decoded
+}
+
+// TestGovernanceEndpointsRunAgainstPostgres covers the reports the earlier suite
+// left out, each of which builds its own SQL.
+func TestGovernanceEndpointsRunAgainstPostgres(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	today := time.Now().Format("2006-01-02")
+	from := time.Now().AddDate(0, 0, -60).Format("2006-01-02")
+	site := "/api/v1/sites/" + f.siteKey
+	window := "?from=" + from + "&to=" + today
+
+	for _, path := range []string{
+		site + "/path" + window + "&view=all",
+		site + "/catalog",
+		site + "/lineage",
+		site + "/query-audit",
+		site + "/aggregate-jobs",
+		site + "/annotations" + window,
+		site + "/environments",
+		site + "/event-contracts",
+		site + "/semantic-metrics",
+		site + "/metric-goals",
+		site + "/journeys",
+		site + "/workspace-journeys",
+		site + "/adoption-targets",
+		site + "/feature-flags",
+		site + "/experiments",
+		site + "/privacy-requests",
+		site + "/delivery-channels",
+		site + "/scheduled-reports",
+		site + "/delivery-runs",
+		site + "/retention",
+		site + "/query-policy",
+		"/api/v1/tracking-debugger?site_id=" + f.siteKey,
+		"/api/v1/audit",
+		"/api/v1/segments?site_id=" + f.siteKey,
+		"/api/v1/dimensions?site_id=" + f.siteKey,
+		"/api/v1/event-definitions?site_id=" + f.siteKey,
+		"/api/v1/settings",
+		"/api/v1/users",
+		"/api/v1/networks",
+		"/api/v1/sites",
+		"/api/v1/system/encryption",
+	} {
+		f.get(t, path)
+	}
+
+	// The semantic metric evaluation compiles an AST into SQL, which is worth
+	// running rather than trusting.
+	f.get(t, site+"/semantic-metrics/active_users/query"+window)
+
+	// A journey analysis joins steps across the workspace.
+	f.do(t, http.MethodPost, site+"/journeys/analyze"+window,
+		`{"steps":[{"name":"진입","event":"page_view"},{"name":"기능","event":"feature_used"}],"conversion_window_days":30}`)
+	f.do(t, http.MethodPost, site+"/workspace-journeys/analyze"+window,
+		`{"steps":[{"name":"진입","event":"page_view"},{"name":"기능","event":"feature_used"}],"conversion_window_days":30}`)
+
+	// Contract validation is what a deployment pipeline calls.
+	f.do(t, http.MethodPost, site+"/event-contracts/validate",
+		`{"environment":"prd","events":[{"name":"feature_used","contract_version":1,"properties":{"feature":"document_search"}}]}`)
+
+	// The raw export streams CSV and NDJSON rather than JSON.
+	for _, format := range []string{"", "&format=json"} {
+		request := httptest.NewRequest(http.MethodGet, site+"/export"+window+format, nil)
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("export%s = %d: %s", format, recorder.Code, recorder.Body.String())
+		}
+		if recorder.Body.Len() == 0 {
+			t.Fatalf("export%s returned an empty body", format)
+		}
+	}
 }

@@ -296,14 +296,10 @@ func (s *Server) getQueryPolicy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	var maxDays, maxScore, background int
-	var fast, preview float64
-	err = s.DB.QueryRow(r.Context(), `SELECT max_exact_days,max_complexity_score,background_threshold,fast_sample_percent,preview_sample_percent FROM query_policies WHERE site_id=$1`, siteID).Scan(&maxDays, &maxScore, &background, &fast, &preview)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"max_exact_days": maxDays, "max_complexity_score": maxScore, "background_threshold": background, "fast_sample_percent": fast, "preview_sample_percent": preview})
+	// A site with no stored policy runs under the same defaults the guard applies,
+	// so the screen reports those rather than failing.
+	policy := s.loadQueryPolicy(r.Context(), siteID)
+	writeJSON(w, 200, policy)
 }
 
 func (s *Server) putQueryPolicy(w http.ResponseWriter, r *http.Request) {

@@ -19,13 +19,40 @@ type queryPlan struct {
 	EstimatedErrorRate float64 `json:"estimated_error_percent,omitempty"`
 }
 
-func (s *Server) planAnalyticsQuery(ctx context.Context, siteID uuid.UUID, in queryRequest, from, to time.Time) (queryPlan, string) {
-	var maxExactDays, maxScore, backgroundAt int
-	var fastPercent, previewPercent float64
+// queryPolicy is the cost guard a site runs under.
+type queryPolicy struct {
+	MaxExactDays         int     `json:"max_exact_days"`
+	MaxComplexityScore   int     `json:"max_complexity_score"`
+	BackgroundThreshold  int     `json:"background_threshold"`
+	FastSamplePercent    float64 `json:"fast_sample_percent"`
+	PreviewSamplePercent float64 `json:"preview_sample_percent"`
+	Defaults             bool    `json:"defaults"`
+}
+
+// defaultQueryPolicy is what a site runs under before an administrator sets one.
+// The guard and the administration screen read it from here so they can never
+// disagree about what limits are actually in force.
+func defaultQueryPolicy() queryPolicy {
+	return queryPolicy{MaxExactDays: 180, MaxComplexityScore: 90, BackgroundThreshold: 60, FastSamplePercent: 10, PreviewSamplePercent: 1, Defaults: true}
+}
+
+// loadQueryPolicy reads a site's policy, falling back to the defaults when none has
+// been stored yet.
+func (s *Server) loadQueryPolicy(ctx context.Context, siteID uuid.UUID) queryPolicy {
+	policy := defaultQueryPolicy()
+	var stored queryPolicy
 	if err := s.DB.QueryRow(ctx, `SELECT max_exact_days,max_complexity_score,background_threshold,fast_sample_percent,preview_sample_percent FROM query_policies WHERE site_id=$1`, siteID).
-		Scan(&maxExactDays, &maxScore, &backgroundAt, &fastPercent, &previewPercent); err != nil {
-		maxExactDays, maxScore, backgroundAt, fastPercent, previewPercent = 180, 90, 60, 10, 1
+		Scan(&stored.MaxExactDays, &stored.MaxComplexityScore, &stored.BackgroundThreshold, &stored.FastSamplePercent, &stored.PreviewSamplePercent); err != nil {
+		return policy
 	}
+	stored.Defaults = false
+	return stored
+}
+
+func (s *Server) planAnalyticsQuery(ctx context.Context, siteID uuid.UUID, in queryRequest, from, to time.Time) (queryPlan, string) {
+	policy := s.loadQueryPolicy(ctx, siteID)
+	maxExactDays, maxScore, backgroundAt := policy.MaxExactDays, policy.MaxComplexityScore, policy.BackgroundThreshold
+	fastPercent, previewPercent := policy.FastSamplePercent, policy.PreviewSamplePercent
 	mode := strings.ToLower(strings.TrimSpace(in.Mode))
 	if mode == "" {
 		mode = "exact"

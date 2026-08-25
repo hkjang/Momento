@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.21.2
+
+- Fixed the query cost policy screen, which answered 500 for a site with no stored policy while the query guard silently applied defaults for the same site. Both now read one definition of the defaults, and the response says whether the values are stored or default.
+- Extended the integration suite to the two largest unverified surfaces: the collector and worker ingestion path, and every advertised MCP tool. The collector test asserts that a blocked property, a blocked user property and a URL query string never reach storage, and that a wrong tracking key is refused.
+- Added coverage for the remaining reports and governance endpoints: path, catalog, lineage, query audit, aggregate jobs, annotations, environments, contracts, semantic metrics and their evaluation, goals, journeys and workspace journeys with analysis, adoption targets, flags, experiments, privacy requests, delivery channels and runs, retention, the tracking debugger, audit, settings, users, networks, encryption status, contract CI validation, and the CSV and NDJSON exports.
+
 ## v0.21.1
 
 - Fixed anomaly detection, which had been failing since v0.11: the daily error series aliased a column as `day`, a keyword PostgreSQL rejects in that position, so the endpoint answered 500 and the `anomaly` scheduled report failed every run. The v0.14 rollup change avoided the same mistake for the other four metrics but still reached this query for errors.

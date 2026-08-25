@@ -166,6 +166,11 @@
 - 실제 PostgreSQL을 사용하는 통합 테스트 추가: 인사이트·이상 감지·기여도 6모델×2범위·Cohort·경험·추적·검색·Funnel 비교·진단·리포트 16종
 - CI에 PostgreSQL service를 추가해 손으로 만든 SQL이 매 푸시마다 실행되도록 함
 
+## v0.21.2 — implemented
+
+- Query Cost Policy 조회가 저장된 정책이 없을 때 500이 아니라 Guard와 동일한 기본값을 반환하도록 수정
+- 통합 검증 범위 확장: Collector 수집·Worker 적재·PII 필터, MCP 22개 도구 전체, 거버넌스·리포트 엔드포인트 30여 개, Export, Journey 분석, Contract CI 검증
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights
