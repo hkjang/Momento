@@ -433,7 +433,53 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases, "impact": map[string]any{"users": allUsers, "error_users": errorUsers, "error_user_conversion_rate": errorRate, "clean_user_conversion_rate": cleanRate, "conversion_rate_delta": conversionDelta}})
+	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases, "impact": map[string]any{"users": allUsers, "error_users": errorUsers, "error_user_conversion_rate": errorRate, "clean_user_conversion_rate": cleanRate, "conversion_rate_delta": conversionDelta}}
+	// Optional cohort comparison: the same measurements per segment, so a site wide
+	// p75 stops hiding the group that is actually slow.
+	compare := []string{}
+	for _, id := range strings.Split(r.URL.Query().Get("segment_ids"), ",") {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			compare = append(compare, trimmed)
+		}
+	}
+	if len(compare) > 3 {
+		writeError(w, 400, "TOO_MANY_SEGMENTS", "segment_ids accepts at most 3 segments")
+		return
+	}
+	if len(compare) > 0 {
+		ctx, cancel := s.analyticalContext(r)
+		defer cancel()
+		resolver, resolverErr := s.newDimensionResolver(ctx, siteID)
+		if resolverErr != nil {
+			writeQueryError(w, resolverErr)
+			return
+		}
+		baseline, cohortErr := s.runExperienceCohort(ctx, siteID, environment, from, to, resolver, nil)
+		if cohortErr != nil {
+			writeQueryError(w, cohortErr)
+			return
+		}
+		baseline.Key, baseline.Label = "baseline", "전체"
+		cohorts := []experienceCohort{}
+		for _, id := range compare {
+			definition, segmentErr := s.loadSegment(ctx, siteID, id)
+			if segmentErr != nil {
+				writeError(w, 400, "INVALID_SEGMENT", segmentErr.Error())
+				return
+			}
+			name, _ := s.segmentName(ctx, siteID, id)
+			cohort, err := s.runExperienceCohort(ctx, siteID, environment, from, to, resolver, &definition)
+			if err != nil {
+				writeQueryError(w, err)
+				return
+			}
+			cohort.Key, cohort.Label = id, name
+			cohorts = append(cohorts, cohort)
+		}
+		response["cohorts"] = append([]experienceCohort{baseline}, cohorts...)
+		response["gaps"] = compareExperience(baseline, cohorts)
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {

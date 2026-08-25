@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.18.0
+
+- Added cohort comparison to the experience report: Core Web Vitals p75 and error exposure per segment, because a site-wide p75 averages a fast desktop on the office network together with a phone over VPN and hides both.
+- Separated "slower" from "no longer acceptable" by checking the published Core Web Vitals thresholds: a cohort that crosses the bar while the baseline stays inside it is reported as critical rather than as a warning.
+- Reported only differences worth acting on: at least 30 percent slower, or at least five points more error exposure, and never from fewer than twenty measurements.
+- Stated plainly when no cohort is materially worse, instead of leaving an empty panel.
+
 ## v0.17.0
 
 - Added cross-service conversion credit: with the workspace scope, a visit on a sibling service in the same workspace can earn credit for a conversion on this one, which is how a notice on one internal system leads to a submission on another.

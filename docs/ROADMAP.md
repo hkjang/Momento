@@ -137,6 +137,12 @@
 - SSO로 식별된 사용자에게만 적용하고 익명 방문자는 서비스별 격리를 유지
 - 조회자가 접근할 수 있는 서비스로만 범위를 확장
 
+## v0.18 — implemented
+
+- 집단별 경험 비교: Segment별 Core Web Vitals p75와 오류 경험 사용자 비율
+- 권장 기준(LCP 2500·INP 200·CLS 0.1·FCP 1800·TTFB 800) 통과 여부로 "느림"과 "기준 초과"를 구분
+- 표본 20건 미만과 30% 미만 지연은 보고하지 않아 실행 가능한 격차만 남김
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

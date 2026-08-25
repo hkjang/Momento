@@ -254,11 +254,37 @@ function Adoption() {
   ]} />;
 }
 
+type ExperienceCohort = {
+  key: string;
+  label: string;
+  users: number;
+  error_users: number;
+  error_user_rate: number;
+  vitals: { metric: string; samples: number; p75: number; good_rate: number; good_threshold: number }[];
+};
+
+type ExperienceGap = {
+  key: string;
+  label: string;
+  kind: "vital" | "error";
+  metric?: string;
+  severity: "critical" | "warning";
+  impact: number;
+  evidence: string;
+  action: string;
+};
+
 function Experience() {
   const { site, environment } = useSite();
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const segments = useQuery({
+    queryKey: ["segments", site?.site_id],
+    enabled: !!site,
+    queryFn: () => get<{ id: string; name: string }[]>(`/api/v1/segments?site_id=${site!.site_id}`),
+  });
   const q = useQuery({
-    queryKey: ["experience", site?.site_id, environment], enabled: !!site,
-    queryFn: () => get<{ vitals: Record<string, unknown>[]; errors: Record<string, unknown>[]; releases: Record<string, unknown>[]; impact: Record<string, number> }>(`/api/v1/sites/${site!.site_id}/experience?${rangeQuery(30, site!.timezone)}`),
+    queryKey: ["experience", site?.site_id, environment, compareIds.join(",")], enabled: !!site,
+    queryFn: () => get<{ vitals: Record<string, unknown>[]; errors: Record<string, unknown>[]; releases: Record<string, unknown>[]; impact: Record<string, number>; cohorts?: ExperienceCohort[]; gaps?: ExperienceGap[] }>(`/api/v1/sites/${site!.site_id}/experience?${rangeQuery(30, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`),
   });
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
@@ -269,6 +295,94 @@ function Experience() {
       <MetricCard label="오류 사용자 전환율" value={q.data?.impact.error_user_conversion_rate || 0} type="percent" />
       <MetricCard label="정상 사용자 전환율" value={q.data?.impact.clean_user_conversion_rate || 0} type="percent" />
     </Box>
+    <Card sx={{ p: 2.5 }}>
+      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" alignItems={{ md: "center" }} gap={1.5}>
+        <Box>
+          <Typography variant="h6">집단별 경험 비교</Typography>
+          <Typography variant="body2" color="text.secondary">
+            사이트 전체 p75는 빠른 환경과 느린 환경을 평균해 둘 다 가립니다. Segment를
+            선택하면 같은 측정을 집단별로 나눠 봅니다.
+          </Typography>
+        </Box>
+        <TextField
+          select
+          size="small"
+          label="비교 Segment"
+          value={compareIds}
+          onChange={(e) =>
+            setCompareIds(
+              (typeof e.target.value === "string" ? e.target.value.split(",") : (e.target.value as unknown as string[])).slice(0, 3),
+            )
+          }
+          slotProps={{ select: { multiple: true } }}
+          sx={{ minWidth: 220 }}
+          helperText="최대 3개"
+        >
+          {(segments.data || []).map((segment) => (
+            <MenuItem key={segment.id} value={segment.id}>{segment.name}</MenuItem>
+          ))}
+        </TextField>
+      </Stack>
+      {!!q.data?.gaps?.length && (
+        <Stack spacing={1.2} mt={2}>
+          {q.data.gaps.map((gap, index) => (
+            <Card key={`${gap.key}-${gap.kind}-${gap.metric || index}`} variant="outlined" sx={{ p: 1.8 }}>
+              <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                <Chip size="small" color={gap.severity === "critical" ? "error" : "warning"} label={gap.severity === "critical" ? "심각" : "주의"} />
+                <Typography fontWeight={700}>{gap.label}</Typography>
+                <Chip size="small" variant="outlined" label={gap.kind === "vital" ? `${gap.metric} 지연` : "오류 노출"} />
+              </Stack>
+              <Typography variant="body2" color="text.secondary" mt={0.6}>{gap.evidence}</Typography>
+              <Typography variant="body2" color="primary.main" mt={0.3}>다음 행동 · {gap.action}</Typography>
+            </Card>
+          ))}
+        </Stack>
+      )}
+      {!!q.data?.cohorts?.length && (
+        <Box mt={2}>
+          <DataTable
+            rows={q.data.cohorts.flatMap((cohort) =>
+              cohort.vitals.map((vital) => ({
+                label: cohort.label,
+                users: cohort.users,
+                error_user_rate: cohort.error_user_rate,
+                metric: vital.metric,
+                samples: vital.samples,
+                p75: vital.p75,
+                good_threshold: vital.good_threshold,
+              })),
+            )}
+            exportFilename="momento-experience-cohorts"
+            columns={[
+              { key: "label", label: "집단" },
+              { key: "metric", label: "Metric" },
+              { key: "samples", label: "표본", align: "right" },
+              {
+                key: "p75",
+                label: "P75",
+                align: "right",
+                format: (v, row) => (
+                  <Typography
+                    variant="body2"
+                    color={Number(row.good_threshold) > 0 && Number(v) > Number(row.good_threshold) ? "error.main" : "inherit"}
+                  >
+                    {Number(v).toFixed(Number(v) < 10 ? 2 : 0)}
+                  </Typography>
+                ),
+              },
+              { key: "good_threshold", label: "권장 기준", align: "right", format: (v) => (Number(v) > 0 ? Number(v).toString() : "—") },
+              { key: "users", label: "사용자", align: "right" },
+              { key: "error_user_rate", label: "오류 경험", align: "right", format: (v) => `${Number(v).toFixed(1)}%` },
+            ]}
+          />
+        </Box>
+      )}
+      {!!compareIds.length && !q.data?.gaps?.length && !q.isFetching && (
+        <Alert severity="success" sx={{ mt: 2 }}>
+          선택한 집단에서 전체보다 뚜렷하게 나쁜 경험 지표를 찾지 못했습니다.
+        </Alert>
+      )}
+    </Card>
     <Typography variant="h6">Core Web Vitals / RUM</Typography>
     <DataTable rows={q.data?.vitals || []} columns={[{ key: "metric", label: "Metric" }, { key: "page", label: "Page" }, { key: "samples", label: "Samples", align: "right" }, { key: "p75", label: "P75", align: "right" }, { key: "good_rate", label: "Good", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }]} />
     <Typography variant="h6">오류와 사용자 영향</Typography>

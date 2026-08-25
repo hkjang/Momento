@@ -297,6 +297,16 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 
 SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vital`, `resource_error` Event로 전송합니다. Release 비교가 필요하면 초기화 시 `releaseVersion`, `gitSha`, `deploymentId`를 지정하십시오. Experience 화면은 오류가 발생한 사용자와 정상 사용자의 전환율을 비교합니다.
 
+### 3.7.1 집단별 경험 비교
+
+`경험` 화면의 **비교 Segment**에서 최대 3개를 선택하면 같은 측정을 집단별로 나눠 봅니다. 사이트 전체 p75는 빠른 환경과 느린 환경을 평균해 둘 다 가립니다.
+
+- 집단별 **Core Web Vitals p75**와 **오류 경험 사용자 비율**을 제공합니다.
+- 전체보다 **30% 이상 느린** 지표만 보고합니다. 조금 느린 것은 조치할 대상이 아닙니다.
+- 전체는 권장 기준 안에 있는데 해당 집단만 초과하면 `심각`으로 구분합니다. 단순히 느린 것과 기준을 넘긴 것은 다른 문제입니다. 권장 기준은 LCP 2500ms, INP 200ms, CLS 0.1, FCP 1800ms, TTFB 800ms입니다.
+- 오류 경험 비율이 전체보다 5pp 이상 높으면 보고하고, 15pp 이상은 `심각`입니다.
+- 표본 20건 미만은 판정하지 않습니다. 뚜렷한 격차가 없으면 그 사실을 표시합니다.
+
 ### 3.8 AI / Agent / MCP Event 표준
 
 `ai_prompt`, `ai_response`, `ai_model_call`, `ai_tool_call`, `ai_agent_run`, `ai_mcp_call`을 사용하고 `model`, `provider`, `agent`, `mcp_server`, `tool`, `success`, `latency_ms`, `input_tokens`, `output_tokens`, `cost`, `fallback_model`을 Property로 전달합니다. 실제 Prompt/Response 원문은 개인정보와 기밀정보 위험 때문에 기본 분석 규격에 포함하지 않는 것을 권장합니다.
