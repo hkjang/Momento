@@ -1,6 +1,12 @@
 # Changelog
 
-## v0.22.1
+## v0.23.0
+
+- Friction and search are now expressible as audiences. Five behavioural segment fields join the existing ones: `entity.frustration_signals`, `entity.frustration_sessions`, `entity.searches`, `entity.zero_result_searches` and `entity.search_clicks`. "Hit friction twice and never converted" and "searched and found nothing" are now segment definitions, which means they can go straight into the funnel, retention and experience comparisons that already accept segments.
+- The Frustration and Search reports hand over the audience instead of naming it. Each offers ready-to-save definitions — people the product blocked, people repeatedly blocked, people whose search returned nothing, people who searched repeatedly and opened nothing — with the count that the report itself measured, so saving a segment cannot disagree with the number the reader just saw.
+- The Frustration table links each signal to the people who hit it. `?q=` on the user explorer accepts a search from any report, so a signal leads to real visitors and their timelines rather than to a count.
+- The signal list behind the friction fields lives in one place shared by the report, the audiences and the segment aggregates, so they cannot drift apart.
+- The audience list is one component now, used by visitor insights and both new reports instead of three copies of the same block.
 
 - Fixed a test that asked the reports for "today" in the runner's timezone while every analytical endpoint answers in the site's. The fixture site is on Asia/Seoul, so a UTC afternoon is already the next day there and an event ingested during the test fell outside the window it was queried with — the v0.22.0 signal test failed in CI for that reason and passed locally. Every integration test now derives its dates from the site calendar.
 

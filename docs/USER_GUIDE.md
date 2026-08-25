@@ -306,8 +306,12 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 
 - `entity.sessions`, `entity.events`, `entity.conversions`
 - `entity.days_since_last_seen`, `entity.days_since_first_seen`
+- `entity.frustration_signals`, `entity.frustration_sessions` — tracker가 자동 감지한 막힘 신호(2.1.1 참고)를 겪은 횟수와 방문 수
+- `entity.searches`, `entity.zero_result_searches`, `entity.search_clicks` — 검색 횟수, 결과 0건 검색, 결과 클릭 수
 
-숫자 비교(`>=`, `<=`, `=` 등)만 지원합니다. 예를 들어 `entity.sessions >= 3` AND `entity.conversions = 0`은 "세 번 이상 방문했지만 전환하지 않은 사람"입니다. 방문자 인사이트의 `실행 대상`에서 `Segment 만들기`를 누르면 이 정의가 자동 저장되어 Query·Funnel·Action에서 재사용됩니다. 기간 기준과 전체 이력 기준의 차이 때문에 인원이 다를 수 있는 경우에는 안내 문구를 함께 표시합니다.
+숫자 비교(`>=`, `<=`, `=` 등)만 지원합니다. 예를 들어 `entity.sessions >= 3` AND `entity.conversions = 0`은 "세 번 이상 방문했지만 전환하지 않은 사람"이고, `entity.zero_result_searches >= 1` AND `entity.search_clicks = 0`은 "검색했지만 아무것도 찾지 못한 사람"입니다. 막힘 신호 목록은 서버가 고정하므로 Segment 조건에 Event 이름을 직접 넣을 필요가 없습니다.
+
+방문자 인사이트의 `실행 대상`, Frustration과 검색 분석 화면의 `실행 대상`에서 `Segment 만들기`를 누르면 서버가 세어 준 정의가 그대로 저장되어 Query·Funnel·Action에서 재사용됩니다. 기간 기준과 전체 이력 기준의 차이 때문에 인원이 다를 수 있는 경우에는 안내 문구를 함께 표시합니다.
 
 ### 3.7 Segment 비교 Funnel
 
@@ -390,7 +394,8 @@ SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vi
 - Search Analytics는 `search`, `search_result`, `search_click`, `search_no_result`, `search_refine`, `search_exit`, `search_success` 표준 Event를 사용합니다. `search`, `search_click`, `search_refine`은 tracker가 자동 전송하므로 별도 계측 없이 검색 횟수, CTR, 재검색을 볼 수 있습니다(2.1.1 참고).
 - Frustration Analytics는 Replay를 저장하지 않고 `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`과 오류 Event만으로 막힘을 추정합니다. 아홉 신호 모두 tracker가 자동 감지합니다.
 - 두 화면은 표가 비어 있을 때 "문제가 없다"와 "측정되지 않는다"를 구분해 안내합니다. Session은 있는데 신호가 0건이면 스니펫 버전과 `data-frustration-signals` 설정을 확인하라고 표시하고, 검색 횟수는 있는데 검색어가 모두 `(not set)`이면 `data-collect-search-terms` 안내를 표시합니다. 결과 0건이 한 건도 없으면 `data-momento-search-results` 계측이 빠졌을 가능성을 함께 알립니다.
-- Frustration 표는 각 신호의 뜻과 확인할 것을 함께 보여주므로 신호 이름만 보고 해석을 추측하지 않아도 됩니다.
+- Frustration 표는 각 신호의 뜻과 확인할 것을 함께 보여주므로 신호 이름만 보고 해석을 추측하지 않아도 됩니다. `겪은 사람 찾기`를 누르면 사용자 탐색기가 그 신호로 검색된 상태로 열려, 신호에서 실제 방문자 추적까지 한 번에 이어집니다.
+- 두 화면은 `실행 대상`으로 바로 저장할 수 있는 집단을 함께 제시합니다. Frustration은 `막힘을 겪고 전환하지 않은 사람`, `두 번 이상의 방문에서 막힌 사람`, 검색은 `결과를 못 찾은 사람`, `여러 번 검색했지만 아무것도 열지 않은 사람`입니다. 저장한 Segment는 Funnel·Retention·경험 비교에 그대로 넣어 "막힌 집단이 실제로 덜 전환하는지" 확인할 수 있습니다.
 
 ### 3.19 Experiment와 Goal
 

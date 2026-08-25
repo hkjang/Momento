@@ -46,6 +46,12 @@ export const builtInSegmentFields = [
   "entity.conversions",
   "entity.days_since_last_seen",
   "entity.days_since_first_seen",
+  // Friction and search, detected by the tracker without instrumentation.
+  "entity.frustration_signals",
+  "entity.frustration_sessions",
+  "entity.searches",
+  "entity.zero_result_searches",
+  "entity.search_clicks",
 ];
 
 const operators = [

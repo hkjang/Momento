@@ -787,3 +787,139 @@ func TestAutomaticSignalsReachTheReportsThatScoreThem(t *testing.T) {
 		t.Errorf("the query table is missing a search term: %v", queries)
 	}
 }
+
+// TestFrictionAudiencesSelectTheRightPeople checks the whole path from a signal
+// to a saved audience: the report counts a group, the segment definition it
+// hands over is accepted, and evaluating that segment finds the same person and
+// not the person who sailed through.
+func TestFrictionAudiencesSelectTheRightPeople(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 7)
+	site := "/api/v1/sites/" + f.siteKey
+
+	// One person gets stuck twice and never converts; another searches and finds
+	// nothing; a third does neither.
+	ingest := func(visitor string, events ...string) {
+		t.Helper()
+		payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"%s","session_id":"session-%s",
+			"context":{"page":{"url":"https://portal.internal/apply","title":"신청","referrer":""},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{}},
+			"events":[%s]}`, f.siteKey, f.trackingKey, visitor, visitor, strings.Join(events, ","))
+		request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://portal.internal")
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusAccepted {
+			t.Fatalf("collect for %s = %d: %s", visitor, recorder.Code, recorder.Body.String())
+		}
+	}
+	event := func(name, properties string) string {
+		return fmt.Sprintf(`{"id":"%s","name":"%s","timestamp":%d,"properties":%s,"contract_version":1}`,
+			uuid.NewString(), name, time.Now().UnixMilli(), properties)
+	}
+	ingest("visitor-stuck", event("rage_click", `{"element_id":"save"}`), event("error_after_click", `{"element_id":"save"}`))
+	ingest("visitor-stuck-again", event("dead_click", `{"element_id":"filter"}`))
+	ingest("visitor-lost", event("search", `{"result_count":0}`))
+	ingest("visitor-fine", event("page_view", `{}`))
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+
+	// The stuck visitor has two sessions with friction, which is what the
+	// repeatedly-blocked audience is about, so both events need distinct sessions.
+	if _, err := pool.Exec(ctx, `UPDATE raw_events SET session_id='session-visitor-stuck-2' WHERE site_id=$1 AND visitor_id='visitor-stuck' AND event_name='error_after_click'`, f.siteID); err != nil {
+		t.Fatalf("split the stuck visitor's sessions: %v", err)
+	}
+
+	frustration := f.get(t, site+"/frustration?from="+from+"&to="+today)
+	audiences, _ := frustration["audiences"].([]any)
+	if len(audiences) == 0 {
+		t.Fatalf("the frustration report offers no audience: %v", frustration)
+	}
+	byKey := map[string]map[string]any{}
+	for _, item := range audiences {
+		audience, _ := item.(map[string]any)
+		byKey[fmt.Sprint(audience["key"])] = audience
+	}
+	blocked := byKey["blocked_no_conversion"]
+	if blocked == nil {
+		t.Fatalf("the blocked audience is missing: %v", byKey)
+	}
+	// Two of the four ingested visitors hit a friction signal without converting.
+	// The visitor whose search returned nothing is not stuck, and the fourth did
+	// nothing but read a page.
+	if users, _ := blocked["users"].(float64); users < 2 {
+		t.Fatalf("the blocked audience counted %v people, want at least the two who hit friction", blocked["users"])
+	}
+	if fmt.Sprint(blocked["segment_note"]) == "" {
+		t.Error("an audience whose segment is whole-history must say so")
+	}
+
+	// The definition the report handed over has to be a definition the segment
+	// API accepts, evaluated against the database rather than trusted.
+	saved := f.do(t, http.MethodPost, "/api/v1/segments", mustJSON(t, map[string]any{
+		"site_id":    f.siteKey,
+		"name":       "막힘 후 미전환 (통합 테스트)",
+		"definition": blocked["segment"],
+		"shared":     false,
+	}))
+	segmentID := fmt.Sprint(saved["id"])
+	if segmentID == "" || segmentID == "<nil>" {
+		t.Fatalf("the audience definition was refused by the segment API: %v", saved)
+	}
+
+	// Running the saved segment through the query builder is the check that
+	// matters: the definition has to select the people who hit friction and leave
+	// out the one who did not.
+	inSegment := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+		"site_id":    f.siteKey,
+		"segment_id": segmentID,
+		"date_range": map[string]string{"from": from, "to": today},
+		"dimensions": []string{"visitor.id"},
+		"metrics":    []string{"events"},
+	}))
+	selected := map[string]bool{}
+	rows, _ := inSegment["rows"].([]any)
+	for _, item := range rows {
+		row, _ := item.(map[string]any)
+		selected[fmt.Sprint(row["visitor.id"])] = true
+	}
+	if len(rows) == 0 {
+		t.Fatalf("the saved audience selected nobody: %v", inSegment)
+	}
+	for _, want := range []string{"visitor-stuck", "visitor-stuck-again"} {
+		if !selected[want] {
+			t.Errorf("the audience does not include %s, who hit friction and never converted", want)
+		}
+	}
+	if selected["visitor-fine"] {
+		t.Error("the audience includes a visitor who never hit a friction signal")
+	}
+
+	searchReport := f.get(t, site+"/search-analytics?from="+from+"&to="+today)
+	searchAudiences, _ := searchReport["audiences"].([]any)
+	found := false
+	for _, item := range searchAudiences {
+		audience, _ := item.(map[string]any)
+		if fmt.Sprint(audience["key"]) == "zero_result_no_click" {
+			found = true
+			if users, _ := audience["users"].(float64); users < 1 {
+				t.Errorf("the visitor whose search returned nothing is not in the audience: %v", audience)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the search report offers no zero-result audience: %v", searchAudiences)
+	}
+}
+
+func mustJSON(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	return string(encoded)
+}

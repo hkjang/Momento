@@ -1,12 +1,15 @@
 import { useState } from "react";
 import { Alert, Box, Button, Card, Chip, Divider, MenuItem, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link as RouterLink } from "react-router-dom";
 import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import { describeSignal, frustrationSetupHint, searchSetupHint, zeroResultReadiness } from "./signalGuide";
+import AudienceList from "../components/AudienceList";
+import type { InsightAudience } from "./visitorInsights";
 
 export type EnterpriseAnalyticsMode = "workspace" | "features" | "search" | "frustration" | "experiments" | "goals" | "calendar";
 
@@ -107,7 +110,7 @@ const percentCell = (value: unknown) => `${Number(value).toFixed(1)}%`;
 
 function SearchAnalytics() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["search-analytics", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; queries: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(30, site!.timezone)}`) });
+  const q = useQuery({ queryKey: ["search-analytics", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; queries: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(30, site!.timezone)}`) });
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
@@ -117,13 +120,14 @@ function SearchAnalytics() {
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(4,1fr)" }, gap: 2 }}><MetricCard label="Searches" value={q.data?.summary.searches || 0} /><MetricCard label="Search Users" value={q.data?.summary.users || 0} /><MetricCard label="Zero Result" value={q.data?.summary.zero_result_rate || 0} type="percent" /><MetricCard label="Search CTR" value={q.data?.summary.search_ctr || 0} type="percent" /></Box>
     {setup && <Alert severity="info">{setup}</Alert>}
     {zeroResult && <Alert severity="warning">{zeroResult}</Alert>}
+    {!!q.data?.audiences?.length && <Card sx={{ p: 2.5 }}><AudienceList audiences={q.data.audiences} siteId={site.site_id} source="검색 분석에서 생성" /></Card>}
     <DataTable rows={q.data?.queries || []} columns={[{ key: "query", label: "Query" }, { key: "searches", label: "검색", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "zero_results", label: "Zero Result", align: "right" }, { key: "clicks", label: "Clicks", align: "right" }, { key: "ctr", label: "CTR", align: "right", format: percentCell }, { key: "last_seen", label: "Last Seen" }]} />
   </Stack>;
 }
 
 function Frustration() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(30, site!.timezone)}`) });
+  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(30, site!.timezone)}`) });
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
@@ -132,7 +136,8 @@ function Frustration() {
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}><MetricCard label="영향 Session" value={q.data?.summary.affected_sessions || 0} /><MetricCard label="영향률" value={q.data?.summary.affected_session_rate || 0} type="percent" /><MetricCard label="평균 Frustration Score" value={q.data?.summary.average_frustration_score || 0} /></Box>
     <Alert severity="info">Session Replay 없이 행동 신호만 사용해 개인정보 노출을 줄입니다. Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction은 tracker가 자동 감지합니다.</Alert>
     {setup && <Alert severity="warning">{setup}</Alert>}
-    <DataTable exportFilename="momento-frustration" rows={(q.data?.signals || []).map((row) => ({ ...row, signal_label: describeSignal(String(row.signal)).label, signal_action: describeSignal(String(row.signal)).action }))} columns={[{ key: "signal_label", label: "Signal", format: (v, row) => <Tooltip title={describeSignal(String(row.signal)).meaning}><span>{String(v)}</span></Tooltip> }, { key: "signal_action", label: "확인할 것", minWidth: 260 }, { key: "count", label: "Count", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "sessions", label: "Sessions", align: "right" }, { key: "weight", label: "Weight", align: "right" }, { key: "last_seen", label: "Last Seen" }]} />
+    {!!q.data?.audiences?.length && <Card sx={{ p: 2.5 }}><AudienceList audiences={q.data.audiences} siteId={site.site_id} source="Frustration 분석에서 생성" /></Card>}
+    <DataTable exportFilename="momento-frustration" rows={(q.data?.signals || []).map((row) => ({ ...row, signal_label: describeSignal(String(row.signal)).label, signal_action: describeSignal(String(row.signal)).action }))} columns={[{ key: "signal_label", label: "Signal", format: (v, row) => <Tooltip title={describeSignal(String(row.signal)).meaning}><span>{String(v)}</span></Tooltip> }, { key: "signal_action", label: "확인할 것", minWidth: 260 }, { key: "signal", label: "대상", format: (v) => <Button size="small" component={RouterLink} to={`/user-explorer?q=${encodeURIComponent(String(v))}`}>겪은 사람 찾기</Button> }, { key: "count", label: "Count", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "sessions", label: "Sessions", align: "right" }, { key: "weight", label: "Weight", align: "right" }, { key: "last_seen", label: "Last Seen" }]} />
   </Stack>;
 }
 

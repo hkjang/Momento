@@ -16,14 +16,15 @@ import {
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import InsightsRounded from "@mui/icons-material/InsightsRounded";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Link as RouterLink, useNavigate } from "react-router-dom";
-import { get, post, rangeQuery } from "../api/client";
+import { useQuery } from "@tanstack/react-query";
+import { Link as RouterLink } from "react-router-dom";
+import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import AnalysisToolbar from "../components/AnalysisToolbar";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import AudienceList from "../components/AudienceList";
 import {
   anomalySeverityLabel,
   anomalyStateLabel,
@@ -41,7 +42,6 @@ import {
   type AttributionModel,
   type AttributionReport,
   type FindingSeverity,
-  type InsightAudience,
   type VisitorInsightReport,
 } from "./visitorInsights";
 
@@ -68,7 +68,6 @@ const kpiType: Record<string, "percent" | "duration" | undefined> = {
 
 export default function VisitorInsightsPage() {
   const { site, environment } = useSite();
-  const navigate = useNavigate();
   const [days, setDays] = useState(30);
   const [toast, setToast] = useState("");
   const [model, setModel] = useState("last_non_direct");
@@ -95,21 +94,6 @@ export default function VisitorInsightsPage() {
       get<{ report: AttributionReport; models: AttributionModel[] }>(
         `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}&scope=${scope}`,
       ),
-  });
-  const saveSegment = useMutation({
-    mutationFn: (audience: InsightAudience) =>
-      post<{ id: string }>("/api/v1/segments", {
-        site_id: site!.site_id,
-        name: `${audience.label} (자동 생성)`,
-        description: `방문자 인사이트에서 생성 · ${audience.action}`,
-        definition: audience.segment,
-        shared: false,
-      }),
-    onSuccess: () => {
-      setToast("Segment를 저장했습니다. Segment 화면으로 이동합니다.");
-      window.setTimeout(() => navigate("/segments"), 900);
-    },
-    onError: (error: Error) => setToast(`Segment 저장 실패: ${error.message}`),
   });
   if (!site) return <NoSite />;
   const toolbar = (
@@ -407,52 +391,11 @@ export default function VisitorInsightsPage() {
             ]}
           />
           <Divider sx={{ my: 2 }} />
-          <Typography fontWeight={700} mb={1}>
-            실행 대상
-          </Typography>
-          <Stack spacing={1}>
-            {report.audiences.map((audience) => (
-              <Stack
-                key={audience.key}
-                direction="row"
-                justifyContent="space-between"
-                alignItems="center"
-                gap={1}
-              >
-                <Box>
-                  <Typography variant="body2" fontWeight={600}>
-                    {audience.label}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {audience.action}
-                  </Typography>
-                </Box>
-                <Stack direction="row" gap={0.5} alignItems="center">
-                  <Chip
-                    size="small"
-                    color={audience.users > 0 ? "primary" : "default"}
-                    label={`${audience.users.toLocaleString("ko-KR")}명`}
-                  />
-                  {audience.segment && audience.users > 0 && (
-                    <Tooltip
-                      title={
-                        audience.segment_note ||
-                        "이 조건으로 Segment를 저장해 Query·Funnel·Action에서 재사용합니다."
-                      }
-                    >
-                      <Button
-                        size="small"
-                        disabled={saveSegment.isPending}
-                        onClick={() => saveSegment.mutate(audience)}
-                      >
-                        Segment 만들기
-                      </Button>
-                    </Tooltip>
-                  )}
-                </Stack>
-              </Stack>
-            ))}
-          </Stack>
+          <AudienceList
+            audiences={report.audiences}
+            siteId={site.site_id}
+            source="방문자 인사이트에서 생성"
+          />
         </Card>
 
         <Card sx={{ p: 2.5 }}>

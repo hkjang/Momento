@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -337,7 +338,95 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 			queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"searches": searches, "users": users, "zero_results": noResults, "zero_result_rate": math.Min(100, percent(noResults, searches)), "clicks": clicks, "search_ctr": math.Min(100, percent(clicks, searches)), "refinements": refinements, "exits": exits, "successes": successes, "success_rate": math.Min(100, percent(successes, searches))}, "queries": queries})
+	audiences, err := s.frictionAudiences(r.Context(), siteID, from, to, environment, "search")
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"searches": searches, "users": users, "zero_results": noResults, "zero_result_rate": math.Min(100, percent(noResults, searches)), "clicks": clicks, "search_ctr": math.Min(100, percent(clicks, searches)), "refinements": refinements, "exits": exits, "successes": successes, "success_rate": math.Min(100, percent(successes, searches))}, "queries": queries, "audiences": audiences})
+}
+
+// frictionSignalNames is the list the Frustration report scores and the segment
+// aggregates filter on. One definition keeps the report, the audiences and the
+// segment fields from drifting apart.
+var frictionSignalNames = []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "error", "resource_error"}
+
+// frictionAudience is a group worth acting on together with the exact segment
+// definition behind it, so a finding becomes a saved audience in one click
+// instead of being retyped into the segment builder.
+type frictionAudience struct {
+	Key     string         `json:"key"`
+	Label   string         `json:"label"`
+	Users   int64          `json:"users"`
+	Action  string         `json:"action"`
+	Segment map[string]any `json:"segment"`
+	Note    string         `json:"segment_note"`
+}
+
+func frictionRule(field, operator string, value float64) map[string]any {
+	return map[string]any{"field": field, "operator": operator, "value": value}
+}
+
+func frictionSegment(rules ...map[string]any) map[string]any {
+	return map[string]any{"combinator": "and", "rules": rules}
+}
+
+// frictionAudiences counts the actionable groups in one pass. Every count comes
+// from the same per-person aggregate, so the numbers in the report and the
+// numbers behind the audiences cannot disagree.
+func (s *Server) frictionAudiences(ctx context.Context, siteID any, from, to time.Time, environment, kind string) ([]frictionAudience, error) {
+	var blocked, repeatBlocked, lostInSearch, searchedNothing int64
+	err := s.DB.QueryRow(ctx, `WITH person AS (
+			SELECT entity_id,
+				count(*) FILTER(WHERE event_name=ANY($5)) friction,
+				count(DISTINCT session_id) FILTER(WHERE event_name=ANY($5)) friction_sessions,
+				count(*) FILTER(WHERE is_conversion) conversions,
+				count(*) FILTER(WHERE event_name='search') searches,
+				count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')) zero_results,
+				count(*) FILTER(WHERE event_name='search_click') search_clicks
+			FROM analytics_events
+			WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+			GROUP BY entity_id)
+		SELECT count(*) FILTER(WHERE friction > 0 AND conversions = 0),
+			count(*) FILTER(WHERE friction_sessions >= 2),
+			count(*) FILTER(WHERE zero_results >= 1 AND search_clicks = 0),
+			count(*) FILTER(WHERE searches >= 2 AND search_clicks = 0)
+		FROM person`, siteID, from, to, environment, frictionSignalNames).
+		Scan(&blocked, &repeatBlocked, &lostInSearch, &searchedNothing)
+	if err != nil {
+		return nil, err
+	}
+	periodNote := "Segment 조건은 전체 이력 기준이므로 조회 기간 인원과 다를 수 있습니다."
+	if kind == "search" {
+		return []frictionAudience{
+			{
+				Key: "zero_result_no_click", Label: "결과를 못 찾은 사람", Users: lostInSearch,
+				Action:  "해당 검색어의 색인과 동의어를 보강하고, 결과 없음 화면에 대안 경로를 제시",
+				Segment: frictionSegment(frictionRule("entity.zero_result_searches", ">=", 1), frictionRule("entity.search_clicks", "=", 0)),
+				Note:    periodNote,
+			},
+			{
+				Key: "repeat_search_no_click", Label: "여러 번 검색했지만 아무것도 열지 않은 사람", Users: searchedNothing,
+				Action:  "검색 결과의 제목과 요약이 무엇을 찾는지 알려주는지 확인",
+				Segment: frictionSegment(frictionRule("entity.searches", ">=", 2), frictionRule("entity.search_clicks", "=", 0)),
+				Note:    periodNote,
+			},
+		}, nil
+	}
+	return []frictionAudience{
+		{
+			Key: "blocked_no_conversion", Label: "막힘을 겪고 전환하지 않은 사람", Users: blocked,
+			Action:  "가장 많이 발생한 신호의 화면부터 고치고, 같은 집단의 Funnel을 비교",
+			Segment: frictionSegment(frictionRule("entity.frustration_signals", ">=", 1), frictionRule("entity.conversions", "=", 0)),
+			Note:    periodNote,
+		},
+		{
+			Key: "repeatedly_blocked", Label: "두 번 이상의 방문에서 막힌 사람", Users: repeatBlocked,
+			Action:  "한 번의 사고가 아니라 반복되는 장애물입니다. 해당 방문자를 추적해 경로를 확인",
+			Segment: frictionSegment(frictionRule("entity.frustration_sessions", ">=", 2)),
+			Note:    periodNote,
+		},
+	}, nil
 }
 
 func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +469,12 @@ func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
 	if affectedSessions > 0 {
 		averageScore = float64(weightedCount) / float64(affectedSessions)
 	}
-	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"total_sessions": totalSessions, "affected_sessions": affectedSessions, "affected_session_rate": percent(affectedSessions, totalSessions), "average_frustration_score": averageScore}, "signals": signals})
+	audiences, err := s.frictionAudiences(r.Context(), siteID, from, to, environment, "frustration")
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"environment": environment, "summary": map[string]any{"total_sessions": totalSessions, "affected_sessions": affectedSessions, "affected_session_rate": percent(affectedSessions, totalSessions), "average_frustration_score": averageScore}, "signals": signals, "audiences": audiences})
 }
 
 func (s *Server) listFeatureFlags(w http.ResponseWriter, r *http.Request) {

@@ -196,6 +196,16 @@ var entityAggregateSQL = map[string]string{
 	"entity.conversions":           "count(*) FILTER(WHERE segment_entity.is_conversion)",
 	"entity.days_since_last_seen":  "extract(epoch FROM (now()-max(segment_entity.event_timestamp)))/86400",
 	"entity.days_since_first_seen": "extract(epoch FROM (now()-min(segment_entity.event_timestamp)))/86400",
+	// Friction and search fields. The tracker reports these signals on its own,
+	// so "hit friction and never converted" or "searched and found nothing" are
+	// audiences a site can define without instrumenting anything. Naming the
+	// signals here rather than accepting an event name keeps the aggregate a
+	// fixed expression, which is what makes it safe to inline.
+	"entity.frustration_signals":  "count(*) FILTER(WHERE segment_entity.event_name = ANY('{rage_click,dead_click,rapid_back,form_retry,repeated_search,error_after_click,slow_interaction,error,resource_error}'))",
+	"entity.frustration_sessions": "count(DISTINCT segment_entity.session_id) FILTER(WHERE segment_entity.event_name = ANY('{rage_click,dead_click,rapid_back,form_retry,repeated_search,error_after_click,slow_interaction,error,resource_error}'))",
+	"entity.searches":             "count(*) FILTER(WHERE segment_entity.event_name='search')",
+	"entity.zero_result_searches": "count(*) FILTER(WHERE segment_entity.event_name='search_no_result' OR (segment_entity.event_name='search' AND segment_entity.properties->>'result_count'='0'))",
+	"entity.search_clicks":        "count(*) FILTER(WHERE segment_entity.event_name='search_click')",
 }
 
 // compileEntityAggregate compares one behavioural aggregate of the same person.

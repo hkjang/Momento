@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.23.0 — implemented
+
+- 행동 Segment 필드 5종 추가: `entity.frustration_signals`, `entity.frustration_sessions`, `entity.searches`, `entity.zero_result_searches`, `entity.search_clicks`
+- Frustration·검색 리포트가 저장 가능한 `실행 대상` 집단을 함께 제공
+- Frustration 신호 → 사용자 탐색기 `?q=` 딥링크로 실제 방문자 추적 연결
+- 실행 대상 UI를 공용 컴포넌트로 통합
+
 ## v0.22.0 — implemented
 
 - Frustration 신호 7종 자동 감지: Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction

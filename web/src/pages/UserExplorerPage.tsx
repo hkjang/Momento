@@ -40,18 +40,25 @@ export default function UserExplorerPage() {
   const { site } = useSite();
   const [params, setParams] = useSearchParams();
   const subject = params.get("visitor") || "";
+  // ?q= lets a report hand over a search instead of a single visitor: the
+  // Frustration table knows which signal fired, not who hit it.
+  const requestedQuery = params.get("q") || "";
   const scope = params.get("scope") === "device" ? "device" : "person";
-  const [input, setInput] = useState(subject);
-  const [query, setQuery] = useState("");
+  const [input, setInput] = useState(subject || requestedQuery);
+  const [query, setQuery] = useState(requestedQuery);
   const [pages, setPages] = useState<VisitorTrace[]>([]);
   const [cursor, setCursor] = useState("");
   const [toast, setToast] = useState("");
 
   useEffect(() => {
-    setInput(subject);
+    setInput(subject || requestedQuery);
     setPages([]);
     setCursor("");
-  }, [subject, scope]);
+  }, [subject, scope, requestedQuery]);
+
+  useEffect(() => {
+    if (requestedQuery) setQuery(requestedQuery);
+  }, [requestedQuery]);
 
   const search = useQuery({
     queryKey: ["visitor-search", site?.site_id, query],

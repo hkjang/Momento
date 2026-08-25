@@ -312,12 +312,14 @@ paths:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
       summary: Search Zero Result, CTR, refinement, exit and success
-      responses: {'200': {description: Search Analytics}}
+      description: Includes ready-to-save audience definitions for people who searched without finding anything.
+      responses: {'200': {description: Search Analytics with audiences}}
   /api/v1/sites/{siteId}/frustration:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
       summary: Privacy-preserving Frustration signals without Session Replay
-      responses: {'200': {description: Frustration Analytics}}
+      description: Includes ready-to-save audience definitions for people the product blocked.
+      responses: {'200': {description: Frustration Analytics with audiences}}
   /api/v1/sites/{siteId}/feature-flags:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:

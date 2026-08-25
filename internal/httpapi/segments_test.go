@@ -205,3 +205,52 @@ func TestGoalPeriodEndCoversEveryPeriod(t *testing.T) {
 		}
 	}
 }
+
+// TestCompileFrictionSegment covers the audiences the automatic signals make
+// possible: people the product actually blocked, and people who searched and
+// found nothing. Both are expressible only because the aggregate names the
+// signals itself rather than taking an event name from the request.
+func TestCompileFrictionSegment(t *testing.T) {
+	t.Parallel()
+
+	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	node := segmentNode{Combinator: "and", Rules: []segmentNode{
+		{Field: "entity.frustration_sessions", Operator: ">=", Value: 2.0},
+		{Field: "entity.conversions", Operator: "=", Value: 0.0},
+		{Field: "entity.zero_result_searches", Operator: ">=", Value: 1.0},
+		{Field: "entity.search_clicks", Operator: "=", Value: 0.0},
+	}}
+	args := []any{"site"}
+	sql, err := compileSegment(node, resolver, "e", &args, 0)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	for _, expected := range []string{
+		"count(DISTINCT segment_entity.session_id) FILTER(WHERE segment_entity.event_name = ANY(",
+		"rage_click",
+		"error_after_click",
+		"segment_entity.event_name='search_no_result'",
+		"segment_entity.properties->>'result_count'='0'",
+		"count(*) FILTER(WHERE segment_entity.event_name='search_click')",
+	} {
+		if !strings.Contains(sql, expected) {
+			t.Fatalf("compiled SQL %q does not contain %q", sql, expected)
+		}
+	}
+	// The signal list is fixed, so no rule value may reach the SQL text.
+	if strings.Contains(sql, "$6") || len(args) != 5 {
+		t.Fatalf("expected exactly four bound values, got %d: %v", len(args)-1, args)
+	}
+
+	// A friction field still refuses a non-numeric comparison, the same as every
+	// other aggregate.
+	for _, bad := range []segmentNode{
+		{Field: "entity.frustration_signals", Operator: "contains", Value: "rage"},
+		{Field: "entity.searches", Operator: ">=", Value: "많이"},
+	} {
+		badArgs := []any{"site"}
+		if _, err := compileSegment(segmentNode{Combinator: "and", Rules: []segmentNode{bad}}, resolver, "e", &badArgs, 0); err == nil {
+			t.Errorf("%s %s %v compiled but should have been refused", bad.Field, bad.Operator, bad.Value)
+		}
+	}
+}
