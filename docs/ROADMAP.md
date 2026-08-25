@@ -111,6 +111,13 @@
 - 완주율 기준 비교 차트, 전체 대비 pp/% 격차, 격차가 가장 크게 벌어지는 단계 지목
 - 진입 20명 미만 Segment는 판정하지 않고 표본 부족으로 표시
 
+## v0.14 — implemented
+
+- 대화형 분석 읽기의 25초 상한과 취소 전파, 시간 초과 시 원인과 대안을 설명하는 504 응답
+- 이상 감지 기준선을 일별 Rollup에서 계산하고 Rollup이 없는 날에만 Raw Event로 회귀
+- Attribution·진입 페이지가 사용하는 `sessions(site_id, environment, started_at)` 인덱스
+- 방문자 검색용 pg_trgm 인덱스와 확장 사용 불가 시 안전한 성능 저하
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

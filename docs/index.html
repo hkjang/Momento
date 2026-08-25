@@ -47,7 +47,7 @@
       "name": "Momento",
       "operatingSystem": "Linux, Docker",
       "applicationCategory": "BusinessApplication",
-      "softwareVersion": "0.13.0",
+      "softwareVersion": "0.14.0",
       "description": "사내 Web/App 사용 현황을 Raw Event 수준에서 소유하고 분석하는 온프레미스 이벤트 애널리틱스 플랫폼",
       "url": "https://github.com/hkjang/Momento",
       "downloadUrl": "https://github.com/hkjang/Momento",
@@ -472,12 +472,12 @@ docker compose up --build
                         <h4>📦 오프라인 번들 (.tar.gz)</h4>
                         <p>인터넷 통신이 완전히 차단된 사내 폐쇄망 환경을 위한 오프라인 Docker 이미지 아카이브를 제공합니다.</p>
 <pre><code># 릴리스 아카이브 로드
-gzip -dc momento-v0.13.0.tar.gz | docker load
+gzip -dc momento-v0.14.0.tar.gz | docker load
 
 # 폐쇄망 컨테이너 실행
 docker run -d -p 8080:8080 \
   -e MOMENTO_POSTGRES_DSN='...' \
-  momento-v0.13.0</code></pre>
+  momento-v0.14.0</code></pre>
                     </div>
                 </div>
             </div>

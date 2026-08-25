@@ -781,12 +781,16 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		name, _ := s.segmentName(r.Context(), siteID, id)
 		cohorts = append(cohorts, funnelCohort{Key: id, Label: name, Definition: &definition})
 	}
+	// Comparing three cohorts runs three funnels, so the whole comparison shares
+	// one deadline instead of multiplying the cost of a wide range.
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
 	series := []map[string]any{}
 	var baseline []map[string]any
 	for _, cohort := range cohorts {
-		steps, err := s.runFunnel(r, siteID, in, resolver, cohort.Definition)
+		steps, err := s.runFunnel(ctx, r, siteID, in, resolver, cohort.Definition)
 		if err != nil {
-			writeError(w, 500, "QUERY_FAILED", err.Error())
+			writeQueryError(w, err)
 			return
 		}
 		if cohort.Key == "baseline" {
@@ -823,15 +827,15 @@ func (s *Server) segmentName(ctx context.Context, siteID uuid.UUID, id string) (
 
 // runFunnel evaluates the funnel for one cohort. Every cohort shares the same steps,
 // window and mode so the columns stay comparable.
-func (s *Server) runFunnel(r *http.Request, siteID uuid.UUID, in funnelRequest, resolver dimensionResolver, cohort *segmentNode) ([]map[string]any, error) {
-	from, to, err := s.explicitDateRange(r.Context(), siteID, in.From, in.To)
+func (s *Server) runFunnel(ctx context.Context, r *http.Request, siteID uuid.UUID, in funnelRequest, resolver dimensionResolver, cohort *segmentNode) ([]map[string]any, error) {
+	from, to, err := s.explicitDateRange(ctx, siteID, in.From, in.To)
 	if err != nil {
 		return nil, err
 	}
 	args := []any{siteID, from, to, in.Environment}
 	baseWhere := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3", "e.environment=$4"}
 	if in.SegmentID != "" {
-		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
+		definition, err := s.loadSegment(ctx, siteID, in.SegmentID)
 		if err != nil {
 			return nil, err
 		}
@@ -895,7 +899,7 @@ func (s *Server) runFunnel(r *http.Request, siteID uuid.UUID, in funnelRequest, 
 		}
 	}
 	sql := `WITH ` + strings.Join(ctes, ",") + " " + strings.Join(parts, " UNION ALL ") + ` ORDER BY step`
-	rows, err := s.DB.Query(r.Context(), sql, args...)
+	rows, err := s.DB.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}

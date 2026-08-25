@@ -187,29 +187,31 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 			before = parsed
 		}
 	}
-	events, hasMore, err := s.traceEvents(r.Context(), siteID, environment, subject.VisitorIDs, from, before, limit)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
+	events, hasMore, err := s.traceEvents(ctx, siteID, environment, subject.VisitorIDs, from, before, limit)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	sessions, err := s.groupTraceSessions(r.Context(), siteID, environment, events)
+	sessions, err := s.groupTraceSessions(ctx, siteID, environment, events)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	summary, err := s.traceSummary(r.Context(), siteID, environment, subject.VisitorIDs)
+	summary, err := s.traceSummary(ctx, siteID, environment, subject.VisitorIDs)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	links, err := s.traceIdentityLinks(r.Context(), siteID, subject.UserID)
+	links, err := s.traceIdentityLinks(ctx, siteID, subject.UserID)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	otherSites, err := s.traceOtherSites(r.Context(), siteID, subject.UserID)
+	otherSites, err := s.traceOtherSites(ctx, siteID, subject.UserID)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	nextBefore := ""
@@ -533,6 +535,8 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
 	pattern := "%" + strings.ToLower(query) + "%"
 	results := map[string]map[string]any{}
 	order := []string{}
@@ -551,12 +555,12 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. SSO user ID, department or organization from the identified user summary.
-	identityRows, err := s.DB.Query(r.Context(), `SELECT u.user_id,coalesce(u.user_properties->>'department',''),coalesce(u.user_properties->>'organization',''),i.visitor_id
+	identityRows, err := s.DB.Query(ctx, `SELECT u.user_id,coalesce(u.user_properties->>'department',''),coalesce(u.user_properties->>'organization',''),i.visitor_id
 		FROM identified_users u JOIN visitor_identities i ON i.site_id=u.site_id AND i.user_id=u.user_id
 		WHERE u.site_id=$1 AND (lower(u.user_id) LIKE $2 OR lower(coalesce(u.user_properties->>'department','')) LIKE $2 OR lower(coalesce(u.user_properties->>'organization','')) LIKE $2)
 		ORDER BY u.last_seen DESC LIMIT 60`, siteID, pattern)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	for identityRows.Next() {
@@ -578,9 +582,9 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	identityRows.Close()
 
 	// 2. Visitor ID fragment, for tracing from a support ticket or a log line.
-	visitorRows, err := s.DB.Query(r.Context(), `SELECT v.visitor_id,coalesce(v.user_id,'') FROM visitors v WHERE v.site_id=$1 AND lower(v.visitor_id) LIKE $2 ORDER BY v.last_seen DESC LIMIT 30`, siteID, pattern)
+	visitorRows, err := s.DB.Query(ctx, `SELECT v.visitor_id,coalesce(v.user_id,'') FROM visitors v WHERE v.site_id=$1 AND lower(v.visitor_id) LIKE $2 ORDER BY v.last_seen DESC LIMIT 30`, siteID, pattern)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	for visitorRows.Next() {
@@ -593,12 +597,12 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 
 	// 3. A page or an event within the selected window, bounded by the site and
 	// time index so the lookup stays predictable.
-	activityRows, err := s.DB.Query(r.Context(), `SELECT DISTINCT ON (visitor_id) visitor_id,coalesce(user_id,''),event_name,coalesce(page_url,'')
+	activityRows, err := s.DB.Query(ctx, `SELECT DISTINCT ON (visitor_id) visitor_id,coalesce(user_id,''),event_name,coalesce(page_url,'')
 		FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
 		AND (lower(event_name) LIKE $5 OR lower(coalesce(page_url,'')) LIKE $5 OR lower(coalesce(properties->>'feature','')) LIKE $5)
 		ORDER BY visitor_id,event_timestamp DESC LIMIT 60`, siteID, from, to, environment, pattern)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	for activityRows.Next() {
@@ -621,11 +625,11 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	// Attach the activity summary so a searcher can pick the right person.
 	ids := make([]string, 0, len(order))
 	ids = append(ids, order...)
-	summaryRows, err := s.DB.Query(r.Context(), `SELECT v.visitor_id,v.first_seen,v.last_seen,v.event_count,v.conversion_count,
+	summaryRows, err := s.DB.Query(ctx, `SELECT v.visitor_id,v.first_seen,v.last_seen,v.event_count,v.conversion_count,
 		(SELECT count(*) FROM visitor_sessions vs WHERE vs.site_id=v.site_id AND vs.visitor_id=v.visitor_id)
 		FROM visitors v WHERE v.site_id=$1 AND v.visitor_id = ANY($2)`, siteID, ids)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	for summaryRows.Next() {
@@ -674,16 +678,18 @@ func (s *Server) siteAnomalies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
 	reporter := insight.New(s.DB)
-	report, err := reporter.DetectSiteAnomalies(r.Context(), siteID, environment, location)
+	report, err := reporter.DetectSiteAnomalies(ctx, siteID, environment, location)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	// Reading the report never rewrites alert history; only delivery does that.
-	states, err := reporter.AnomalyStates(r.Context(), siteID, environment)
+	states, err := reporter.AnomalyStates(ctx, siteID, environment)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{
@@ -721,9 +727,11 @@ func (s *Server) channelAttribution(w http.ResponseWriter, r *http.Request) {
 	}
 	lookback, _ := strconv.Atoi(r.URL.Query().Get("lookback_days"))
 	halfLife, _ := strconv.Atoi(r.URL.Query().Get("half_life_days"))
-	report, err := insight.New(s.DB).Attribution(r.Context(), siteID, requestEnvironment(r), from, to, lookback, model, halfLife)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
+	report, err := insight.New(s.DB).Attribution(ctx, siteID, requestEnvironment(r), from, to, lookback, model, halfLife)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"report": report, "models": insight.AttributionModels()})

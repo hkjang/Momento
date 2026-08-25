@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.14.0
+
+- Bounded every interactive analytical read at 25 seconds and cancelled the running statement with it, so one very wide range can no longer hold a database connection until the browser gives up.
+- Reported a timeout as a 504 with the reason and the alternatives (narrow the range, apply a segment, schedule the report) instead of an internal error, and separated a client disconnect and a server-side cancel from a genuine failure.
+- Built the anomaly baseline from the daily rollups the worker already maintains, falling back to the event table only for a day that has not been aggregated yet; this removes an eight week event scan from every insights page load and makes the numbers match the Overview screen.
+- Added the `sessions(site_id, environment, started_at)` index that attribution touch lookups and the landing page report depend on, and pg_trgm indexes for visitor search that degrade to a sequential scan when the extension cannot be created.
+- Left the event table without a new index on purpose: a non-concurrent build there would block ingestion during the startup migration.
+
 ## v0.13.0
 
 - Added segment comparison to the funnel: up to three segments run beside the baseline with identical steps, mode and conversion window, so a flat overall completion rate becomes a per-cohort comparison.

@@ -25,9 +25,11 @@ func (s *Server) visitorInsights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previousFrom, previousTo := previousDateRange(from, to, location)
-	report, err := insight.New(s.DB).Build(r.Context(), siteID, requestEnvironment(r), from, to, previousFrom, previousTo)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
+	report, err := insight.New(s.DB).Build(ctx, siteID, requestEnvironment(r), from, to, previousFrom, previousTo)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	report["timezone"] = timezone

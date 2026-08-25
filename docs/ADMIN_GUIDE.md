@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.13.0
+- **문서 버전**: v0.14.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -50,6 +50,16 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 | **Workspace Admin** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Analyst** | ✅ | ✅ | ✅ | ❌ | 개인 키 | ❌ |
 | **Viewer** | ✅ | 조회 | 조회 | ❌ | 개인 키 | ❌ |
+
+---
+
+## 2.3 분석 쿼리 보호
+
+대화형 분석 조회(방문자 인사이트, 이상 감지, 기여도, 방문자 검색·추적, Funnel)는 **25초 제한** 아래에서 실행됩니다. 초과하면 연결을 붙잡아 두지 않고 `504 QUERY_TIMEOUT`으로 즉시 끝나며, 기간 축소·Segment 적용·Scheduled Report 사용을 안내합니다. 요청이 취소되면 데이터베이스 쿼리도 함께 취소됩니다.
+
+이상 감지 기준선은 일별 Rollup(`daily_site_metrics`, `daily_site_visitors`, `daily_site_sessions`)에서 계산합니다. 평가 대상 날짜의 Rollup이 아직 없으면 그때만 Raw Event를 읽습니다. 따라서 Aggregate가 밀려 있으면 이상 감지가 느려질 수 있으며, 관리 → Aggregate Manager에서 재집계 상태를 확인하십시오.
+
+`013_analytical_indexes.sql`은 `sessions` 인덱스와 방문자 검색용 `pg_trgm` 인덱스를 만듭니다. 세션 수가 많은 기존 설치에서는 이 마이그레이션이 최초 기동 시 수 초에서 수 분 걸릴 수 있습니다. `pg_trgm` 확장을 만들 권한이 없으면 인덱스 생성을 건너뛰고 순차 검색으로 동작합니다.
 
 ---
 

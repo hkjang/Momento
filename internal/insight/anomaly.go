@@ -233,8 +233,105 @@ func (rep Reporter) DetectSiteAnomalies(ctx context.Context, siteID uuid.UUID, e
 	return report, nil
 }
 
-// dailySeries reads one daily value per watched metric in the site timezone.
+// dailySeries reads one daily value per watched metric. It prefers the daily
+// rollups the worker already maintains, because scanning eight weeks of raw events
+// on every dashboard load is the most expensive query in the product and produces
+// the same numbers the Overview screen shows.
 func (rep Reporter) dailySeries(ctx context.Context, siteID uuid.UUID, environment string, location *time.Location, from, to time.Time) (map[string][]AnomalyPoint, error) {
+	series, err := rep.dailySeriesFromRollups(ctx, siteID, environment, from, to)
+	if err != nil {
+		return nil, err
+	}
+	// A day missing from the rollups would look like a collapse, so fall back to the
+	// event table when the day being judged has not been aggregated yet.
+	evaluated := to.AddDate(0, 0, -1)
+	if !hasDay(series["events"], evaluated) {
+		return rep.dailySeriesFromEvents(ctx, siteID, environment, location, from, to)
+	}
+	errorSeries, err := rep.dailyErrorSeries(ctx, siteID, environment, location, from, to)
+	if err != nil {
+		return nil, err
+	}
+	series["errors"] = errorSeries
+	return series, nil
+}
+
+func hasDay(points []AnomalyPoint, day time.Time) bool {
+	target := day.UTC().Truncate(24 * time.Hour)
+	for _, point := range points {
+		if point.Date.UTC().Truncate(24 * time.Hour).Equal(target) {
+			return true
+		}
+	}
+	return false
+}
+
+// dailySeriesFromRollups reads users, sessions, events and conversions from the
+// daily aggregates. Users follow the same identity rule as every other report: one
+// SSO user is one person, an anonymous visitor is site scoped.
+func (rep Reporter) dailySeriesFromRollups(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) (map[string][]AnomalyPoint, error) {
+	series := map[string][]AnomalyPoint{}
+	rows, err := rep.DB.Query(ctx, `WITH days AS (
+			SELECT event_date FROM daily_site_metrics WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date
+		), visitors AS (
+			SELECT d.event_date,count(DISTINCT coalesce('u:'||i.user_id,'v:'||d.visitor_id)) users
+			FROM daily_site_visitors d LEFT JOIN visitor_identities i ON i.site_id=d.site_id AND i.visitor_id=d.visitor_id
+			WHERE d.site_id=$1 AND d.environment=$2 AND d.event_date >= $3::date AND d.event_date < $4::date GROUP BY 1
+		), sessions AS (
+			SELECT event_date,count(*) sessions FROM daily_site_sessions
+			WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY 1
+		)
+		SELECT m.event_date,coalesce(v.users,0),coalesce(s.sessions,0),m.events,m.conversions
+		FROM daily_site_metrics m
+		LEFT JOIN visitors v ON v.event_date=m.event_date
+		LEFT JOIN sessions s ON s.event_date=m.event_date
+		WHERE m.site_id=$1 AND m.environment=$2 AND m.event_date >= $3::date AND m.event_date < $4::date
+		ORDER BY 1`, siteID, environment, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var day time.Time
+		var users, sessions, events, conversions int64
+		if rows.Scan(&day, &users, &sessions, &events, &conversions) != nil {
+			continue
+		}
+		date := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
+		series["users"] = append(series["users"], AnomalyPoint{Date: date, Value: float64(users)})
+		series["sessions"] = append(series["sessions"], AnomalyPoint{Date: date, Value: float64(sessions)})
+		series["events"] = append(series["events"], AnomalyPoint{Date: date, Value: float64(events)})
+		series["conversions"] = append(series["conversions"], AnomalyPoint{Date: date, Value: float64(conversions)})
+	}
+	return series, rows.Err()
+}
+
+// dailyErrorSeries counts error events per day. Errors are not in the rollups, but
+// the event name index keeps this read narrow.
+func (rep Reporter) dailyErrorSeries(ctx context.Context, siteID uuid.UUID, environment string, location *time.Location, from, to time.Time) ([]AnomalyPoint, error) {
+	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date day,count(*)
+		FROM raw_events
+		WHERE site_id=$1 AND environment=$2 AND event_name = ANY($6) AND event_timestamp >= $3 AND event_timestamp < $4
+		GROUP BY 1 ORDER BY 1`, siteID, environment, from, to, location.String(), []string{"error", "resource_error"})
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AnomalyPoint{}
+	for rows.Next() {
+		var day time.Time
+		var count int64
+		if rows.Scan(&day, &count) != nil {
+			continue
+		}
+		out = append(out, AnomalyPoint{Date: time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC), Value: float64(count)})
+	}
+	return out, rows.Err()
+}
+
+// dailySeriesFromEvents is the fallback when the rollups have not caught up. It is
+// correct but reads the event table, so it only runs when it has to.
+func (rep Reporter) dailySeriesFromEvents(ctx context.Context, siteID uuid.UUID, environment string, location *time.Location, from, to time.Time) (map[string][]AnomalyPoint, error) {
 	series := map[string][]AnomalyPoint{}
 	zone := location.String()
 	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date day,
