@@ -24,6 +24,49 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import { builtInSegmentFields } from "../components/SegmentBuilder";
+
+type FunnelStep = Record<string, unknown> & {
+  name: string;
+  users: number;
+  overall_conversion_rate: number;
+};
+
+type FunnelComparison = {
+  key: string;
+  label: string;
+  entered: number;
+  completion_rate: number;
+  baseline_completion_rate: number;
+  lift_points: number;
+  lift_percent: number;
+  worst_step: number;
+  worst_step_name: string;
+  verdict: "better" | "worse" | "similar" | "insufficient";
+  evidence: string;
+  reliable: boolean;
+};
+
+type FunnelResult = {
+  steps: FunnelStep[];
+  series?: { key: string; label: string; steps: FunnelStep[] }[];
+  comparison?: FunnelComparison[];
+};
+
+const seriesColors = ["#5B5CE2", "#12A875", "#E2A03F", "#C43E44"];
+
+const verdictLabel: Record<FunnelComparison["verdict"], string> = {
+  better: "더 높음",
+  worse: "더 낮음",
+  similar: "비슷함",
+  insufficient: "표본 부족",
+};
+
+const verdictColor: Record<FunnelComparison["verdict"], "success" | "error" | "default" | "warning"> = {
+  better: "success",
+  worse: "error",
+  similar: "default",
+  insufficient: "warning",
+};
 import {
   buildPathFlow,
   type PathNode,
@@ -66,6 +109,7 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const [funnelMode, setFunnelMode] = useState("closed");
   const [withinMinutes, setWithinMinutes] = useState(0);
   const [segmentId, setSegmentId] = useState("");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [pathDays, setPathDays] = useState(30);
   const [pathView, setPathView] = useState<"pages" | "events" | "all">(
     "pages",
@@ -89,13 +133,14 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   });
   const funnel = useMutation({
     mutationFn: () =>
-      post<{ steps: Record<string, unknown>[] }>("/api/v1/funnel", {
+      post<FunnelResult>("/api/v1/funnel", {
         site_id: site!.site_id,
         environment,
         ...dateRangeValues(30, site!.timezone),
         mode: funnelMode,
         within_minutes: withinMinutes,
         segment_id: segmentId || undefined,
+        compare_segment_ids: compareIds.length ? compareIds : undefined,
         steps: steps.map((step) => ({
           name: step.name,
           event: step.event,
@@ -388,6 +433,28 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
             ))}
           </TextField>
           <TextField
+            select
+            size="small"
+            label="비교 Segment"
+            value={compareIds}
+            onChange={(event) =>
+              setCompareIds(
+                (typeof event.target.value === "string"
+                  ? event.target.value.split(",")
+                  : (event.target.value as unknown as string[])
+                ).slice(0, 3),
+              )
+            }
+            slotProps={{ select: { multiple: true } }}
+            helperText="최대 3개. 전체와 나란히 비교합니다."
+          >
+            {(segments.data || []).map((segment) => (
+              <MenuItem key={segment.id} value={segment.id}>
+                {segment.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField
             size="small"
             type="number"
             label="최대 전환 시간 (분)"
@@ -563,23 +630,42 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
                   type: "category",
                   data: funnel.data.steps.map((x) => x.name),
                 },
-                yAxis: { type: "value" },
-                series: [
-                  {
-                    type: "bar",
-                    data: funnel.data.steps.map((x, i) => ({
-                      value: x.users,
+                yAxis: {
+                  type: "value",
+                  axisLabel: funnel.data.series ? { formatter: "{value}%" } : undefined,
+                },
+                legend: funnel.data.series
+                  ? { data: funnel.data.series.map((item) => item.label), bottom: 0 }
+                  : undefined,
+                series: funnel.data.series
+                  ? // Comparing cohorts uses the completion rate, because raw counts
+                    // put a small department next to a large one and hide the shape.
+                    funnel.data.series.map((item, index) => ({
+                      name: item.label,
+                      type: "bar",
+                      data: item.steps.map((step) => Number(step.overall_conversion_rate).toFixed(1)),
                       itemStyle: {
-                        color: ["#5B5CE2", "#7779EA", "#999AF1", "#B8B9F5"][
-                          Math.min(i, 3)
-                        ],
+                        color: seriesColors[index % seriesColors.length],
                         borderRadius: [7, 7, 0, 0],
                       },
-                    })),
-                    barMaxWidth: 100,
-                    label: { show: true, position: "top", formatter: "{c}명" },
-                  },
-                ],
+                      barMaxWidth: 60,
+                    }))
+                  : [
+                      {
+                        type: "bar",
+                        data: funnel.data.steps.map((x, i) => ({
+                          value: x.users,
+                          itemStyle: {
+                            color: ["#5B5CE2", "#7779EA", "#999AF1", "#B8B9F5"][
+                              Math.min(i, 3)
+                            ],
+                            borderRadius: [7, 7, 0, 0],
+                          },
+                        })),
+                        barMaxWidth: 100,
+                        label: { show: true, position: "top", formatter: "{c}명" },
+                      },
+                    ],
               }}
             />
           </Card>
@@ -604,6 +690,45 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
             ]}
             rows={funnel.data.steps}
           />
+          {funnel.data.comparison && funnel.data.comparison.length > 0 && (
+            <Card sx={{ p: 2.5 }}>
+              <Typography variant="h6">Segment 비교</Typography>
+              <Typography variant="body2" color="text.secondary" mb={2}>
+                전체 대비 완주율 차이가 큰 순서입니다. 격차가 가장 크게 벌어지는
+                단계가 먼저 확인할 지점입니다.
+              </Typography>
+              <Stack spacing={1.2}>
+                {funnel.data.comparison.map((item) => (
+                  <Card key={item.key} variant="outlined" sx={{ p: 1.8 }}>
+                    <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                      <Chip
+                        size="small"
+                        color={verdictColor[item.verdict]}
+                        label={verdictLabel[item.verdict]}
+                      />
+                      <Typography fontWeight={700}>{item.label}</Typography>
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        label={`${item.lift_points >= 0 ? "+" : ""}${item.lift_points.toFixed(1)}pp`}
+                      />
+                      {item.worst_step > 0 && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="warning"
+                          label={`${item.worst_step}단계 ${item.worst_step_name}`}
+                        />
+                      )}
+                    </Stack>
+                    <Typography variant="body2" color="text.secondary" mt={0.6}>
+                      {item.evidence}
+                    </Typography>
+                  </Card>
+                ))}
+              </Stack>
+            </Card>
+          )}
         </>
       )}
     </Stack>

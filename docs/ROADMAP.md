@@ -105,6 +105,12 @@
 - 이상 감지 알림 상태 관리: 신규·지속·회복 전이 판정, 같은 이상의 반복 통보 제거, 회복 알림, 상태 저장 테이블
 - 알림 전송 기준(`notify_on`) 설정과 읽기 경로에서 상태를 변경하지 않는 분리
 
+## v0.13 — implemented
+
+- Segment 비교 Funnel: 전체와 최대 3개 Segment를 같은 단계·모드·전환 시간으로 나란히 평가
+- 완주율 기준 비교 차트, 전체 대비 pp/% 격차, 격차가 가장 크게 벌어지는 단계 지목
+- 진입 20명 미만 Segment는 판정하지 않고 표본 부족으로 표시
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

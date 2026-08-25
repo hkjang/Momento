@@ -718,7 +718,10 @@ type funnelRequest struct {
 	WithinMinutes int          `json:"within_minutes,omitempty"`
 	SegmentID     string       `json:"segment_id,omitempty"`
 	Segment       *segmentNode `json:"segment,omitempty"`
-	Steps         []struct {
+	// CompareSegmentIDs runs the same funnel for each segment next to the baseline,
+	// which is how a flat overall rate becomes "which group is stuck, and where".
+	CompareSegmentIDs []string `json:"compare_segment_ids,omitempty"`
+	Steps             []struct {
 		Name    string        `json:"name"`
 		Event   string        `json:"event"`
 		Filters []segmentNode `json:"filters,omitempty"`
@@ -764,34 +767,98 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 	if !environmentNamePattern.MatchString(in.Environment) {
 		in.Environment = "prd"
 	}
+	if len(in.CompareSegmentIDs) > 3 {
+		writeError(w, 400, "TOO_MANY_SEGMENTS", "compare_segment_ids accepts at most 3 segments")
+		return
+	}
+	cohorts := []funnelCohort{{Key: "baseline", Label: "전체"}}
+	for _, id := range in.CompareSegmentIDs {
+		definition, err := s.loadSegment(r.Context(), siteID, id)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		name, _ := s.segmentName(r.Context(), siteID, id)
+		cohorts = append(cohorts, funnelCohort{Key: id, Label: name, Definition: &definition})
+	}
+	series := []map[string]any{}
+	var baseline []map[string]any
+	for _, cohort := range cohorts {
+		steps, err := s.runFunnel(r, siteID, in, resolver, cohort.Definition)
+		if err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
+		}
+		if cohort.Key == "baseline" {
+			baseline = steps
+		}
+		series = append(series, map[string]any{"key": cohort.Key, "label": cohort.Label, "steps": steps, "entered": funnelEntered(steps), "completion_rate": funnelCompletion(steps)})
+	}
+	response := map[string]any{"steps": baseline, "from": from, "to": to, "mode": in.Mode, "within_minutes": in.WithinMinutes}
+	if len(cohorts) > 1 {
+		response["series"] = series
+		response["comparison"] = compareFunnelSeries(series)
+	}
+	writeJSON(w, 200, response)
+}
+
+// funnelCohort is one column of a comparison: the baseline, or one segment.
+type funnelCohort struct {
+	Key        string
+	Label      string
+	Definition *segmentNode
+}
+
+func (s *Server) segmentName(ctx context.Context, siteID uuid.UUID, id string) (string, error) {
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return id, err
+	}
+	var name string
+	if err := s.DB.QueryRow(ctx, `SELECT name FROM segments WHERE id=$1 AND site_id=$2`, parsed, siteID).Scan(&name); err != nil {
+		return id, err
+	}
+	return name, nil
+}
+
+// runFunnel evaluates the funnel for one cohort. Every cohort shares the same steps,
+// window and mode so the columns stay comparable.
+func (s *Server) runFunnel(r *http.Request, siteID uuid.UUID, in funnelRequest, resolver dimensionResolver, cohort *segmentNode) ([]map[string]any, error) {
+	from, to, err := s.explicitDateRange(r.Context(), siteID, in.From, in.To)
+	if err != nil {
+		return nil, err
+	}
 	args := []any{siteID, from, to, in.Environment}
 	baseWhere := []string{"e.site_id=$1", "e.event_timestamp >= $2", "e.event_timestamp < $3", "e.environment=$4"}
 	if in.SegmentID != "" {
 		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
 		if err != nil {
-			writeError(w, 400, "INVALID_SEGMENT", err.Error())
-			return
+			return nil, err
 		}
 		part, err := compileSegment(definition, resolver, "e", &args, 0)
 		if err != nil {
-			writeError(w, 400, "INVALID_SEGMENT", err.Error())
-			return
+			return nil, err
 		}
 		baseWhere = append(baseWhere, part)
 	}
 	if in.Segment != nil {
 		part, err := compileSegment(*in.Segment, resolver, "e", &args, 0)
 		if err != nil {
-			writeError(w, 400, "INVALID_SEGMENT", err.Error())
-			return
+			return nil, err
+		}
+		baseWhere = append(baseWhere, part)
+	}
+	if cohort != nil {
+		part, err := compileSegment(*cohort, resolver, "e", &args, 0)
+		if err != nil {
+			return nil, err
 		}
 		baseWhere = append(baseWhere, part)
 	}
 	ctes := []string{`base AS (SELECT e.*,e.entity_id entity FROM analytics_events e WHERE ` + strings.Join(baseWhere, " AND ") + `)`}
 	for i, step := range in.Steps {
 		if strings.TrimSpace(step.Event) == "" {
-			writeError(w, 400, "INVALID_STEPS", "every funnel step requires an event")
-			return
+			return nil, fmt.Errorf("every funnel step requires an event")
 		}
 		args = append(args, step.Event)
 		param := len(args)
@@ -800,8 +867,7 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		for _, filter := range step.Filters {
 			part, err := compileSegment(filter, resolver, "b", &args, 0)
 			if err != nil {
-				writeError(w, 400, "INVALID_STEP_FILTER", err.Error())
-				return
+				return nil, err
 			}
 			conditions = append(conditions, part)
 		}
@@ -831,8 +897,7 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 	sql := `WITH ` + strings.Join(ctes, ",") + " " + strings.Join(parts, " UNION ALL ") + ` ORDER BY step`
 	rows, err := s.DB.Query(r.Context(), sql, args...)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []map[string]any{}
@@ -861,7 +926,7 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 			}(), "avg_seconds": seconds})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"steps": out, "from": from, "to": to, "mode": in.Mode, "within_minutes": in.WithinMinutes})
+	return out, rows.Err()
 }
 
 func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {

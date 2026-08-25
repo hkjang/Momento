@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.13.0
+
+- Added segment comparison to the funnel: up to three segments run beside the baseline with identical steps, mode and conversion window, so a flat overall completion rate becomes a per-cohort comparison.
+- Named the step where each cohort loses the most ground against the baseline, and left it empty rather than inventing one when a cohort never falls behind.
+- Charted the comparison on completion rate instead of user counts, because putting a small department next to a large one hides the shape of the funnel.
+- Withheld a verdict for cohorts with fewer than twenty entrants and labelled them as an insufficient sample instead of reporting noise as a finding.
+- Preserved the single-cohort funnel response, so existing callers of `POST /api/v1/funnel` are unaffected; `series` and `comparison` appear only when `compare_segment_ids` is sent.
+
 ## v0.12.1
 
 - Bumped the pinned Go toolchain and the builder image to 1.26.7, clearing six standard library advisories (net/http, encoding/xml, encoding/asn1, golang.org/x/net idna) that were fixed in 1.26.6.

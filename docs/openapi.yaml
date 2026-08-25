@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.12.0
+  version: 0.13.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -151,6 +151,8 @@ paths:
       responses: {'200': {description: Data deleted or property scrubbed}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/funnel:
     post:
+      description: Send compare_segment_ids (up to 3) to run the same funnel per segment beside the baseline; the response then also carries series and comparison.
+      description: Send compare_segment_ids (up to 3) to run the same funnel per segment beside the baseline; the response then also carries series and comparison.
       summary: Analyze an open or closed 2-10 step event funnel with segment and property conditions
       responses: {'200': {description: Funnel steps}}
   /api/v1/sites/{siteId}/environments:

@@ -27,7 +27,7 @@
 - 거버넌스: 버전형 Event Contract와 CI 검증, Formula 지원 Semantic Metric Registry, Metric Goal, Event Catalog·Lineage, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
 - 비밀값 관리: `MOMENTO_ENCRYPTION_KEY` 기반 AES-256-GCM 저장, 재기동 후 키 재조회, 키 교체용 이전 키 병행과 재암호화, 설치 진단(CSP·허용 도메인·환경·적재 파이프라인)
 - 관리: 운영 준비도·품질 지표·우선순위 조치함을 갖춘 역할 기반 관리 센터, `Ctrl/Cmd+K` 명령 팔레트, Site/Tracking Key, Keycloak OIDC(PKCE), RBAC, 사용자, 개인정보, 사이트별 Retention, CIDR 망 이름, Event Schema/Conversion, Custom Dimension, Audit
-- 고급 분석: Exact/Fast/Preview Query Cost Guard, 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
+- 고급 분석: Segment 비교 Funnel(전체 대비 완주율 격차와 이탈 단계 지목), Exact/Fast/Preview Query Cost Guard, 중첩 AND/OR Segment Registry, Segment 기반 Query/Funnel, 사용자·세션 전환율, 참여 기준과 활동량이 포함된 Session 요약, 저장된 Exploration
 - 개인화: Profile, password, 개인 API key 발급·회전·폐기
 - AI/연동: Model·Agent·MCP·Tool 사용량/성공률/지연/토큰/비용, 완전 오프라인 자연어 분석, 22개 Analytics MCP 도구, REST/OpenAPI, Raw CSV/NDJSON export
 - Action: 보안 Host Allowlist 기반 Scheduled Report와 Segment 집계를 Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent로 전달
@@ -101,7 +101,7 @@ cd ../web && npm install && npm run lint && npm test && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.12.0` 태그는 `momento-v0.12.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.13.0` 태그는 `momento-v0.13.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 
