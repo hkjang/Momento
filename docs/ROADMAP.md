@@ -124,6 +124,13 @@
 - 해당 주차에 도달하지 못한 Cohort를 분모에서 제외해 최근 Cohort가 곡선을 끌어내리지 않도록 보정
 - 첫 재방문 격차와 격차가 가장 큰 주차 지목, granularity에 맞는 단위 표기, 표본 20명 미만 판정 보류
 
+## v0.16 — implemented
+
+- Overview 첫 화면의 「지금 봐야 할 것」: 이상 감지와 Goal 미달 전망을 심각도 순으로 통합하고 상세 화면으로 연결
+- 같은 심각도에서는 방금 발생한 변화(이상)를 표준 목표(Goal)보다 앞에 배치
+- 달성·순항·판정 보류 Goal과 정상·데이터 부족 이상은 목록에서 제외해 목록 자체가 신호가 되도록 유지
+- 일별 Rollup 기반 이상 감지와 Metric Registry만 사용해 랜딩 화면 응답 시간 유지
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

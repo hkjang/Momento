@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { Box, Card, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Card, Chip, Stack, Typography } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
+import InsightsRounded from "@mui/icons-material/InsightsRounded";
 import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
 import LayersOutlined from "@mui/icons-material/LayersOutlined";
 import VisibilityOutlined from "@mui/icons-material/VisibilityOutlined";
@@ -12,6 +14,20 @@ import { useSite } from "../contexts/SiteContext";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import AnalysisToolbar from "../components/AnalysisToolbar";
+import { buildAttentionItems, type AttentionSeverity, type GoalEvaluation } from "./attention";
+import type { AnomalyReport } from "./visitorInsights";
+
+const attentionColor: Record<AttentionSeverity, "error" | "warning" | "info"> = {
+  critical: "error",
+  warning: "warning",
+  info: "info",
+};
+
+const attentionLabel: Record<AttentionSeverity, string> = {
+  critical: "심각",
+  warning: "주의",
+  info: "참고",
+};
 
 interface Metrics {
   users: number;
@@ -53,7 +69,27 @@ export default function OverviewPage() {
       ),
     enabled: !!site,
   });
+  // Both reads are cheap: anomalies come from the daily rollups and goals from the
+  // metric registry, so the landing screen stays fast.
+  const anomalies = useQuery({
+    queryKey: ["overview-anomalies", site?.site_id, environment],
+    enabled: !!site,
+    queryFn: () =>
+      get<AnomalyReport>(`/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`),
+  });
+  const goals = useQuery({
+    queryKey: ["overview-goals", site?.site_id, environment],
+    enabled: !!site,
+    queryFn: () =>
+      get<GoalEvaluation[]>(`/api/v1/sites/${site!.site_id}/metric-goals/evaluate`),
+  });
   if (!site) return <NoSite />;
+  const attention = buildAttentionItems(
+    anomalies.data?.detected,
+    anomalies.data?.transitions,
+    goals.data,
+  );
+  const attentionReady = anomalies.isSuccess || goals.isSuccess;
   const toolbar = (
     <AnalysisToolbar
       days={days}
@@ -91,6 +127,67 @@ export default function OverviewPage() {
   return (
     <Stack spacing={2.5}>
       {toolbar}
+      {attentionReady && (
+        <Card sx={{ p: 2.5 }}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            alignItems="center"
+            gap={1}
+            mb={attention.items.length ? 1.5 : 0}
+          >
+            <Stack direction="row" gap={1.2} alignItems="center">
+              <InsightsRounded color="primary" />
+              <Typography fontWeight={720}>지금 봐야 할 것</Typography>
+            </Stack>
+            <Button
+              size="small"
+              component={RouterLink}
+              to="/visitor-insights"
+              endIcon={<InsightsRounded />}
+            >
+              방문자 인사이트
+            </Button>
+          </Stack>
+          {attention.items.length ? (
+            <Stack spacing={1.2}>
+              {attention.items.map((item) => (
+                <Card key={item.id} variant="outlined" sx={{ p: 1.8 }}>
+                  <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                    <Chip
+                      size="small"
+                      color={attentionColor[item.severity]}
+                      label={attentionLabel[item.severity]}
+                    />
+                    <Typography fontWeight={700}>{item.title}</Typography>
+                    <Box flexGrow={1} />
+                    <Button size="small" component={RouterLink} to={item.to}>
+                      확인
+                    </Button>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" mt={0.5}>
+                    {item.detail}
+                  </Typography>
+                  {item.action && (
+                    <Typography variant="body2" color="primary.main" mt={0.3}>
+                      다음 행동 · {item.action}
+                    </Typography>
+                  )}
+                </Card>
+              ))}
+              {attention.hidden > 0 && (
+                <Typography variant="caption" color="text.secondary">
+                  그 외 {attention.hidden}건은 방문자 인사이트와 Goal 화면에서 확인하십시오.
+                </Typography>
+              )}
+            </Stack>
+          ) : (
+            <Alert severity="success">
+              감시 지표가 기준선 안에 있고 미달 전망 Goal도 없습니다.
+            </Alert>
+          )}
+        </Card>
+      )}
       <Box
         sx={{
           display: "grid",

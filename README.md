@@ -22,7 +22,7 @@
 - 이상 감지: 같은 요일 최근 8주 중위수·MAD 기반 robust z-score 감시와 신규·지속·회복 알림 상태 관리로 같은 이상을 반복 통보하지 않는 알림
 - 기여도: 단일 터치(first/last/last-non-direct)와 다중 터치(선형·시간 감쇠·위치 기반) 채널 배분, 관여 전환, 평균 경로 길이, Metric Goal 착지 예측
 - 방문자 인사이트: 전기간 자동 비교 KPI, 신규·재방문 구조, 채널 그룹 분류, 진입 페이지 이탈, 방문 빈도·최근성, 기기 격차, 우선순위 인사이트와 실행 대상 Segment, Markdown 즉시 복사·다운로드·정기 배달
-- 분석: Overview, Realtime, Acquisition, Pages, Events, Visitors, Sessions, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
+- 분석: 첫 화면 「지금 봐야 할 것」(이상 감지·Goal 미달 전망 통합), Overview, Realtime, Acquisition, Pages, Events, Visitors, Sessions, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
 - 거버넌스: 버전형 Event Contract와 CI 검증, Formula 지원 Semantic Metric Registry, Metric Goal, Event Catalog·Lineage, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
 - 비밀값 관리: `MOMENTO_ENCRYPTION_KEY` 기반 AES-256-GCM 저장, 재기동 후 키 재조회, 키 교체용 이전 키 병행과 재암호화, 설치 진단(CSP·허용 도메인·환경·적재 파이프라인)
@@ -101,7 +101,7 @@ cd ../web && npm install && npm run lint && npm test && npm run build
 docker build -t momento:dev .
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.15.0` 태그는 `momento-v0.15.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.16.0` 태그는 `momento-v0.16.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

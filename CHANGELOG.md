@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.16.0
+
+- Added an attention band to the Overview landing screen that merges detected anomalies and metric goals forecast to miss into one severity-ranked list, each with its evidence, next action and a link to the detail screen.
+- Ranked an anomaly above a goal at the same severity, because an anomaly is a change that just happened while a goal is a standing target.
+- Left achieved, on-track and not-yet-judged goals out, along with normal and insufficient-history anomalies, so the list itself carries a signal; an empty list states plainly that nothing is wrong.
+- Kept the landing screen fast by reading only the rollup-based anomaly report and the metric registry, never the heavy insight report.
+- Surfaced the alert state on the landing screen, so a problem reads as newly detected or open for a number of days.
+
 ## v0.15.0
 
 - Added segment comparison to retention: up to three segments produce size-weighted average retention curves beside the baseline, with the same cohort definition applied to both who enters a cohort and what counts as a return.

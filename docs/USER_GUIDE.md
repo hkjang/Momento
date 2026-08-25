@@ -156,6 +156,16 @@ router.on('routeChangeComplete', () => {
 
 ---
 
+### 2.4 첫 화면: 지금 봐야 할 것
+
+`개요` 화면 상단은 총계보다 먼저 **오늘 확인할 것**을 보여줍니다.
+
+- 이상 감지 결과(심각·주의·긍정 변화)와 **미달 전망 Goal**을 심각도 순으로 통합합니다. 같은 심각도면 방금 발생한 변화인 이상을 표준 목표인 Goal보다 앞에 둡니다.
+- 각 항목은 근거와 다음 행동을 함께 제시하고 `확인` 버튼으로 상세 화면(방문자 인사이트 / Goal)으로 이동합니다.
+- 알림 상태가 있으면 `신규`, `지속 N일`을 제목에 표시합니다.
+- **달성했거나 순항하는 Goal, 정상·데이터 부족 판정 이상은 넣지 않습니다.** 모든 것을 넣은 목록은 아무 것도 알려주지 않기 때문입니다. 이상이 없으면 그 사실을 명확히 표시합니다.
+- 이 화면은 일별 Rollup 기반 이상 감지와 Metric Registry만 조회하므로 첫 화면 응답 속도에 영향을 주지 않습니다.
+
 ## 3. 고급 분석 기능 사용법
 
 Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의미합니다. API는 `conversion_users`, `conversion_sessions`, `user_conversion_rate`, `session_conversion_rate`를 모두 제공합니다. 날짜는 관리자에게 설정된 Site Timezone 기준이며, 저장 Timestamp 자체는 UTC입니다.
