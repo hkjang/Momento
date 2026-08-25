@@ -88,8 +88,8 @@ func TestPrivacyDeletionByVisitorAndPeriod(t *testing.T) {
 	}
 
 	// A period deletion must remove inside the window and keep everything outside it.
-	from := time.Now().AddDate(0, 0, -10).Format("2006-01-02")
-	to := time.Now().AddDate(0, 0, -5).Format("2006-01-02")
+	from := f.siteDate(t, -10)
+	to := f.siteDate(t, -5)
 	f.do(t, http.MethodPost, "/api/v1/privacy/delete",
 		fmt.Sprintf(`{"site_id":"%s","mode":"period","from":"%s","to":"%s","confirm":"DELETE"}`, f.siteKey, from, to))
 	var inside, outside int64

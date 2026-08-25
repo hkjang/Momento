@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.22.1
+
+- Fixed a test that asked the reports for "today" in the runner's timezone while every analytical endpoint answers in the site's. The fixture site is on Asia/Seoul, so a UTC afternoon is already the next day there and an event ingested during the test fell outside the window it was queried with — the v0.22.0 signal test failed in CI for that reason and passed locally. Every integration test now derives its dates from the site calendar.
+
 ## v0.22.0
 
 - The tracker now detects the frustration signals the Frustration report has always scored. Rage clicks (three clicks on one element inside a second), dead clicks (a clickable-looking element that changed nothing), rapid backs, form retries from a resubmit or a failed validation, errors within two seconds of a click, and interactions slower than 500ms are all reported without any instrumentation. Seven of the report's nine signals previously arrived only from hand-written code, so the page was empty for every deployment using the tracker as shipped.

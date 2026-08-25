@@ -331,8 +331,7 @@ func TestBehaviouralSegmentEvaluates(t *testing.T) {
 	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM segments WHERE site_id=$1 AND name='반복 미전환'`, f.siteID).Scan(&segmentID); err != nil {
 		t.Fatalf("behavioural segment: %v", err)
 	}
-	today := time.Now().Format("2006-01-02")
-	from := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+	from, today := f.siteDates(t, 30)
 	body := fmt.Sprintf(`{"site_id":"%s","environment":"prd","date_range":{"from":"%s","to":"%s"},
 		"dimensions":["event.name"],"metrics":["users","events"],"filters":[],"segment_id":"%s","limit":10}`,
 		f.siteKey, from, today, segmentID)

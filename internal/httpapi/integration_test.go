@@ -239,8 +239,7 @@ func (f fixture) do(t *testing.T, method, path, body string) map[string]any {
 func TestAnalyticalEndpointsRunAgainstPostgres(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
-	today := time.Now().Format("2006-01-02")
-	from := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+	from, today := f.siteDates(t, 30)
 	site := "/api/v1/sites/" + f.siteKey
 
 	t.Run("overview and insights", func(t *testing.T) {
@@ -326,7 +325,7 @@ func TestAnalyticalEndpointsRunAgainstPostgres(t *testing.T) {
 	t.Run("cohort comparison", func(t *testing.T) {
 		// The seeded people first appear ten weeks ago, and a cohort is keyed on first
 		// activity, so a thirty day window would legitimately contain no cohort.
-		cohortFrom := time.Now().AddDate(0, 0, -90).Format("2006-01-02")
+		cohortFrom := f.siteDate(t, -90)
 		f.get(t, site+"/cohort?from="+cohortFrom+"&to="+today+"&granularity=week&periods=4")
 		report := f.get(t, site+"/cohort?from="+cohortFrom+"&to="+today+"&granularity=week&periods=4&segment_ids="+f.segmentID)
 		curves, _ := report["curves"].([]any)
@@ -484,6 +483,31 @@ func TestCollectorAndWorkerIngest(t *testing.T) {
 	}
 }
 
+// siteDates returns the range to ask a report for, in the site's own calendar.
+// Every analytical endpoint interprets from and to as dates in the site
+// timezone, so a test that ingests an event now and asks for "today" in the
+// runner's timezone can land outside the window: with the fixture site on
+// Asia/Seoul, a UTC afternoon is already tomorrow in Seoul.
+func (f fixture) siteDates(t *testing.T, days int) (string, string) {
+	t.Helper()
+	location, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Fatalf("load the fixture site timezone: %v", err)
+	}
+	now := time.Now().In(location)
+	return now.AddDate(0, 0, -days).Format("2006-01-02"), now.Format("2006-01-02")
+}
+
+// siteDate returns one date offset in the site's calendar.
+func (f fixture) siteDate(t *testing.T, offsetDays int) string {
+	t.Helper()
+	location, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Fatalf("load the fixture site timezone: %v", err)
+	}
+	return time.Now().In(location).AddDate(0, 0, offsetDays).Format("2006-01-02")
+}
+
 func (f fixture) countEvents(t *testing.T, name string) int64 {
 	t.Helper()
 	var count int64
@@ -498,8 +522,7 @@ func (f fixture) countEvents(t *testing.T, name string) int64 {
 func TestMCPToolsRunAgainstPostgres(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
-	today := time.Now().Format("2006-01-02")
-	from := time.Now().AddDate(0, 0, -60).Format("2006-01-02")
+	from, today := f.siteDates(t, 60)
 
 	listed := f.rpc(t, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	result, _ := listed["result"].(map[string]any)
@@ -561,8 +584,7 @@ func (f fixture) rpc(t *testing.T, body string) map[string]any {
 func TestGovernanceEndpointsRunAgainstPostgres(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
-	today := time.Now().Format("2006-01-02")
-	from := time.Now().AddDate(0, 0, -60).Format("2006-01-02")
+	from, today := f.siteDates(t, 60)
 	site := "/api/v1/sites/" + f.siteKey
 	window := "?from=" + from + "&to=" + today
 
@@ -691,8 +713,7 @@ func TestAutomaticSignalsReachTheReportsThatScoreThem(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
 	ctx := context.Background()
-	today := time.Now().Format("2006-01-02")
-	from := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	from, today := f.siteDates(t, 7)
 	site := "/api/v1/sites/" + f.siteKey
 
 	events := []string{
