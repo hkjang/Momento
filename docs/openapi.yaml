@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Momento Analytics API
-  version: 0.14.0
+  version: 0.15.0
   description: On-premise event collection, reporting, management, and query API.
 servers:
   - url: /
@@ -256,6 +256,7 @@ paths:
       summary: Tracking health, contract, PII, lag, duplicate and cardinality report
       responses: {'200': {description: Data Quality Center report}}
   /api/v1/sites/{siteId}/cohort:
+    # segment_ids (up to 3) adds size-weighted retention curves and a comparison.
     parameters:
       - {$ref: '#/components/parameters/SiteId'}
       - {$ref: '#/components/parameters/Environment'}

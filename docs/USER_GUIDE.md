@@ -265,6 +265,15 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 - Business Journey는 2~12개의 Event·Service·Feature 조건을 실제 도달 순서와 Conversion Window로 연결합니다.
 - Feature Adoption은 Canonical User의 Organization/Department와 Event의 `feature`를 연결하며 대상자, 사용률, 재사용률, 최근 활성 및 비활성 사용자를 제공합니다.
 
+### 3.6.1 Retention Segment 비교
+
+`코호트` 화면의 **비교 Segment**에서 최대 3개를 선택하면 전체와 Retention 곡선을 비교합니다.
+
+- 곡선은 **Cohort 크기로 가중한 평균**입니다. 비율의 단순 평균은 3명 Cohort가 1000명 Cohort와 같은 무게를 갖게 만듭니다.
+- **아직 해당 주차에 도달하지 못한 Cohort는 분모에서 제외**합니다. 지난주에 시작한 Cohort를 4주차에서 0%로 세면 곡선이 실제보다 낮게 보입니다.
+- Segment마다 첫 재방문(1주차) 격차와 **격차가 가장 큰 주차**를 제시하며, granularity에 따라 일·주·개월 단위로 표기합니다.
+- Cohort 인원 20명 미만은 `표본 부족`으로 표시하고 우열을 판정하지 않습니다.
+
 ### 3.7 Experience와 Release Impact
 
 SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vital`, `resource_error` Event로 전송합니다. Release 비교가 필요하면 초기화 시 `releaseVersion`, `gitSha`, `deploymentId`를 지정하십시오. Experience 화면은 오류가 발생한 사용자와 정상 사용자의 전환율을 비교합니다.

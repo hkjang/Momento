@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.15.0
+
+- Added segment comparison to retention: up to three segments produce size-weighted average retention curves beside the baseline, with the same cohort definition applied to both who enters a cohort and what counts as a return.
+- Excluded cohorts that are not yet old enough to have reached a period from that period's denominator, so a cohort started last week no longer drags a week-four number toward zero.
+- Weighted the pooled curve by cohort size rather than averaging rates, which stops a three person cohort from outvoting a thousand person one.
+- Named the first-return gap and the period where a segment falls furthest behind, in day, week or month units to match the selected granularity.
+- Withheld a verdict for cohorts under twenty people and labelled them as an insufficient sample.
+
 ## v0.14.0
 
 - Bounded every interactive analytical read at 25 seconds and cancelled the running statement with it, so one very wide range can no longer hold a database connection until the browser gives up.

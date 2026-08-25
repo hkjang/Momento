@@ -12,6 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
+import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
@@ -38,19 +39,59 @@ export default function PlatformAnalyticsPage({ mode }: { mode: PlatformMode }) 
   return <Quality />;
 }
 
+type RetentionPeriod = { period: number; users: number; retention_rate: number; cohort_users?: number };
+type RetentionCurve = { key: string; label: string; cohort_users: number; periods: RetentionPeriod[] };
+type RetentionComparison = {
+  key: string;
+  label: string;
+  cohort_users: number;
+  first_return_rate: number;
+  baseline_first_return_rate: number;
+  first_return_gap_points: number;
+  worst_period: number;
+  worst_period_gap_points: number;
+  verdict: "better" | "worse" | "similar" | "insufficient";
+  evidence: string;
+  reliable: boolean;
+};
+
+const retentionVerdictLabel: Record<RetentionComparison["verdict"], string> = {
+  better: "더 높음",
+  worse: "더 낮음",
+  similar: "비슷함",
+  insufficient: "표본 부족",
+};
+
+const retentionVerdictColor: Record<RetentionComparison["verdict"], "success" | "error" | "default" | "warning"> = {
+  better: "success",
+  worse: "error",
+  similar: "default",
+  insufficient: "warning",
+};
+
+const curveColors = ["#5B5CE2", "#12A875", "#E2A03F", "#C43E44"];
+
 function Cohort() {
   const { site, environment } = useSite();
   const [cohortEvent, setCohortEvent] = useState("");
   const [returnEvent, setReturnEvent] = useState("");
   const [periods, setPeriods] = useState(12);
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const segments = useQuery({
+    queryKey: ["segments", site?.site_id],
+    enabled: !!site,
+    queryFn: () => get<{ id: string; name: string }[]>(`/api/v1/segments?site_id=${site!.site_id}`),
+  });
   const q = useQuery({
-    queryKey: ["cohort", site?.site_id, environment, cohortEvent, returnEvent, periods],
+    queryKey: ["cohort", site?.site_id, environment, cohortEvent, returnEvent, periods, compareIds.join(",")],
     enabled: !!site,
     queryFn: () =>
       get<{
-        cohorts: { cohort: string; size: number; periods: { period: number; users: number; retention_rate: number }[] }[];
+        cohorts: { cohort: string; size: number; periods: RetentionPeriod[] }[];
+        curves?: RetentionCurve[];
+        comparison?: RetentionComparison[];
       }>(
-        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(180, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}`,
+        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(180, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
       ),
   });
   if (!site) return <NoSite />;
@@ -65,8 +106,74 @@ function Cohort() {
           <TextField select label="기간" value={periods} onChange={(e) => setPeriods(Number(e.target.value))}>
             {[8, 12, 16, 24].map((value) => <MenuItem key={value} value={value}>{value}주</MenuItem>)}
           </TextField>
+          <TextField
+            select
+            label="비교 Segment"
+            value={compareIds}
+            onChange={(e) =>
+              setCompareIds(
+                (typeof e.target.value === "string" ? e.target.value.split(",") : (e.target.value as unknown as string[])).slice(0, 3),
+              )
+            }
+            slotProps={{ select: { multiple: true } }}
+            helperText="최대 3개. 전체와 Retention 곡선을 비교합니다."
+            sx={{ minWidth: 220 }}
+          >
+            {(segments.data || []).map((segment) => (
+              <MenuItem key={segment.id} value={segment.id}>{segment.name}</MenuItem>
+            ))}
+          </TextField>
         </Stack>
       </Card>
+      {q.data?.curves && (
+        <Card sx={{ p: 2.5 }}>
+          <Typography variant="h6">Retention 곡선 비교</Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Cohort 크기로 가중한 평균 곡선입니다. 아직 해당 주차에 도달하지 못한
+            Cohort는 분모에서 제외하므로 최근 Cohort가 곡선을 끌어내리지 않습니다.
+          </Typography>
+          <ReactECharts
+            style={{ height: 300 }}
+            option={{
+              tooltip: { trigger: "axis", valueFormatter: (value: number) => `${Number(value).toFixed(1)}%` },
+              legend: { data: q.data.curves.map((curve) => curve.label), bottom: 0 },
+              grid: { left: 20, right: 20, bottom: 40, containLabel: true },
+              xAxis: { type: "category", data: Array.from({ length: periods }, (_, i) => `W${i}`) },
+              yAxis: { type: "value", axisLabel: { formatter: "{value}%" } },
+              series: q.data.curves.map((curve, index) => ({
+                name: curve.label,
+                type: "line",
+                smooth: true,
+                symbolSize: 6,
+                lineStyle: { width: index === 0 ? 3 : 2, type: index === 0 ? "solid" : "dashed" },
+                itemStyle: { color: curveColors[index % curveColors.length] },
+                data: curve.periods.map((period) => Number(period.retention_rate.toFixed(1))),
+              })),
+            }}
+          />
+          {!!q.data.comparison?.length && (
+            <Stack spacing={1.2} mt={1}>
+              {q.data.comparison.map((item) => (
+                <Card key={item.key} variant="outlined" sx={{ p: 1.8 }}>
+                  <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                    <Chip size="small" color={retentionVerdictColor[item.verdict]} label={retentionVerdictLabel[item.verdict]} />
+                    <Typography fontWeight={700}>{item.label}</Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={`1주차 ${item.first_return_gap_points >= 0 ? "+" : ""}${item.first_return_gap_points.toFixed(1)}pp`}
+                    />
+                    {item.worst_period > 0 && (
+                      <Chip size="small" variant="outlined" color="warning" label={`${item.worst_period}주차 격차`} />
+                    )}
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary" mt={0.6}>{item.evidence}</Typography>
+                </Card>
+              ))}
+            </Stack>
+          )}
+        </Card>
+      )}
       <Card sx={{ overflowX: "auto" }}>
         <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
           <Box component="thead">

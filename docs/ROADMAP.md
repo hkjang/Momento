@@ -118,6 +118,12 @@
 - Attribution·진입 페이지가 사용하는 `sessions(site_id, environment, started_at)` 인덱스
 - 방문자 검색용 pg_trgm 인덱스와 확장 사용 불가 시 안전한 성능 저하
 
+## v0.15 — implemented
+
+- Retention Segment 비교: 전체와 최대 3개 Segment의 Cohort 크기 가중 평균 곡선과 격차 판정
+- 해당 주차에 도달하지 못한 Cohort를 분모에서 제외해 최근 Cohort가 곡선을 끌어내리지 않도록 보정
+- 첫 재방문 격차와 격차가 가장 큰 주차 지목, granularity에 맞는 단위 표기, 표본 20명 미만 판정 보류
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -14,100 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 )
-
-func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
-	siteID, err := s.resolveSite(r, "siteID")
-	if err != nil {
-		writeError(w, 404, "UNKNOWN_SITE", "site not found")
-		return
-	}
-	from, to, err := s.dateRange(r, siteID)
-	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
-		return
-	}
-	granularity := r.URL.Query().Get("granularity")
-	if granularity == "" {
-		granularity = "week"
-	}
-	periods, _ := strconv.Atoi(r.URL.Query().Get("periods"))
-	if periods < 1 || periods > 52 {
-		periods = 12
-	}
-	var bucket, offset string
-	switch granularity {
-	case "day":
-		bucket = "(event_timestamp AT TIME ZONE $5)::date"
-		offset = "(a.activity_date-c.cohort_date)"
-	case "month":
-		bucket = "date_trunc('month',event_timestamp AT TIME ZONE $5)::date"
-		offset = "((extract(year FROM a.activity_date)::int-extract(year FROM c.cohort_date)::int)*12+extract(month FROM a.activity_date)::int-extract(month FROM c.cohort_date)::int)"
-	default:
-		granularity = "week"
-		bucket = "date_trunc('week',event_timestamp AT TIME ZONE $5)::date"
-		offset = "((a.activity_date-c.cohort_date)/7)"
-	}
-	timezone, _, _ := s.siteTimezone(r.Context(), siteID)
-	cohortEvent := strings.TrimSpace(r.URL.Query().Get("cohort_event"))
-	returnEvent := strings.TrimSpace(r.URL.Query().Get("return_event"))
-	query := `WITH cohort_candidates AS (
-		SELECT entity_id,min(` + bucket + `) cohort_date FROM analytics_events
-		WHERE site_id=$1 AND environment=$4 AND ($6='' OR event_name=$6) GROUP BY entity_id
-	), cohorts AS (
-		SELECT entity_id,cohort_date FROM cohort_candidates WHERE cohort_date >= ($2 AT TIME ZONE $5)::date AND cohort_date < ($3 AT TIME ZONE $5)::date
-	), activity AS (
-		SELECT DISTINCT entity_id,` + bucket + ` activity_date FROM analytics_events
-		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($7='' OR event_name=$7)
-	), retained AS (
-		SELECT c.cohort_date,` + offset + ` period_no,count(DISTINCT c.entity_id) retained
-		FROM cohorts c JOIN activity a ON a.entity_id=c.entity_id AND a.activity_date>=c.cohort_date
-		GROUP BY c.cohort_date,period_no
-	), sizes AS (SELECT cohort_date,count(*) cohort_size FROM cohorts GROUP BY cohort_date)
-	SELECT s.cohort_date,s.cohort_size,r.period_no,r.retained FROM sizes s JOIN retained r USING(cohort_date)
-	WHERE r.period_no BETWEEN 0 AND $8 ORDER BY s.cohort_date,r.period_no`
-	rows, err := s.DB.Query(r.Context(), query, siteID, from, to, requestEnvironment(r), timezone, cohortEvent, returnEvent, periods-1)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	defer rows.Close()
-	type cohort struct {
-		date string
-		size int64
-		ret  map[int]int64
-	}
-	cohorts := map[string]*cohort{}
-	order := []string{}
-	for rows.Next() {
-		var date time.Time
-		var size, retained int64
-		var period int
-		if rows.Scan(&date, &size, &period, &retained) != nil {
-			continue
-		}
-		key := date.Format("2006-01-02")
-		if cohorts[key] == nil {
-			cohorts[key] = &cohort{date: key, size: size, ret: map[int]int64{}}
-			order = append(order, key)
-		}
-		cohorts[key].ret[period] = retained
-	}
-	out := []map[string]any{}
-	for _, key := range order {
-		item := cohorts[key]
-		values := make([]map[string]any, periods)
-		for period := 0; period < periods; period++ {
-			count := item.ret[period]
-			rate := float64(0)
-			if item.size > 0 {
-				rate = float64(count) * 100 / float64(item.size)
-			}
-			values[period] = map[string]any{"period": period, "users": count, "retention_rate": rate}
-		}
-		out = append(out, map[string]any{"cohort": item.date, "size": item.size, "periods": values})
-	}
-	writeJSON(w, 200, map[string]any{"granularity": granularity, "cohort_event": cohortEvent, "return_event": returnEvent, "environment": requestEnvironment(r), "cohorts": out})
-}
 
 type journeyStep struct {
 	Name    string `json:"name"`
