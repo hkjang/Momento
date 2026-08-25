@@ -309,6 +309,8 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 - `entity.frustration_signals`, `entity.frustration_sessions` — tracker가 자동 감지한 막힘 신호(2.1.1 참고)를 겪은 횟수와 방문 수
 - `entity.searches`, `entity.zero_result_searches`, `entity.search_clicks` — 검색 횟수, 결과 0건 검색, 결과 클릭 수
 
+이 필드들은 사람의 **전체 이력**을 한 번 집계한 뒤 대상자를 추려내는 방식으로 실행됩니다. 조회 기간이 넓거나 이벤트가 많아도 집계는 한 번만 수행됩니다.
+
 숫자 비교(`>=`, `<=`, `=` 등)만 지원합니다. 예를 들어 `entity.sessions >= 3` AND `entity.conversions = 0`은 "세 번 이상 방문했지만 전환하지 않은 사람"이고, `entity.zero_result_searches >= 1` AND `entity.search_clicks = 0`은 "검색했지만 아무것도 찾지 못한 사람"입니다. 막힘 신호 목록은 서버가 고정하므로 Segment 조건에 Event 이름을 직접 넣을 필요가 없습니다.
 
 방문자 인사이트의 `실행 대상`, Frustration과 검색 분석 화면의 `실행 대상`에서 `Segment 만들기`를 누르면 서버가 세어 준 정의가 그대로 저장되어 Query·Funnel·Action에서 재사용됩니다. 기간 기준과 전체 이력 기준의 차이 때문에 인원이 다를 수 있는 경우에는 안내 문구를 함께 표시합니다.

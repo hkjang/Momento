@@ -306,7 +306,7 @@ func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
 		CohortEvent: strings.TrimSpace(r.URL.Query().Get("cohort_event")),
 		ReturnEvent: strings.TrimSpace(r.URL.Query().Get("return_event")),
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	resolver, err := s.newDimensionResolver(r.Context(), siteID, requestEnvironment(r))
 	if err != nil {
 		writeQueryError(w, err)
 		return

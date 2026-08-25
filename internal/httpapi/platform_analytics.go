@@ -449,7 +449,7 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 	if len(compare) > 0 {
 		ctx, cancel := s.analyticalContext(r)
 		defer cancel()
-		resolver, resolverErr := s.newDimensionResolver(ctx, siteID)
+		resolver, resolverErr := s.newDimensionResolver(ctx, siteID, environment)
 		if resolverErr != nil {
 			writeQueryError(w, resolverErr)
 			return

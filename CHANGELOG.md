@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.24.1
+
+- Behavioural segments now run at scale. Every `entity.*` field compiled to an aggregate evaluated once per candidate row, and because `analytics_events.entity_id` is derived from a join with the identity table it cannot be indexed, so each evaluation scanned the site. On a two million event site a thirty day query did not finish inside a minute — past the analytical deadline, which means these segments returned a timeout rather than an answer on any site with real history. The same condition now compiles to a semi-join against one grouped subquery: 2.3 seconds on the same data, and an integration test runs both forms against the same rows to show they select the same people.
+- The behavioural aggregate is scoped by the request's site and environment instead of by the outer row. A resolver built without them refuses to compile the aggregate rather than silently measuring the wrong population.
+- The Frustration report runs its four independent reads concurrently. Measured serially on the same two million event site they came to roughly 9.6 seconds; the endpoint now waits for the slowest rather than the sum.
+- `RunParallel` is exported from the insight package rather than reimplemented, so the connection-pool ceiling stays in one place.
+
 ## v0.24.0
 
 - The Frustration report now says whether a signal costs anything. For every signal it compares the people who hit it against the people who did not and returns a verdict — conversion loss, no difference, occurs alongside conversion, or withheld — with the gap in points and an estimate of the conversions that gap accounts for.

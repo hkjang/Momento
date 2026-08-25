@@ -466,7 +466,12 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	// The environment is settled before the resolver is built: behavioural segment
+	// fields are scoped by it, so it cannot still be empty when they compile.
+	if !environmentNamePattern.MatchString(in.Environment) {
+		in.Environment = "prd"
+	}
+	resolver, err := s.newDimensionResolver(r.Context(), siteID, in.Environment)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -475,9 +480,6 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 400, "INVALID_RANGE", err.Error())
 		return
-	}
-	if !environmentNamePattern.MatchString(in.Environment) {
-		in.Environment = "prd"
 	}
 	plan, planError := s.planAnalyticsQuery(r.Context(), siteID, in, from, to)
 	if planError != "" {
@@ -743,7 +745,10 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	if !environmentNamePattern.MatchString(in.Environment) {
+		in.Environment = "prd"
+	}
+	resolver, err := s.newDimensionResolver(r.Context(), siteID, in.Environment)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -763,9 +768,6 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 	if in.WithinMinutes < 0 || in.WithinMinutes > 525600 {
 		writeError(w, 400, "INVALID_WINDOW", "within_minutes must be between 0 and 525600")
 		return
-	}
-	if !environmentNamePattern.MatchString(in.Environment) {
-		in.Environment = "prd"
 	}
 	if len(in.CompareSegmentIDs) > 3 {
 		writeError(w, 400, "TOO_MANY_SEGMENTS", "compare_segment_ids accepts at most 3 segments")

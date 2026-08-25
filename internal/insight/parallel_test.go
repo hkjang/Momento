@@ -30,7 +30,7 @@ func TestConcurrencyStaysWithinTheLimit(t *testing.T) {
 			return nil
 		})
 	}
-	if err := runParallel(context.Background(), 3, steps...); err != nil {
+	if err := RunParallel(context.Background(), 3, steps...); err != nil {
 		t.Fatalf("runParallel: %v", err)
 	}
 	if peak > 3 {
@@ -60,7 +60,7 @@ func TestFirstErrorIsReturnedAndTheRestAreCancelled(t *testing.T) {
 		slow, slow, slow,
 	}
 	start := time.Now()
-	err := runParallel(context.Background(), 4, steps...)
+	err := RunParallel(context.Background(), 4, steps...)
 	if !errors.Is(err, failure) {
 		t.Fatalf("error = %v, want the first failure", err)
 	}
@@ -78,7 +78,7 @@ func TestAlreadyCancelledParentDoesNotLookSuccessful(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var ran atomic.Int32
-	err := runParallel(ctx, 2, func(context.Context) error {
+	err := RunParallel(ctx, 2, func(context.Context) error {
 		ran.Add(1)
 		return nil
 	})
@@ -90,10 +90,10 @@ func TestAlreadyCancelledParentDoesNotLookSuccessful(t *testing.T) {
 func TestEmptyAndNilStepsAreSafe(t *testing.T) {
 	t.Parallel()
 
-	if err := runParallel(context.Background(), 4); err != nil {
+	if err := RunParallel(context.Background(), 4); err != nil {
 		t.Fatalf("no steps: %v", err)
 	}
-	if err := runParallel(context.Background(), 0, nil, func(context.Context) error { return nil }); err != nil {
+	if err := RunParallel(context.Background(), 0, nil, func(context.Context) error { return nil }); err != nil {
 		t.Fatalf("nil step with a zero limit: %v", err)
 	}
 }

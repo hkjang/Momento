@@ -32,6 +32,12 @@ type customDimension struct {
 
 type dimensionResolver struct {
 	custom map[string]customDimension
+	// siteID and environment scope the behavioural aggregates. They are held here
+	// rather than read from the outer row so the aggregate subquery is a constant
+	// the planner evaluates once; correlating it made every candidate row run its
+	// own aggregate, which no site of real size could survive.
+	siteID      uuid.UUID
+	environment string
 }
 
 var propertyKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
@@ -62,13 +68,13 @@ var builtinDimensionSQL = map[string]string{
 	"app.version":       "%s.properties->>'app_version'",
 }
 
-func (s *Server) newDimensionResolver(ctx context.Context, siteID uuid.UUID) (dimensionResolver, error) {
+func (s *Server) newDimensionResolver(ctx context.Context, siteID uuid.UUID, environment string) (dimensionResolver, error) {
 	rows, err := s.DB.Query(ctx, `SELECT name,property_key,scope,data_type FROM dimensions WHERE site_id=$1 AND active`, siteID)
 	if err != nil {
 		return dimensionResolver{}, err
 	}
 	defer rows.Close()
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := dimensionResolver{custom: map[string]customDimension{}, siteID: siteID, environment: environment}
 	for rows.Next() {
 		var item customDimension
 		if err := rows.Scan(&item.Name, &item.PropertyKey, &item.Scope, &item.DataType); err != nil {
@@ -132,7 +138,7 @@ func compileSegment(node segmentNode, resolver dimensionResolver, alias string, 
 		return compileEventExistence(node, alias, args)
 	}
 	if expression, ok := entityAggregateSQL[node.Field]; ok {
-		return compileEntityAggregate(node, expression, alias, args)
+		return compileEntityAggregate(node, resolver, expression, alias, args)
 	}
 	expr, err := resolver.expression(node.Field, alias)
 	if err != nil {
@@ -209,7 +215,18 @@ var entityAggregateSQL = map[string]string{
 }
 
 // compileEntityAggregate compares one behavioural aggregate of the same person.
-func compileEntityAggregate(node segmentNode, expression, alias string, args *[]any) (string, error) {
+//
+// It compiles to a semi-join against a grouped subquery rather than to a
+// correlated aggregate. The two forms select the same people, but the correlated
+// form re-ran the aggregate for every candidate row: on two million events it
+// did not finish inside a minute, which is past the analytical deadline, so
+// behavioural segments were unusable on any site of real size. Grouping once and
+// hashing the result is a single pass.
+//
+// The subquery has no time bound because these fields are defined over a
+// person's whole history; the site and environment come from the resolver so the
+// subquery stays constant.
+func compileEntityAggregate(node segmentNode, resolver dimensionResolver, expression, alias string, args *[]any) (string, error) {
 	switch node.Operator {
 	case "=", "!=", ">", ">=", "<", "<=":
 	default:
@@ -219,15 +236,22 @@ func compileEntityAggregate(node segmentNode, expression, alias string, args *[]
 	if !ok {
 		return "", fmt.Errorf("%s requires a numeric value", node.Field)
 	}
-	*args = append(*args, value)
-	placeholder := "$" + strconv.Itoa(len(*args))
-	subquery := "(SELECT " + expression + " FROM analytics_events segment_entity WHERE segment_entity.site_id=" + alias +
-		".site_id AND segment_entity.environment=" + alias + ".environment AND segment_entity.entity_id=" + alias + ".entity_id)"
+	if resolver.siteID == uuid.Nil || resolver.environment == "" {
+		// Without a scope the aggregate would silently measure the wrong
+		// population, so it fails instead of guessing.
+		return "", fmt.Errorf("%s cannot be evaluated without a site and environment", node.Field)
+	}
+	*args = append(*args, resolver.siteID, resolver.environment, value)
+	sitePlaceholder := "$" + strconv.Itoa(len(*args)-2)
+	environmentPlaceholder := "$" + strconv.Itoa(len(*args)-1)
+	valuePlaceholder := "$" + strconv.Itoa(len(*args))
 	operator := node.Operator
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return "coalesce(" + subquery + ",0) " + operator + " " + placeholder, nil
+	return alias + ".entity_id IN (SELECT segment_entity.entity_id FROM analytics_events segment_entity" +
+		" WHERE segment_entity.site_id=" + sitePlaceholder + " AND segment_entity.environment=" + environmentPlaceholder +
+		" GROUP BY segment_entity.entity_id HAVING coalesce(" + expression + ",0) " + operator + " " + valuePlaceholder + ")", nil
 }
 
 func compileEventExistence(node segmentNode, alias string, args *[]any) (string, error) {
@@ -362,7 +386,7 @@ func (s *Server) createSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_NAME", "segment name is required")
 		return
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	resolver, err := s.newDimensionResolver(r.Context(), siteID, requestEnvironment(r))
 	args := []any{}
 	if err == nil {
 		_, err = compileSegment(in.Definition, resolver, "e", &args, 0)
@@ -403,7 +427,7 @@ func (s *Server) updateSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID)
+	resolver, err := s.newDimensionResolver(r.Context(), siteID, requestEnvironment(r))
 	args := []any{}
 	if err == nil {
 		_, err = compileSegment(in.Definition, resolver, "e", &args, 0)

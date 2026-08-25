@@ -582,7 +582,7 @@ func (rep Reporter) Build(ctx context.Context, siteID uuid.UUID, environment str
 		deviceRows         []DeviceRow
 		lapsed, returned   int64
 	)
-	err := runParallel(ctx, queryConcurrency,
+	err := RunParallel(ctx, QueryConcurrency,
 		func(ctx context.Context) error {
 			value, err := rep.periodMetrics(ctx, siteID, environment, from, to)
 			current = value

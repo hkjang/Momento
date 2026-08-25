@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -399,5 +400,91 @@ func TestValidatorsAgreeWithDatabaseConstraints(t *testing.T) {
 		if !deliveryStatuses[status] {
 			t.Fatalf("the database rejects the delivery status %q the service writes", status)
 		}
+	}
+}
+
+// TestBehaviouralSegmentMatchesTheReferenceSemantics pins the rewrite of the
+// behavioural aggregates. They used to compile to a correlated subquery
+// evaluated once per candidate row, which no site of real size could run:
+// analytics_events.entity_id comes from a join with the identity table, so it
+// cannot be indexed and every evaluation scanned the site. The compiled form is
+// now a semi-join evaluated once, and this test runs both against the same data
+// to show they select the same rows.
+func TestBehaviouralSegmentMatchesTheReferenceSemantics(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	resolver, err := (&Server{DB: pool}).newDimensionResolver(ctx, f.siteID, "prd")
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+
+	cases := []struct {
+		field    string
+		operator string
+		value    float64
+		// reference is the aggregate the correlated form used, written out so the
+		// comparison is against the semantics rather than against the new SQL.
+		reference string
+	}{
+		{"entity.sessions", ">=", 2, "count(DISTINCT segment_entity.session_id)"},
+		{"entity.events", ">=", 5, "count(*)"},
+		{"entity.conversions", "=", 0, "count(*) FILTER(WHERE segment_entity.is_conversion)"},
+		{"entity.frustration_signals", ">=", 1, "count(*) FILTER(WHERE segment_entity.event_name = ANY('{rage_click,dead_click,rapid_back,form_retry,repeated_search,error_after_click,slow_interaction,error,resource_error}'))"},
+		{"entity.searches", "=", 0, "count(*) FILTER(WHERE segment_entity.event_name='search')"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field+tc.operator, func(t *testing.T) {
+			args := []any{f.siteID, "prd"}
+			condition, err := compileSegment(segmentNode{Field: tc.field, Operator: tc.operator, Value: tc.value}, resolver, "e", &args, 0)
+			if err != nil {
+				t.Fatalf("compile %s: %v", tc.field, err)
+			}
+			// compileSegment binds its own scope, so the value it compared against
+			// is the last argument.
+			valuePlaceholder := "$" + strconv.Itoa(len(args))
+			compiled := "SELECT e.event_id FROM analytics_events e WHERE e.site_id=$1 AND e.environment=$2 AND " + condition
+			operator := tc.operator
+			if operator == "!=" {
+				operator = "<>"
+			}
+			reference := "SELECT e.event_id FROM analytics_events e WHERE e.site_id=$1 AND e.environment=$2 AND coalesce((SELECT " +
+				tc.reference + " FROM analytics_events segment_entity WHERE segment_entity.site_id=e.site_id" +
+				" AND segment_entity.environment=e.environment AND segment_entity.entity_id=e.entity_id),0) " +
+				operator + " " + valuePlaceholder
+
+			var compiledCount, referenceCount, onlyCompiled, onlyReference int64
+			query := "WITH compiled AS (" + compiled + "), reference AS (" + reference + `)
+				SELECT (SELECT count(*) FROM compiled),(SELECT count(*) FROM reference),
+					(SELECT count(*) FROM (SELECT * FROM compiled EXCEPT ALL SELECT * FROM reference) a),
+					(SELECT count(*) FROM (SELECT * FROM reference EXCEPT ALL SELECT * FROM compiled) b)`
+			if err := pool.QueryRow(ctx, query, args...).Scan(&compiledCount, &referenceCount, &onlyCompiled, &onlyReference); err != nil {
+				t.Fatalf("compare %s: %v", tc.field, err)
+			}
+			if onlyCompiled != 0 || onlyReference != 0 {
+				t.Fatalf("%s %s %v selects a different set: %d only in the compiled form, %d only in the reference (compiled %d, reference %d)",
+					tc.field, tc.operator, tc.value, onlyCompiled, onlyReference, compiledCount, referenceCount)
+			}
+			if compiledCount == 0 {
+				t.Skipf("the fixture has nobody matching %s %s %v, so the comparison proves nothing", tc.field, tc.operator, tc.value)
+			}
+		})
+	}
+}
+
+// TestBehaviouralSegmentRefusesToRunWithoutAScope covers the failure mode the
+// rewrite introduces: the aggregate is scoped by parameters now, so a resolver
+// built without a site would silently measure the wrong population.
+func TestBehaviouralSegmentRefusesToRunWithoutAScope(t *testing.T) {
+	t.Parallel()
+	args := []any{}
+	_, err := compileSegment(segmentNode{Field: "entity.sessions", Operator: ">=", Value: 2.0},
+		dimensionResolver{custom: map[string]customDimension{}}, "e", &args, 0)
+	if err == nil {
+		t.Fatal("an unscoped resolver compiled a behavioural aggregate instead of failing")
+	}
+	if !strings.Contains(err.Error(), "site") {
+		t.Fatalf("the error does not say what is missing: %v", err)
 	}
 }

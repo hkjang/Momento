@@ -10,14 +10,14 @@ import (
 // would let a couple of concurrent readers exhaust the connection pool. The steps
 // therefore run concurrently with a small fixed ceiling.
 
-// queryConcurrency is how many reads of one report may be in flight at once. The
+// QueryConcurrency is how many reads of one report may be in flight at once. The
 // pool holds twenty connections, so this leaves room for other requests.
-const queryConcurrency = 4
+const QueryConcurrency = 4
 
-// runParallel executes every step with at most limit running concurrently. It
+// RunParallel executes every step with at most limit running concurrently. It
 // returns the first error and cancels the remaining steps, because a partial report
 // would be presented as a complete one.
-func runParallel(ctx context.Context, limit int, steps ...func(context.Context) error) error {
+func RunParallel(ctx context.Context, limit int, steps ...func(context.Context) error) error {
 	if limit < 1 {
 		limit = 1
 	}

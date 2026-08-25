@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestCompileNestedSegment(t *testing.T) {
@@ -34,7 +36,7 @@ func TestCompileNestedSegment(t *testing.T) {
 }
 
 func TestCompileSegmentRejectsInvalidInput(t *testing.T) {
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := scopedResolver()
 	tests := []segmentNode{
 		{Combinator: "xor", Rules: []segmentNode{{Field: "event.name", Operator: "=", Value: "click"}}},
 		{Field: "properties->>'unsafe'", Operator: "=", Value: "x"},
@@ -66,7 +68,7 @@ func TestCompileEventExistence(t *testing.T) {
 func TestCompileBehaviouralSegment(t *testing.T) {
 	t.Parallel()
 
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := scopedResolver()
 	// "Visited at least three times, never converted, dormant for 30 days" is the
 	// audience an insight points at, so it has to compile to one segment.
 	node := segmentNode{Combinator: "and", Rules: []segmentNode{
@@ -82,17 +84,22 @@ func TestCompileBehaviouralSegment(t *testing.T) {
 	for _, expected := range []string{
 		"count(DISTINCT segment_entity.session_id)",
 		"count(*) FILTER(WHERE segment_entity.is_conversion)",
-		"segment_entity.entity_id=e.entity_id",
-		"segment_entity.environment=e.environment",
-		">= $2",
-		"= $3",
+		// A semi-join against one grouped subquery, not a per-row aggregate.
+		"e.entity_id IN (SELECT segment_entity.entity_id",
+		"GROUP BY segment_entity.entity_id HAVING",
 		">= $4",
+		"= $7",
+		">= $10",
 	} {
+		if strings.Contains(sql, "segment_entity.entity_id=e.entity_id") {
+			t.Fatalf("compiled SQL %q correlates the aggregate to the outer row", sql)
+		}
 		if !strings.Contains(sql, expected) {
 			t.Fatalf("compiled SQL %q does not contain %q", sql, expected)
 		}
 	}
-	if len(args) != 4 {
+	// Each rule binds its own site, environment and value.
+	if len(args) != 10 {
 		t.Fatalf("args = %d, want 4", len(args))
 	}
 }
@@ -100,7 +107,7 @@ func TestCompileBehaviouralSegment(t *testing.T) {
 func TestBehaviouralSegmentRejectsBadInput(t *testing.T) {
 	t.Parallel()
 
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := scopedResolver()
 	for name, node := range map[string]segmentNode{
 		"text operator": {Field: "entity.sessions", Operator: "contains", Value: "3"},
 		"text value":    {Field: "entity.sessions", Operator: ">=", Value: "many"},
@@ -114,17 +121,31 @@ func TestBehaviouralSegmentRejectsBadInput(t *testing.T) {
 	}
 }
 
+// scopedResolver is what a request builds. Behavioural aggregates are scoped by
+// site and environment, so a resolver without them cannot compile one.
+func scopedResolver() dimensionResolver {
+	return dimensionResolver{custom: map[string]customDimension{}, siteID: uuid.MustParse("11111111-1111-1111-1111-111111111111"), environment: "prd"}
+}
+
 func TestBehaviouralSegmentCountsMissingHistoryAsZero(t *testing.T) {
 	t.Parallel()
 
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := scopedResolver()
 	args := []any{"site"}
 	sql, err := compileSegment(segmentNode{Field: "entity.conversions", Operator: "=", Value: 0.0}, resolver, "e", &args, 0)
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}
-	if !strings.HasPrefix(sql, "coalesce(") {
+	// A person with no matching events still forms a group, and the filtered
+	// aggregate is zero for them, so "never converted" keeps selecting them.
+	if !strings.Contains(sql, "HAVING coalesce(") {
 		t.Fatalf("compiled SQL %q must treat a missing aggregate as zero", sql)
+	}
+	if !strings.Contains(sql, "e.entity_id IN (SELECT") {
+		t.Fatalf("compiled SQL %q must be a semi-join, not a per-row aggregate", sql)
+	}
+	if strings.Contains(sql, "segment_entity.entity_id=e.entity_id") {
+		t.Fatalf("compiled SQL %q still correlates the aggregate to the outer row", sql)
 	}
 }
 
@@ -213,7 +234,7 @@ func TestGoalPeriodEndCoversEveryPeriod(t *testing.T) {
 func TestCompileFrictionSegment(t *testing.T) {
 	t.Parallel()
 
-	resolver := dimensionResolver{custom: map[string]customDimension{}}
+	resolver := scopedResolver()
 	node := segmentNode{Combinator: "and", Rules: []segmentNode{
 		{Field: "entity.frustration_sessions", Operator: ">=", Value: 2.0},
 		{Field: "entity.conversions", Operator: "=", Value: 0.0},
@@ -232,14 +253,16 @@ func TestCompileFrictionSegment(t *testing.T) {
 		"segment_entity.event_name='search_no_result'",
 		"segment_entity.properties->>'result_count'='0'",
 		"count(*) FILTER(WHERE segment_entity.event_name='search_click')",
+		"e.entity_id IN (SELECT segment_entity.entity_id",
 	} {
 		if !strings.Contains(sql, expected) {
 			t.Fatalf("compiled SQL %q does not contain %q", sql, expected)
 		}
 	}
-	// The signal list is fixed, so no rule value may reach the SQL text.
-	if strings.Contains(sql, "$6") || len(args) != 5 {
-		t.Fatalf("expected exactly four bound values, got %d: %v", len(args)-1, args)
+	// The signal list is fixed, so no rule value may reach the SQL text. Each of
+	// the four rules binds a site, an environment and its value.
+	if strings.Contains(sql, "$14") || len(args) != 13 {
+		t.Fatalf("expected four rules bound as twelve values, got %d: %v", len(args)-1, args)
 	}
 
 	// A friction field still refuses a non-numeric comparison, the same as every
