@@ -8,6 +8,22 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The analytical reports build SQL by hand, so the suite runs them against a real
+    # PostgreSQL instance. A syntax or type error there is invisible to unit tests.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: momento
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d momento"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      MOMENTO_TEST_POSTGRES_DSN: postgres://postgres:ci@127.0.0.1:5432/momento?sslmode=disable
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v7

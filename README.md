@@ -94,6 +94,13 @@ analytics.track("feature_use", {
 
 ## 개발
 
+통합 테스트는 실제 PostgreSQL을 사용합니다. `MOMENTO_TEST_POSTGRES_DSN`을 설정하면 실행되고, 없으면 건너뜁니다.
+
+```bash
+docker run -d --name momento-test -e POSTGRES_PASSWORD=test -e POSTGRES_DB=momento -p 5432:5432 postgres:17-alpine
+export MOMENTO_TEST_POSTGRES_DSN='postgres://postgres:test@127.0.0.1:5432/momento?sslmode=disable'
+```
+
 ```bash
 go test ./... && go vet ./...
 cd sdk && npm install && npm run typecheck && npm run build

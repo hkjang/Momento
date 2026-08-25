@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.21.1
+
+- Fixed anomaly detection, which had been failing since v0.11: the daily error series aliased a column as `day`, a keyword PostgreSQL rejects in that position, so the endpoint answered 500 and the `anomaly` scheduled report failed every run. The v0.14 rollup change avoided the same mistake for the other four metrics but still reached this query for errors.
+- Added an integration suite that runs the analytical endpoints against a real PostgreSQL instance: visitor insights, anomalies, all six attribution models in both scopes, cohort and experience comparison, visitor trace and search, funnel comparison, diagnostics, goals and sixteen reports. It asserts the reports actually compute rather than only that the SQL parses.
+- Added a PostgreSQL service to CI so hand-written SQL is executed on every push. The suite skips when `MOMENTO_TEST_POSTGRES_DSN` is unset, so local unit runs are unchanged.
+
 ## v0.21.0
 
 - Replaced the delivery channel headers JSON field with name and value rows, finishing what the scheduled report form started: a channel usually needs one credential, and asking for a JSON document turned a two field task into a syntax exercise.

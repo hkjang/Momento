@@ -309,7 +309,7 @@ func (rep Reporter) dailySeriesFromRollups(ctx context.Context, siteID uuid.UUID
 // dailyErrorSeries counts error events per day. Errors are not in the rollups, but
 // the event name index keeps this read narrow.
 func (rep Reporter) dailyErrorSeries(ctx context.Context, siteID uuid.UUID, environment string, location *time.Location, from, to time.Time) ([]AnomalyPoint, error) {
-	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date day,count(*)
+	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date AS bucket_date,count(*)
 		FROM raw_events
 		WHERE site_id=$1 AND environment=$2 AND event_name = ANY($6) AND event_timestamp >= $3 AND event_timestamp < $4
 		GROUP BY 1 ORDER BY 1`, siteID, environment, from, to, location.String(), []string{"error", "resource_error"})
@@ -334,7 +334,7 @@ func (rep Reporter) dailyErrorSeries(ctx context.Context, siteID uuid.UUID, envi
 func (rep Reporter) dailySeriesFromEvents(ctx context.Context, siteID uuid.UUID, environment string, location *time.Location, from, to time.Time) (map[string][]AnomalyPoint, error) {
 	series := map[string][]AnomalyPoint{}
 	zone := location.String()
-	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date day,
+	rows, err := rep.DB.Query(ctx, `SELECT (event_timestamp AT TIME ZONE $5)::date AS bucket_date,
 			count(DISTINCT entity_id) users,
 			count(DISTINCT session_id) sessions,
 			count(*) events,
