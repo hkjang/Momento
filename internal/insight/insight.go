@@ -765,8 +765,11 @@ func ratio(numerator, denominator float64) float64 {
 }
 
 func (rep Reporter) insightLifecycle(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]LifecycleRow, error) {
+	// The first-seen scan stops at the end of the period: a row after it cannot
+	// move anybody's first event into the window, and reading the rest made this
+	// grow with the site's whole history instead of with the period.
 	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (
-		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 GROUP BY 1
+		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3 GROUP BY 1
 	), period AS (
 		SELECT entity_id,session_id,is_conversion FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
 	)
@@ -853,12 +856,17 @@ func (rep Reporter) insightLandingPages(ctx context.Context, siteID uuid.UUID, e
 // insightVisitorBuckets returns visit frequency and recency distributions plus the
 // counts behind the actionable audiences, in a single pass over the period.
 func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]BucketRow, []BucketRow, map[string]int64, error) {
+	// first_at used to be read with a scalar subquery inside per_user, which ran
+	// once per person against an unbounded scan of the site. Grouping first and
+	// joining once is the same answer in one pass.
 	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (
-		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 GROUP BY 1
+		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3 GROUP BY 1
+	), active AS (
+		SELECT entity_id,count(DISTINCT session_id) sessions,max(event_timestamp) last_at,bool_or(is_conversion) converted
+		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id
 	), per_user AS (
-		SELECT p.entity_id,count(DISTINCT p.session_id) sessions,max(p.event_timestamp) last_at,bool_or(p.is_conversion) converted,
-			(SELECT first_at FROM first_seen f WHERE f.entity_id=p.entity_id) first_at
-		FROM analytics_events p WHERE p.site_id=$1 AND p.environment=$4 AND p.event_timestamp >= $2 AND p.event_timestamp < $3 GROUP BY p.entity_id
+		SELECT a.entity_id,a.sessions,a.last_at,a.converted,f.first_at
+		FROM active a LEFT JOIN first_seen f ON f.entity_id=a.entity_id
 	)
 	SELECT 'frequency',CASE WHEN sessions<=1 THEN '1' WHEN sessions<=3 THEN '2-3' WHEN sessions<=9 THEN '4-9' ELSE '10+' END,
 		count(*),count(*) FILTER(WHERE converted) FROM per_user GROUP BY 2

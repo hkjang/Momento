@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
+	"github.com/hkjang/Momento/internal/insight"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -129,10 +130,16 @@ type metricSet struct {
 }
 
 func (s *Server) metrics(r *http.Request, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
+	return s.metricsContext(r.Context(), siteID, environment, from, to)
+}
+
+func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
 	var m metricSet
-	err := s.DB.QueryRow(r.Context(), `WITH
+	err := s.DB.QueryRow(ctx, `WITH
 		cfg AS (SELECT engagement_threshold_seconds threshold FROM sites WHERE id=$1),
-		period AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
+		-- Only the columns the aggregates read. Selecting every column made the
+		-- planner carry both jsonb blobs through a two million row materialisation.
+		period AS (SELECT entity_id entity,session_id,event_name,is_conversion,event_timestamp,properties FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
 		sess AS (
 			SELECT session_id,min(event_timestamp) mn,max(event_timestamp) mx,
 				count(*) FILTER(WHERE event_name='page_view') page_views,
@@ -140,14 +147,22 @@ func (s *Server) metrics(r *http.Request, siteID uuid.UUID, environment string, 
 				coalesce(sum(CASE WHEN event_name='user_engagement' AND coalesce(properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$' THEN least((properties->>'active_seconds')::numeric*1000,3600000) ELSE 0 END),0) active_ms
 			FROM period GROUP BY session_id
 		),
-		first_seen AS (
-			SELECT entity_id entity,min(event_timestamp) first_at
-			FROM analytics_events
-			WHERE site_id=$1 AND environment=$4 GROUP BY entity_id
+		-- New people are those whose first ever event falls inside the period.
+		-- That needs history, but only history before the period ends: rows at or
+		-- after it cannot move anybody's first event into the window. Reading the
+		-- whole table instead made this the dominant cost of the landing screen,
+		-- and the previous-period comparison paid it a second time.
+		new_users AS (
+			SELECT count(*) value FROM (
+				SELECT entity_id
+				FROM analytics_events
+				WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3
+				GROUP BY entity_id HAVING min(event_timestamp) >= $2
+			) firsts
 		)
 		SELECT
 			count(DISTINCT p.entity),
-			(SELECT count(*) FROM first_seen WHERE first_at >= $2 AND first_at < $3),
+			(SELECT value FROM new_users),
 			count(DISTINCT p.session_id),
 			count(*) FILTER(WHERE p.event_name='page_view'),
 			count(*),
@@ -177,21 +192,48 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
-	current, err := s.metrics(r, siteID, environment, from, to)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
 	timezone, location, err := s.siteTimezone(r.Context(), siteID)
 	if err != nil {
 		writeError(w, 500, "INVALID_TIMEZONE", err.Error())
 		return
 	}
 	previousFrom, previousTo := previousDateRange(from, to, location)
-	previous, _ := s.metrics(r, siteID, environment, previousFrom, previousTo)
+	// The period, the comparison period and the trend are independent reads. Run
+	// one after another the landing screen waits for the sum of all three.
+	var current, previous metricSet
+	var trend []map[string]any
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
+	err = insight.RunParallel(ctx, insight.QueryConcurrency,
+		func(stepCtx context.Context) error {
+			var stepErr error
+			current, stepErr = s.metricsContext(stepCtx, siteID, environment, from, to)
+			return stepErr
+		},
+		func(stepCtx context.Context) error {
+			// A missing comparison period is not a failure: a new site has none.
+			previous, _ = s.metricsContext(stepCtx, siteID, environment, previousFrom, previousTo)
+			return nil
+		},
+		func(stepCtx context.Context) error {
+			var stepErr error
+			trend, stepErr = s.overviewTrend(stepCtx, siteID, environment, timezone, from, to, location)
+			return stepErr
+		})
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"from": from, "to": to, "timezone": timezone, "environment": environment, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
+}
+
+// overviewTrend reads the daily series, from the rollups when the range lines up
+// with local dates and from the events when it does not.
+func (s *Server) overviewTrend(ctx context.Context, siteID uuid.UUID, environment, timezone string, from, to time.Time, location *time.Location) ([]map[string]any, error) {
 	var rows pgx.Rows
+	var err error
 	if dateFrom, dateTo, daily := localDateBucketRange(from, to, location); daily {
-		rows, err = s.DB.Query(r.Context(), `WITH visitor_counts AS (
+		rows, err = s.DB.Query(ctx, `WITH visitor_counts AS (
 			SELECT d.event_date,count(DISTINCT coalesce('u:'||i.user_id,'v:'||d.visitor_id)) users
 			FROM daily_site_visitors d LEFT JOIN visitor_identities i ON i.site_id=d.site_id AND i.visitor_id=d.visitor_id
 			WHERE d.site_id=$1 AND d.environment=$4 AND d.event_date >= $2::date AND d.event_date < $3::date GROUP BY d.event_date
@@ -203,11 +245,10 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		FROM daily_site_metrics m LEFT JOIN visitor_counts v USING(event_date) LEFT JOIN session_counts ss USING(event_date)
 		WHERE m.site_id=$1 AND m.environment=$4 AND m.event_date >= $2::date AND m.event_date < $3::date ORDER BY m.event_date`, siteID, dateFrom, dateTo, environment)
 	} else {
-		rows, err = s.DB.Query(r.Context(), `SELECT to_char(event_timestamp AT TIME ZONE $4,'YYYY-MM-DD') AS bucket,count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$5 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to, timezone, environment)
+		rows, err = s.DB.Query(ctx, `SELECT to_char(event_timestamp AT TIME ZONE $4,'YYYY-MM-DD') AS bucket,count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE event_name='page_view'),count(*),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$5 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 1`, siteID, from, to, timezone, environment)
 	}
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	trend := []map[string]any{}
@@ -218,7 +259,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 			trend = append(trend, map[string]any{"date": day, "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
 		}
 	}
-	writeJSON(w, 200, map[string]any{"from": from, "to": to, "timezone": timezone, "environment": environment, "current": metricMap(current), "previous": metricMap(previous), "trend": trend})
+	return trend, rows.Err()
 }
 
 func rowsToList(rows pgx.Rows, scan func() (map[string]any, error)) []map[string]any {

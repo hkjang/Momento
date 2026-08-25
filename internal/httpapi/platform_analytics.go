@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
+	"github.com/hkjang/Momento/internal/insight"
 )
 
 type journeyStep struct {
@@ -374,39 +376,72 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
-	vitalRows, err := s.DB.Query(r.Context(), `SELECT coalesce(properties->>'metric','unknown'),coalesce(page_url,'(unknown)'),count(*),avg((properties->>'value')::numeric)::double precision,percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric)::double precision,count(*) FILTER(WHERE properties->>'rating'='good')
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name='web_vital' AND coalesce(properties->>'value','') ~ '^[0-9]+(\.[0-9]+)?$' GROUP BY 1,2 ORDER BY 1,5 DESC LIMIT 200`, siteID, from, to, environment)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	vitals := rowsToList(vitalRows, func() (map[string]any, error) {
-		var metric, page string
-		var samples, good int64
-		var average, p75 float64
-		err := vitalRows.Scan(&metric, &page, &samples, &average, &p75, &good)
-		goodRate := float64(0)
-		if samples > 0 {
-			goodRate = float64(good) * 100 / float64(samples)
-		}
-		return map[string]any{"metric": metric, "page": page, "samples": samples, "average": average, "p75": p75, "good_rate": goodRate}, err
-	})
-	errorRows, err := s.DB.Query(r.Context(), `SELECT event_name,coalesce(properties->>'message',properties->>'resource','(unknown)'),coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id),max(event_timestamp)
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 100`, siteID, from, to, environment, []string{"error", "resource_error"})
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	errorsOut := rowsToList(errorRows, func() (map[string]any, error) {
-		var eventName, message, page string
-		var count, users int64
-		var lastSeen time.Time
-		err := errorRows.Scan(&eventName, &message, &page, &count, &users, &lastSeen)
-		return map[string]any{"event": eventName, "message": message, "page": page, "count": count, "affected_users": users, "last_seen": lastSeen}, err
-	})
+	// Four independent reads over the same window. Serially they were most of the
+	// endpoint's cost before a single segment was compared.
+	baseCtx, cancelBase := s.analyticalContext(r)
+	defer cancelBase()
+	var vitals, errorsOut, releases []map[string]any
 	var allUsers, errorUsers, conversionsWithError, conversionsWithoutError int64
-	_ = s.DB.QueryRow(r.Context(), `WITH entity AS (SELECT entity_id,bool_or(event_name=ANY($5)) has_error,bool_or(is_conversion) converted FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id)
-		SELECT count(*),count(*) FILTER(WHERE has_error),count(*) FILTER(WHERE has_error AND converted),count(*) FILTER(WHERE NOT has_error AND converted) FROM entity`, siteID, from, to, environment, []string{"error", "resource_error"}).Scan(&allUsers, &errorUsers, &conversionsWithError, &conversionsWithoutError)
+	errorEvents := []string{"error", "resource_error"}
+	if err := insight.RunParallel(baseCtx, insight.QueryConcurrency,
+		func(ctx context.Context) error {
+			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'metric','unknown'),coalesce(page_url,'(unknown)'),count(*),avg((properties->>'value')::numeric)::double precision,percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric)::double precision,count(*) FILTER(WHERE properties->>'rating'='good')
+				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name='web_vital' AND coalesce(properties->>'value','') ~ '^[0-9]+(\.[0-9]+)?$' GROUP BY 1,2 ORDER BY 1,5 DESC LIMIT 200`, siteID, from, to, environment)
+			if err != nil {
+				return err
+			}
+			vitals = rowsToList(rows, func() (map[string]any, error) {
+				var metric, page string
+				var samples, good int64
+				var average, p75 float64
+				err := rows.Scan(&metric, &page, &samples, &average, &p75, &good)
+				goodRate := float64(0)
+				if samples > 0 {
+					goodRate = float64(good) * 100 / float64(samples)
+				}
+				return map[string]any{"metric": metric, "page": page, "samples": samples, "average": average, "p75": p75, "good_rate": goodRate}, err
+			})
+			return nil
+		},
+		func(ctx context.Context) error {
+			rows, err := s.DB.Query(ctx, `SELECT event_name,coalesce(properties->>'message',properties->>'resource','(unknown)'),coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id),max(event_timestamp)
+				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY 1,2,3 ORDER BY 4 DESC LIMIT 100`, siteID, from, to, environment, errorEvents)
+			if err != nil {
+				return err
+			}
+			errorsOut = rowsToList(rows, func() (map[string]any, error) {
+				var eventName, message, page string
+				var count, users int64
+				var lastSeen time.Time
+				err := rows.Scan(&eventName, &message, &page, &count, &users, &lastSeen)
+				return map[string]any{"event": eventName, "message": message, "page": page, "count": count, "affected_users": users, "last_seen": lastSeen}, err
+			})
+			return nil
+		},
+		func(ctx context.Context) error {
+			return s.DB.QueryRow(ctx, `WITH entity AS (SELECT entity_id,bool_or(event_name=ANY($5)) has_error,bool_or(is_conversion) converted FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id)
+				SELECT count(*),count(*) FILTER(WHERE has_error),count(*) FILTER(WHERE has_error AND converted),count(*) FILTER(WHERE NOT has_error AND converted) FROM entity`, siteID, from, to, environment, errorEvents).
+				Scan(&allUsers, &errorUsers, &conversionsWithError, &conversionsWithoutError)
+		},
+		func(ctx context.Context) error {
+			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'release_version',properties->>'app_version','(not set)'),count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE event_name=ANY($5)),100.0*count(DISTINCT entity_id) FILTER(WHERE is_conversion)/nullif(count(DISTINCT entity_id),0),max(event_timestamp)
+				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 6 DESC LIMIT 50`, siteID, from, to, environment, errorEvents)
+			if err != nil {
+				return err
+			}
+			releases = rowsToList(rows, func() (map[string]any, error) {
+				var release string
+				var events, users, errors int64
+				var conversionRate float64
+				var lastSeen time.Time
+				err := rows.Scan(&release, &events, &users, &errors, &conversionRate, &lastSeen)
+				return map[string]any{"release": release, "events": events, "users": users, "errors": errors, "user_conversion_rate": conversionRate, "last_seen": lastSeen}, err
+			})
+			return nil
+		}); err != nil {
+		writeQueryError(w, err)
+		return
+	}
 	errorRate, cleanRate := float64(0), float64(0)
 	if errorUsers > 0 {
 		errorRate = float64(conversionsWithError) * 100 / float64(errorUsers)
@@ -417,21 +452,6 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 	conversionDelta := float64(0)
 	if errorUsers > 0 && allUsers-errorUsers > 0 {
 		conversionDelta = errorRate - cleanRate
-	}
-	releaseRows, _ := s.DB.Query(r.Context(), `SELECT coalesce(properties->>'release_version',properties->>'app_version','(not set)'),count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE event_name=ANY($5)),100.0*count(DISTINCT entity_id) FILTER(WHERE is_conversion)/nullif(count(DISTINCT entity_id),0),max(event_timestamp)
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 6 DESC LIMIT 50`, siteID, from, to, environment, []string{"error", "resource_error"})
-	releases := []map[string]any{}
-	if releaseRows != nil {
-		defer releaseRows.Close()
-		for releaseRows.Next() {
-			var release string
-			var events, users, errors int64
-			var conversionRate float64
-			var lastSeen time.Time
-			if releaseRows.Scan(&release, &events, &users, &errors, &conversionRate, &lastSeen) == nil {
-				releases = append(releases, map[string]any{"release": release, "events": events, "users": users, "errors": errors, "user_conversion_rate": conversionRate, "last_seen": lastSeen})
-			}
-		}
 	}
 	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases, "impact": map[string]any{"users": allUsers, "error_users": errorUsers, "error_user_conversion_rate": errorRate, "clean_user_conversion_rate": cleanRate, "conversion_rate_delta": conversionDelta}}
 	// Optional cohort comparison: the same measurements per segment, so a site wide
@@ -454,27 +474,50 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			writeQueryError(w, resolverErr)
 			return
 		}
-		baseline, cohortErr := s.runExperienceCohort(ctx, siteID, environment, from, to, resolver, nil)
-		if cohortErr != nil {
-			writeQueryError(w, cohortErr)
-			return
-		}
-		baseline.Key, baseline.Label = "baseline", "전체"
-		cohorts := []experienceCohort{}
-		for _, id := range compare {
+		// The definitions are read first because an unknown segment is a request
+		// error, not a query failure, and the two answer differently.
+		definitions := make([]segmentNode, len(compare))
+		names := make([]string, len(compare))
+		for index, id := range compare {
 			definition, segmentErr := s.loadSegment(ctx, siteID, id)
 			if segmentErr != nil {
 				writeError(w, 400, "INVALID_SEGMENT", segmentErr.Error())
 				return
 			}
-			name, _ := s.segmentName(ctx, siteID, id)
-			cohort, err := s.runExperienceCohort(ctx, siteID, environment, from, to, resolver, &definition)
-			if err != nil {
-				writeQueryError(w, err)
-				return
-			}
-			cohort.Key, cohort.Label = id, name
-			cohorts = append(cohorts, cohort)
+			definitions[index] = definition
+			names[index], _ = s.segmentName(ctx, siteID, id)
+		}
+		// The baseline and each cohort are the same measurements over different
+		// people, so they are independent reads. Serially, three segments made this
+		// the slowest endpoint in the product.
+		var baseline experienceCohort
+		cohorts := make([]experienceCohort, len(compare))
+		steps := []func(context.Context) error{
+			func(stepCtx context.Context) error {
+				cohort, err := s.runExperienceCohort(stepCtx, siteID, environment, from, to, resolver, nil)
+				if err != nil {
+					return err
+				}
+				cohort.Key, cohort.Label = "baseline", "전체"
+				baseline = cohort
+				return nil
+			},
+		}
+		for index := range compare {
+			index := index
+			steps = append(steps, func(stepCtx context.Context) error {
+				cohort, err := s.runExperienceCohort(stepCtx, siteID, environment, from, to, resolver, &definitions[index])
+				if err != nil {
+					return err
+				}
+				cohort.Key, cohort.Label = compare[index], names[index]
+				cohorts[index] = cohort
+				return nil
+			})
+		}
+		if err := insight.RunParallel(ctx, insight.QueryConcurrency, steps...); err != nil {
+			writeQueryError(w, err)
+			return
 		}
 		response["cohorts"] = append([]experienceCohort{baseline}, cohorts...)
 		response["gaps"] = compareExperience(baseline, cohorts)

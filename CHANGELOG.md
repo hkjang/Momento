@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.24.2
+
+- Added a load harness that seeds two million events and times every analytical endpoint through the real router, failing any report that exceeds a 15 second budget. Correctness tests run against a few hundred rows, where a query that scans the site per person still finishes; this answers the question they cannot.
+- Visitor insights was returning a timeout instead of a report. Its visitor bucket query read each person's first-ever activity with a scalar subquery evaluated once per person, against a scan of the site's entire history — the same shape that made behavioural segments unusable. Grouping once and joining is the same answer in one pass: the endpoint went from exceeding the 25 second deadline to 9.6 seconds.
+- Every first-seen scan now stops at the end of the period being measured. A row after it cannot move anybody's first event into the window, so reading the rest made these queries grow with the site's whole history rather than with the period.
+- The overview no longer waits for the sum of its three reads, and its period aggregate selects the columns it uses rather than every column including both jsonb blobs: 11.9 to 8.1 seconds.
+- The experience report runs its four base reads concurrently, and the baseline and per-segment cohorts concurrently rather than one after another: 17.7 to 10.8 seconds with a segment, 6.9 to 3.9 without.
+
 ## v0.24.1
 
 - Behavioural segments now run at scale. Every `entity.*` field compiled to an aggregate evaluated once per candidate row, and because `analytics_events.entity_id` is derived from a join with the identity table it cannot be indexed, so each evaluation scanned the site. On a two million event site a thirty day query did not finish inside a minute — past the analytical deadline, which means these segments returned a timeout rather than an answer on any site with real history. The same condition now compiles to a semi-join against one grouped subquery: 2.3 seconds on the same data, and an integration test runs both forms against the same rows to show they select the same people.
