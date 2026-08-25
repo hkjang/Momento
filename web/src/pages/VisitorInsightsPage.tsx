@@ -73,6 +73,7 @@ export default function VisitorInsightsPage() {
   const [toast, setToast] = useState("");
   const [model, setModel] = useState("last_non_direct");
   const [halfLife, setHalfLife] = useState(7);
+  const [scope, setScope] = useState<"site" | "workspace">("site");
   const q = useQuery({
     queryKey: ["visitor-insights", site?.site_id, environment, days],
     enabled: !!site,
@@ -88,11 +89,11 @@ export default function VisitorInsightsPage() {
       get<AnomalyReport>(`/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`),
   });
   const attribution = useQuery({
-    queryKey: ["attribution", site?.site_id, environment, days, model, halfLife],
+    queryKey: ["attribution", site?.site_id, environment, days, model, halfLife, scope],
     enabled: !!site,
     queryFn: () =>
       get<{ report: AttributionReport; models: AttributionModel[] }>(
-        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}`,
+        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}&scope=${scope}`,
       ),
   });
   const saveSegment = useMutation({
@@ -516,6 +517,17 @@ export default function VisitorInsightsPage() {
                   </MenuItem>
                 ))}
               </TextField>
+              <TextField
+                select
+                size="small"
+                label="배분 범위"
+                value={scope}
+                onChange={(event) => setScope(event.target.value as "site" | "workspace")}
+                sx={{ minWidth: 170 }}
+              >
+                <MenuItem value="site">이 서비스</MenuItem>
+                <MenuItem value="workspace">전사 서비스</MenuItem>
+              </TextField>
               {model === "time_decay" && (
                 <TextField
                   select
@@ -568,6 +580,44 @@ export default function VisitorInsightsPage() {
             )}
             <Chip size="small" variant="outlined" label={`Lookback ${attribution.data.report.lookback_days}일`} />
           </Stack>
+          {attribution.data.report.scope === "workspace" && (
+            <Box mt={2}>
+              <Alert severity={attribution.data.report.cross_site_credit > 0 ? "info" : "warning"} sx={{ mb: 1.5 }}>
+                {attribution.data.report.cross_site_credit > 0
+                  ? `다른 서비스의 방문이 ${formatCredit(attribution.data.report.cross_site_credit)}건의 전환에 기여했습니다.`
+                  : "다른 서비스에서 기여한 전환이 없습니다. 교차 서비스 배분은 SSO로 식별된 사용자에게만 적용됩니다."}
+              </Alert>
+              <DataTable
+                rows={(attribution.data.report.sites || []) as unknown as Record<string, unknown>[]}
+                exportFilename="momento-attribution-sites"
+                columns={[
+                  {
+                    key: "name",
+                    label: "기여 서비스",
+                    format: (v, row) => (
+                      <Stack direction="row" gap={0.7} alignItems="center">
+                        <Typography variant="body2">{String(v)}</Typography>
+                        {row.is_conversion_site ? <Chip size="small" label="전환 발생" /> : null}
+                      </Stack>
+                    ),
+                  },
+                  { key: "site_id", label: "Site ID" },
+                  {
+                    key: "credited_conversions",
+                    label: "배분 전환",
+                    align: "right",
+                    format: (v) => formatCredit(Number(v)),
+                  },
+                  {
+                    key: "credit_share_percent",
+                    label: "비중",
+                    align: "right",
+                    format: (v) => `${Number(v).toFixed(1)}%`,
+                  },
+                ]}
+              />
+            </Box>
+          )}
           <Box mt={2}>
             <DataTable
               rows={attribution.data.report.channels as unknown as Record<string, unknown>[]}

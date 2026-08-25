@@ -131,6 +131,12 @@
 - 달성·순항·판정 보류 Goal과 정상·데이터 부족 이상은 목록에서 제외해 목록 자체가 신호가 되도록 유지
 - 일별 Rollup 기반 이상 감지와 Metric Registry만 사용해 랜딩 화면 응답 시간 유지
 
+## v0.17 — implemented
+
+- 교차 서비스 전환 기여도: 같은 Workspace의 다른 서비스 방문도 Touchpoint로 인정하고 서비스별 배분을 제공
+- SSO로 식별된 사용자에게만 적용하고 익명 방문자는 서비스별 격리를 유지
+- 조회자가 접근할 수 있는 서비스로만 범위를 확장
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

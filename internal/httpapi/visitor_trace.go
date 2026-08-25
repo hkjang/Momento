@@ -664,6 +664,38 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"query": query, "environment": environment, "results": out})
 }
 
+// attributionTouchSites lists the services whose visits may earn credit. It reuses
+// the same access rule as the site list, so widening the scope never exposes a
+// service the reader cannot already open.
+func (s *Server) attributionTouchSites(ctx context.Context, r *http.Request, siteID uuid.UUID, scope string) ([]uuid.UUID, error) {
+	if scope != "workspace" {
+		return []uuid.UUID{siteID}, nil
+	}
+	p, _ := auth.FromContext(ctx)
+	rows, err := s.DB.Query(ctx, `SELECT s.id FROM sites s
+		WHERE s.active AND s.workspace_id=(SELECT workspace_id FROM sites WHERE id=$1)
+			AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`,
+		siteID, p.Role, p.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if rows.Scan(&id) == nil {
+			out = append(out, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		out = append(out, siteID)
+	}
+	return out, nil
+}
+
 // siteAnomalies evaluates the anomaly watch list for the last complete day.
 func (s *Server) siteAnomalies(w http.ResponseWriter, r *http.Request) {
 	preventCaching(w)
@@ -727,12 +759,25 @@ func (s *Server) channelAttribution(w http.ResponseWriter, r *http.Request) {
 	}
 	lookback, _ := strconv.Atoi(r.URL.Query().Get("lookback_days"))
 	halfLife, _ := strconv.Atoi(r.URL.Query().Get("half_life_days"))
+	scope := "site"
+	if r.URL.Query().Get("scope") == "workspace" {
+		scope = "workspace"
+	}
 	ctx, cancel := s.analyticalContext(r)
 	defer cancel()
-	report, err := insight.New(s.DB).Attribution(ctx, siteID, requestEnvironment(r), from, to, lookback, model, halfLife)
+	// Workspace scope only widens to sibling services this reader may already see.
+	touchSites, err := s.attributionTouchSites(ctx, r, siteID, scope)
 	if err != nil {
 		writeQueryError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"report": report, "models": insight.AttributionModels()})
+	report, err := insight.New(s.DB).Attribution(ctx, insight.AttributionQuery{
+		SiteID: siteID, TouchSites: touchSites, Environment: requestEnvironment(r),
+		From: from, To: to, LookbackDays: lookback, Model: model, HalfLifeDays: halfLife, Scope: scope,
+	})
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"report": report, "models": insight.AttributionModels(), "touch_sites": len(touchSites)})
 }

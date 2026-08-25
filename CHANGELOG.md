@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.17.0
+
+- Added cross-service conversion credit: with the workspace scope, a visit on a sibling service in the same workspace can earn credit for a conversion on this one, which is how a notice on one internal system leads to a submission on another.
+- Reported credit per originating service alongside the channel breakdown, marking the service where the conversion happened.
+- Restricted cross-service credit to people the identity graph knows, because an anonymous visitor is deliberately site scoped and matching them across services would be a guess.
+- Widened the scope only to services the reader can already open, using the same access rule as the site list.
+- Replaced the attribution parameter list with a query struct so the scope, lookback, model and half life travel together.
+
 ## v0.16.0
 
 - Added an attention band to the Overview landing screen that merges detected anomalies and metric goals forecast to miss into one severity-ranked list, each with its evidence, next action and a link to the detail screen.

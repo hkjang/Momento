@@ -151,11 +151,22 @@ export interface AttributionChannel {
   touch_share_percent: number;
 }
 
+export interface AttributionSite {
+  site_id: string;
+  name: string;
+  credited_conversions: number;
+  credit_share_percent: number;
+  is_conversion_site: boolean;
+}
+
 export interface AttributionReport {
   model: string;
   label: string;
   description: string;
   multi_touch: boolean;
+  scope: "site" | "workspace";
+  sites?: AttributionSite[];
+  cross_site_credit: number;
   lookback_days: number;
   half_life_days?: number;
   total_conversions: number;

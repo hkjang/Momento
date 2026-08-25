@@ -77,6 +77,28 @@ func AttributionOrder(model string) (string, bool) {
 	return expression, ok
 }
 
+// AttributionQuery is one attribution question. TouchSites decides whether a visit
+// on a sibling service can earn credit for a conversion on this one.
+type AttributionQuery struct {
+	SiteID       uuid.UUID
+	TouchSites   []uuid.UUID
+	Environment  string
+	From, To     time.Time
+	LookbackDays int
+	Model        string
+	HalfLifeDays int
+	Scope        string
+}
+
+// AttributionSite is the credit earned by visits that happened on one service.
+type AttributionSite struct {
+	SiteID              string  `json:"site_id"`
+	Name                string  `json:"name"`
+	CreditedConversions float64 `json:"credited_conversions"`
+	CreditSharePercent  float64 `json:"credit_share_percent"`
+	IsConversionSite    bool    `json:"is_conversion_site"`
+}
+
 // AttributionChannel is the credit given to one channel group.
 type AttributionChannel struct {
 	Channel              string  `json:"channel"`
@@ -105,6 +127,9 @@ type AttributionReport struct {
 	Unattributed     float64              `json:"unattributed_conversions"`
 	AveragePathTouch float64              `json:"average_path_touches"`
 	Channels         []AttributionChannel `json:"channels"`
+	Scope            string               `json:"scope"`
+	Sites            []AttributionSite    `json:"sites,omitempty"`
+	CrossSiteCredit  float64              `json:"cross_site_credit"`
 	Note             string               `json:"note"`
 }
 
@@ -115,11 +140,11 @@ const attributionPathCTE = `WITH conv AS (
 		WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4 AND is_conversion
 	), touch AS (
 		SELECT CASE WHEN coalesce(i.user_id,s.user_id) IS NOT NULL THEN 'u:'||coalesce(i.user_id,s.user_id) ELSE 'v:'||s.visitor_id END entity_id,
-			s.session_id,s.started_at,coalesce(s.source,'') source,coalesce(s.medium,'') medium
+			s.session_id,s.started_at,s.site_id,coalesce(s.source,'') source,coalesce(s.medium,'') medium
 		FROM sessions s LEFT JOIN visitor_identities i ON i.site_id=s.site_id AND i.visitor_id=s.visitor_id
-		WHERE s.site_id=$1 AND s.environment=$2 AND s.started_at >= $3 - make_interval(days=>$5) AND s.started_at < $4
+		WHERE s.site_id = ANY($6) AND s.environment=$2 AND s.started_at >= $3 - make_interval(days=>$5) AND s.started_at < $4
 	), path AS (
-		SELECT c.event_id,c.entity_id,t.source,t.medium,
+		SELECT c.event_id,c.entity_id,t.source,t.medium,t.site_id touch_site,
 			row_number() OVER (PARTITION BY c.event_id ORDER BY t.started_at,t.session_id) position,
 			count(*) OVER (PARTITION BY c.event_id) touches,
 			count(*) FILTER(WHERE t.source<>'' OR t.medium<>'') OVER (PARTITION BY c.event_id) non_direct_touches,
@@ -128,33 +153,49 @@ const attributionPathCTE = `WITH conv AS (
 		FROM conv c JOIN touch t ON t.entity_id=c.entity_id AND t.started_at <= c.converted_at AND t.started_at >= c.converted_at - make_interval(days=>$5)
 	)`
 
-// Attribution credits conversions in the period to channel groups.
-func (rep Reporter) Attribution(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time, lookbackDays int, model string, halfLifeDays int) (AttributionReport, error) {
-	if lookbackDays < 1 || lookbackDays > 180 {
-		lookbackDays = 30
+// Attribution credits conversions in the period to channel groups, and when the
+// scope spans a workspace, also to the service the visit happened on.
+//
+// Cross-service credit only works for people the identity graph knows: an anonymous
+// visitor is deliberately site scoped, so a visit on another service can only earn
+// credit once the same SSO user is identified on both.
+func (rep Reporter) Attribution(ctx context.Context, query AttributionQuery) (AttributionReport, error) {
+	if query.LookbackDays < 1 || query.LookbackDays > 180 {
+		query.LookbackDays = 30
 	}
-	if halfLifeDays < 1 || halfLifeDays > 90 {
-		halfLifeDays = defaultHalfLifeDays
+	if query.HalfLifeDays < 1 || query.HalfLifeDays > 90 {
+		query.HalfLifeDays = defaultHalfLifeDays
 	}
-	weight, ok := AttributionWeight(model, halfLifeDays)
+	if len(query.TouchSites) == 0 {
+		query.TouchSites = []uuid.UUID{query.SiteID}
+	}
+	if query.Scope == "" {
+		query.Scope = "site"
+	}
+	weight, ok := AttributionWeight(query.Model, query.HalfLifeDays)
 	if !ok {
-		return AttributionReport{}, fmt.Errorf("unsupported attribution model %q", model)
+		return AttributionReport{}, fmt.Errorf("unsupported attribution model %q", query.Model)
 	}
 	report := AttributionReport{
-		Model: model, LookbackDays: lookbackDays, Environment: environment, From: from, To: to,
+		Model: query.Model, LookbackDays: query.LookbackDays, Environment: query.Environment,
+		From: query.From, To: query.To, Scope: query.Scope,
 		Channels: []AttributionChannel{},
 		Note:     "Touchpoint는 세션 단위 유입 정보입니다. Lookback 안에 방문 기록이 없는 전환은 미배분으로 표시하고, 다중 터치 모델의 배분 전환은 소수로 나뉩니다.",
 	}
+	if query.Scope == "workspace" {
+		report.Note += " 교차 서비스 배분은 SSO로 식별된 사용자에게만 적용됩니다. 익명 방문자는 서비스별로 격리됩니다."
+	}
 	for _, item := range AttributionModels() {
-		if item.Key == model {
+		if item.Key == query.Model {
 			report.Label, report.Description, report.MultiTouch = item.Label, item.Description, item.MultiTouch
 		}
 	}
-	if model == "time_decay" {
-		report.HalfLifeDays = halfLifeDays
+	if query.Model == "time_decay" {
+		report.HalfLifeDays = query.HalfLifeDays
 	}
+	args := []any{query.SiteID, query.Environment, query.From, query.To, query.LookbackDays, query.TouchSites}
 	if err := rep.DB.QueryRow(ctx, `SELECT count(*) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4 AND is_conversion`,
-		siteID, environment, from, to).Scan(&report.TotalConversions); err != nil {
+		query.SiteID, query.Environment, query.From, query.To).Scan(&report.TotalConversions); err != nil {
 		return report, err
 	}
 	if report.TotalConversions == 0 {
@@ -162,34 +203,42 @@ func (rep Reporter) Attribution(ctx context.Context, siteID uuid.UUID, environme
 	}
 
 	credited := map[string]*AttributionChannel{}
-	entry := func(channel string) *AttributionChannel {
-		if existing, ok := credited[channel]; ok {
-			return existing
-		}
-		created := &AttributionChannel{Channel: channel}
-		credited[channel] = created
-		return created
-	}
+	sites := map[uuid.UUID]*AttributionSite{}
 	rows, err := rep.DB.Query(ctx, attributionPathCTE+`
-		SELECT source,medium,sum(weight),count(DISTINCT event_id) FILTER(WHERE weight>0),count(DISTINCT entity_id) FILTER(WHERE weight>0),count(DISTINCT event_id)
-		FROM (SELECT p.event_id,p.entity_id,p.source,p.medium,coalesce(`+weight+`,0) weight FROM path p) weighted
-		GROUP BY 1,2`, siteID, environment, from, to, lookbackDays)
+		SELECT source,medium,touch_site,sum(weight),count(DISTINCT event_id) FILTER(WHERE weight>0),count(DISTINCT entity_id) FILTER(WHERE weight>0),count(DISTINCT event_id)
+		FROM (SELECT p.event_id,p.entity_id,p.source,p.medium,p.touch_site,coalesce(`+weight+`,0) weight FROM path p) weighted
+		GROUP BY 1,2,3`, args...)
 	if err != nil {
 		return report, err
 	}
 	for rows.Next() {
 		var source, medium string
+		var touchSite uuid.UUID
 		var creditedConversions float64
 		var creditedEvents, creditedUsers, touchedConversions int64
-		if rows.Scan(&source, &medium, &creditedConversions, &creditedEvents, &creditedUsers, &touchedConversions) != nil {
+		if rows.Scan(&source, &medium, &touchSite, &creditedConversions, &creditedEvents, &creditedUsers, &touchedConversions) != nil {
 			continue
 		}
-		target := entry(ClassifyChannel(source, medium, false, false))
+		channel := ClassifyChannel(source, medium, false, false)
+		target, ok := credited[channel]
+		if !ok {
+			target = &AttributionChannel{Channel: channel}
+			credited[channel] = target
+		}
 		target.CreditedConversions += creditedConversions
 		target.CreditedUsers += creditedUsers
 		target.TouchedConversions += touchedConversions
 		target.AssistedConversions += touchedConversions
 		report.Attributed += creditedConversions
+		site, ok := sites[touchSite]
+		if !ok {
+			site = &AttributionSite{IsConversionSite: touchSite == query.SiteID}
+			sites[touchSite] = site
+		}
+		site.CreditedConversions += creditedConversions
+		if touchSite != query.SiteID {
+			report.CrossSiteCredit += creditedConversions
+		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -200,7 +249,7 @@ func (rep Reporter) Attribution(ctx context.Context, siteID uuid.UUID, environme
 	var averageTouches *float64
 	if err := rep.DB.QueryRow(ctx, attributionPathCTE+`
 		SELECT count(DISTINCT event_id),avg(touches) FROM (SELECT DISTINCT event_id,touches FROM path) distinct_paths`,
-		siteID, environment, from, to, lookbackDays).Scan(&attributedConversions, &averageTouches); err != nil {
+		args...).Scan(&attributedConversions, &averageTouches); err != nil {
 		return report, err
 	}
 	if averageTouches != nil {
@@ -210,13 +259,13 @@ func (rep Reporter) Attribution(ctx context.Context, siteID uuid.UUID, environme
 	if report.Unattributed < 0 {
 		report.Unattributed = 0
 	}
-	for _, item := range credited {
-		item.CreditSharePercent = ratio(item.CreditedConversions, report.Attributed) * 100
-		item.TouchSharePercent = percent(item.TouchedConversions, attributedConversions)
-		if float64(item.TouchedConversions) > item.CreditedConversions {
-			item.AssistOnlyConversion = item.TouchedConversions - int64(item.CreditedConversions)
+	for _, entry := range credited {
+		entry.CreditSharePercent = ratio(entry.CreditedConversions, report.Attributed) * 100
+		entry.TouchSharePercent = percent(entry.TouchedConversions, attributedConversions)
+		if float64(entry.TouchedConversions) > entry.CreditedConversions {
+			entry.AssistOnlyConversion = entry.TouchedConversions - int64(entry.CreditedConversions)
 		}
-		report.Channels = append(report.Channels, *item)
+		report.Channels = append(report.Channels, *entry)
 	}
 	sort.Slice(report.Channels, func(i, j int) bool {
 		if report.Channels[i].CreditedConversions == report.Channels[j].CreditedConversions {
@@ -224,5 +273,43 @@ func (rep Reporter) Attribution(ctx context.Context, siteID uuid.UUID, environme
 		}
 		return report.Channels[i].CreditedConversions > report.Channels[j].CreditedConversions
 	})
+	if query.Scope == "workspace" {
+		names, err := rep.siteNames(ctx, query.TouchSites)
+		if err != nil {
+			return report, err
+		}
+		for id, site := range sites {
+			site.SiteID = names[id].key
+			site.Name = names[id].name
+			site.CreditSharePercent = ratio(site.CreditedConversions, report.Attributed) * 100
+			report.Sites = append(report.Sites, *site)
+		}
+		sort.Slice(report.Sites, func(i, j int) bool {
+			if report.Sites[i].CreditedConversions == report.Sites[j].CreditedConversions {
+				return report.Sites[i].Name < report.Sites[j].Name
+			}
+			return report.Sites[i].CreditedConversions > report.Sites[j].CreditedConversions
+		})
+	}
 	return report, nil
+}
+
+type siteLabel struct{ key, name string }
+
+// siteNames resolves the public site key and name for the credited services.
+func (rep Reporter) siteNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]siteLabel, error) {
+	out := map[uuid.UUID]siteLabel{}
+	rows, err := rep.DB.Query(ctx, `SELECT id,site_key,name FROM sites WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var key, name string
+		if rows.Scan(&id, &key, &name) == nil {
+			out[id] = siteLabel{key: key, name: name}
+		}
+	}
+	return out, rows.Err()
 }

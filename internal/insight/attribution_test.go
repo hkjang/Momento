@@ -136,3 +136,25 @@ func TestPositionWeightsSumToOnePerConversion(t *testing.T) {
 		}
 	}
 }
+
+func TestPathSpansTheAllowedSitesOnly(t *testing.T) {
+	t.Parallel()
+
+	// The touch CTE must be parameterised by the allowed site list rather than
+	// pinned to the conversion site, otherwise workspace scope silently does nothing.
+	if !strings.Contains(attributionPathCTE, "s.site_id = ANY($6)") {
+		t.Fatalf("touch CTE does not scope by the allowed sites:\n%s", attributionPathCTE)
+	}
+	// Conversions always come from the site being asked about.
+	if !strings.Contains(attributionPathCTE, "WHERE site_id=$1 AND environment=$2") {
+		t.Fatal("conversions must stay scoped to the requested site")
+	}
+	// The originating service is carried through so credit can be split by service.
+	if !strings.Contains(attributionPathCTE, "t.site_id touch_site") {
+		t.Fatal("the touch site must be carried into the path")
+	}
+	// Cross-site matching relies on the SSO identity, never on a raw visitor id.
+	if !strings.Contains(attributionPathCTE, "'u:'||coalesce(i.user_id,s.user_id)") {
+		t.Fatal("the touch entity must use the canonical user identity")
+	}
+}

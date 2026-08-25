@@ -61,7 +61,7 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"name": "get_event_catalog", "description": "이벤트 계약의 소유자, 버전, 최근 사용량과 상태를 조회합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}}, "required": []string{"site_id"}}},
 			map[string]any{"name": "get_visitor_insights", "description": "방문자 인사이트를 한 번에 조회합니다: 전기간 대비 KPI, 신규·재방문, 채널 그룹, 진입 페이지, 방문 빈도·최근성, 기기, 실행 대상 Segment와 우선순위 인사이트.", "inputSchema": map[string]any{"type": "object", "properties": dateProperties, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "detect_anomalies", "description": "직전 완료된 하루를 같은 요일 최근 8주 중위수와 비교해 방문자·세션·이벤트·전환·오류의 이상을 감지합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}}, "required": []string{"site_id"}}},
-			map[string]any{"name": "analyze_attribution", "description": "전환을 채널 그룹에 배분합니다. 단일 터치(last_non_direct, first_touch, last_touch)와 다중 터치(linear, time_decay, position_based) 모델을 지원하고 lookback_days는 기본 30일입니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}, "model": map[string]any{"type": "string", "enum": []string{"last_non_direct", "first_touch", "last_touch", "linear", "time_decay", "position_based"}}, "lookback_days": map[string]any{"type": "integer", "default": 30}, "half_life_days": map[string]any{"type": "integer", "default": 7, "description": "time_decay 모델의 반감기"}, "from": map[string]string{"type": "string"}, "to": map[string]string{"type": "string"}}, "required": []string{"site_id", "from", "to"}}},
+			map[string]any{"name": "analyze_attribution", "description": "전환을 채널 그룹에 배분합니다. 단일 터치(last_non_direct, first_touch, last_touch)와 다중 터치(linear, time_decay, position_based) 모델을 지원하고 lookback_days는 기본 30일입니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]any{"type": "string", "default": "prd"}, "model": map[string]any{"type": "string", "enum": []string{"last_non_direct", "first_touch", "last_touch", "linear", "time_decay", "position_based"}}, "lookback_days": map[string]any{"type": "integer", "default": 30}, "half_life_days": map[string]any{"type": "integer", "default": 7, "description": "time_decay 모델의 반감기"}, "scope": map[string]any{"type": "string", "enum": []string{"site", "workspace"}, "default": "site", "description": "workspace는 같은 Workspace의 다른 서비스 방문에도 배분합니다. SSO 식별 사용자에게만 적용됩니다"}, "from": map[string]string{"type": "string"}, "to": map[string]string{"type": "string"}}, "required": []string{"site_id", "from", "to"}}},
 			map[string]any{"name": "ask_analytics", "description": "완전 오프라인 Semantic Parser로 한국어·영어 분석 질문에 답합니다.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"site_id": map[string]string{"type": "string"}, "environment": map[string]string{"type": "string"}, "question": map[string]string{"type": "string"}}, "required": []string{"site_id", "question"}}},
 		}
 		writeJSON(w, 200, rpcResult(req.ID, map[string]any{"tools": tools}))
@@ -146,7 +146,19 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		if value, ok := call.Arguments["half_life_days"].(float64); ok {
 			halfLife = int(value)
 		}
-		report, err := insight.New(s.DB).Attribution(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to, lookback, model, halfLife)
+		scope := "site"
+		if stringArg(call.Arguments, "scope") == "workspace" {
+			scope = "workspace"
+		}
+		touchSites, siteErr := s.attributionTouchSites(r.Context(), r, siteID, scope)
+		if siteErr != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(siteErr.Error(), true)))
+			return
+		}
+		report, err := insight.New(s.DB).Attribution(r.Context(), insight.AttributionQuery{
+			SiteID: siteID, TouchSites: touchSites, Environment: stringArgDefault(call.Arguments, "environment", "prd"),
+			From: from, To: to, LookbackDays: lookback, Model: model, HalfLifeDays: halfLife, Scope: scope,
+		})
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
