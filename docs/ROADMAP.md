@@ -149,6 +149,12 @@
 - 이상 감지와 방문자 인사이트 화면에서 정기 배달 설정으로 직접 이동하는 딥링크
 - 종류가 쓰지 않는 값은 정의에 넣지 않고, 필요할 때만 JSON 직접 입력으로 우회
 
+## v0.20 — implemented
+
+- 방문자 인사이트 보고서의 8개 독립 조회를 동시 실행 상한 4로 병렬화하고 파생 계산을 조회 이후로 분리
+- 첫 실패를 반환하며 남은 조회를 취소해 부분 보고서를 완성된 보고서로 제시하지 않음
+- 상위 context 취소를 성공으로 오인하지 않는 종료 처리
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

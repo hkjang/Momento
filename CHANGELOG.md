@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.20.0
+
+- Ran the eight independent reads behind the visitor insight report concurrently with a ceiling of four, so the page waits for the slowest few queries instead of the sum of all of them, while one request still cannot exhaust the twenty connection pool.
+- Moved the derived arithmetic out of the queries: channel and device shares are computed once every read has returned, rather than being threaded through a query that needed the visitor total.
+- Returned the first failure and cancelled the remaining reads, because a partial report presented as a complete one is worse than an error.
+- Treated an already cancelled request as cancelled rather than as an empty successful report.
+
 ## v0.19.0
 
 - Replaced the hand-written definition document in the scheduled report form with kind-aware inputs: choosing what to send now shows only the values that kind actually uses, and the definition is built from them.

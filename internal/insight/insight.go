@@ -565,40 +565,73 @@ func Headline(days int, users int64, change, newShare, engagement, conversion fl
 }
 
 func (rep Reporter) Build(ctx context.Context, siteID uuid.UUID, environment string, from, to, previousFrom, previousTo time.Time) (map[string]any, error) {
-	current, err := rep.periodMetrics(ctx, siteID, environment, from, to)
-	if err != nil {
-		return nil, err
-	}
-	previous, _ := rep.periodMetrics(ctx, siteID, environment, previousFrom, previousTo)
 	days := int(math.Round(to.Sub(from).Hours() / 24))
 	if days < 1 {
 		days = 1
 	}
 
-	lifecycle, err := rep.insightLifecycle(ctx, siteID, environment, from, to)
+	// Every read below is independent, so they run together under a small ceiling
+	// instead of making the page wait for the sum of all eight.
+	var (
+		current, previous  periodMetrics
+		lifecycle          []LifecycleRow
+		channelSources     []channelSource
+		landing            []LandingRow
+		frequency, recency []BucketRow
+		signals            map[string]int64
+		deviceRows         []DeviceRow
+		lapsed, returned   int64
+	)
+	err := runParallel(ctx, queryConcurrency,
+		func(ctx context.Context) error {
+			value, err := rep.periodMetrics(ctx, siteID, environment, from, to)
+			current = value
+			return err
+		},
+		func(ctx context.Context) error {
+			// The previous period is context, not the answer, so a gap in history
+			// must not fail the whole report.
+			previous, _ = rep.periodMetrics(ctx, siteID, environment, previousFrom, previousTo)
+			return nil
+		},
+		func(ctx context.Context) error {
+			value, err := rep.insightLifecycle(ctx, siteID, environment, from, to)
+			lifecycle = value
+			return err
+		},
+		func(ctx context.Context) error {
+			value, err := rep.insightChannelSources(ctx, siteID, environment, from, to, previousFrom)
+			channelSources = value
+			return err
+		},
+		func(ctx context.Context) error {
+			value, err := rep.insightLandingPages(ctx, siteID, environment, from, to)
+			landing = value
+			return err
+		},
+		func(ctx context.Context) error {
+			buckets, recent, counts, err := rep.insightVisitorBuckets(ctx, siteID, environment, from, to)
+			frequency, recency, signals = buckets, recent, counts
+			return err
+		},
+		func(ctx context.Context) error {
+			value, err := rep.insightDeviceRows(ctx, siteID, environment, from, to)
+			deviceRows = value
+			return err
+		},
+		func(ctx context.Context) error {
+			absent, back, err := rep.insightRetentionFlow(ctx, siteID, environment, from, to, previousFrom, previousTo)
+			lapsed, returned = absent, back
+			return err
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
-	channels, err := rep.insightChannels(ctx, siteID, environment, from, to, previousFrom, current.Users)
-	if err != nil {
-		return nil, err
-	}
-	landing, err := rep.insightLandingPages(ctx, siteID, environment, from, to)
-	if err != nil {
-		return nil, err
-	}
-	frequency, recency, signals, err := rep.insightVisitorBuckets(ctx, siteID, environment, from, to)
-	if err != nil {
-		return nil, err
-	}
-	devices, err := rep.insightDevices(ctx, siteID, environment, from, to, current.Users)
-	if err != nil {
-		return nil, err
-	}
-	lapsed, returned, err := rep.insightRetentionFlow(ctx, siteID, environment, from, to, previousFrom, previousTo)
-	if err != nil {
-		return nil, err
-	}
+	// Shares depend on the visitor total, so they are derived once every read is in
+	// rather than threaded through the queries.
+	channels := GroupChannels(channelSources, current.Users)
+	devices := withDeviceShare(deviceRows, current.Users)
 
 	newShare := current.newUserShare()
 	previousNewShare := previous.newUserShare()
@@ -764,7 +797,7 @@ func (rep Reporter) insightLifecycle(ctx context.Context, siteID uuid.UUID, envi
 	return out, rows.Err()
 }
 
-func (rep Reporter) insightChannels(ctx context.Context, siteID uuid.UUID, environment string, from, to, previousFrom time.Time, totalUsers int64) ([]ChannelRow, error) {
+func (rep Reporter) insightChannelSources(ctx context.Context, siteID uuid.UUID, environment string, from, to, previousFrom time.Time) ([]channelSource, error) {
 	rows, err := rep.DB.Query(ctx, `SELECT coalesce(source,''),coalesce(medium,''),coalesce(referrer,'')<>'',coalesce(network_name,'')<>'',
 		count(DISTINCT entity_id) FILTER(WHERE event_timestamp >= $2),
 		count(DISTINCT session_id) FILTER(WHERE event_timestamp >= $2),
@@ -785,10 +818,7 @@ func (rep Reporter) insightChannels(ctx context.Context, siteID uuid.UUID, envir
 		}
 		source = append(source, row)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return GroupChannels(source, totalUsers), nil
+	return source, rows.Err()
 }
 
 func (rep Reporter) insightLandingPages(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]LandingRow, error) {
@@ -877,7 +907,15 @@ func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID,
 	return finish(frequency, frequencyTotal), finish(recency, recencyTotal), signals, nil
 }
 
-func (rep Reporter) insightDevices(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time, totalUsers int64) ([]DeviceRow, error) {
+// withDeviceShare fills in each device's share of the visitor total.
+func withDeviceShare(rows []DeviceRow, totalUsers int64) []DeviceRow {
+	for index := range rows {
+		rows[index].SharePercent = percent(rows[index].Users, totalUsers)
+	}
+	return rows
+}
+
+func (rep Reporter) insightDeviceRows(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]DeviceRow, error) {
 	rows, err := rep.DB.Query(ctx, `SELECT coalesce(nullif(device_type,''),'unknown'),count(DISTINCT entity_id),count(DISTINCT session_id),count(DISTINCT entity_id) FILTER(WHERE is_conversion)
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
 		GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, from, to, environment)
@@ -893,7 +931,6 @@ func (rep Reporter) insightDevices(ctx context.Context, siteID uuid.UUID, enviro
 			continue
 		}
 		row.ConversionRate = percent(converted, row.Users)
-		row.SharePercent = percent(row.Users, totalUsers)
 		out = append(out, row)
 	}
 	return out, rows.Err()

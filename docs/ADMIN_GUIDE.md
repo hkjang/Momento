@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.19.0
+- **문서 버전**: v0.20.0
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -56,6 +56,8 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 ## 2.3 분석 쿼리 보호
 
 대화형 분석 조회(방문자 인사이트, 이상 감지, 기여도, 방문자 검색·추적, Funnel)는 **25초 제한** 아래에서 실행됩니다. 초과하면 연결을 붙잡아 두지 않고 `504 QUERY_TIMEOUT`으로 즉시 끝나며, 기간 축소·Segment 적용·Scheduled Report 사용을 안내합니다. 요청이 취소되면 데이터베이스 쿼리도 함께 취소됩니다.
+
+방문자 인사이트 보고서는 서로 독립적인 8개 조회를 **동시 실행 4개 상한**으로 병렬 수행합니다. 연결 풀(20)을 한 요청이 소진하지 않도록 상한을 두었고, 하나가 실패하면 나머지를 취소해 부분 결과를 완성된 보고서로 표시하지 않습니다.
 
 이상 감지 기준선은 일별 Rollup(`daily_site_metrics`, `daily_site_visitors`, `daily_site_sessions`)에서 계산합니다. 평가 대상 날짜의 Rollup이 아직 없으면 그때만 Raw Event를 읽습니다. 따라서 Aggregate가 밀려 있으면 이상 감지가 느려질 수 있으며, 관리 → Aggregate Manager에서 재집계 상태를 확인하십시오.
 
