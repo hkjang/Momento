@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/Momento/internal/insight"
 )
 
 // Retention answers whether people come back. A single pooled curve says "38% return
@@ -323,8 +324,39 @@ func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := s.analyticalContext(r)
 	defer cancel()
-	baselineGrid, err := s.runCohortGrid(ctx, siteID, params, resolver, nil)
-	if err != nil {
+	// The definitions are read before anything runs: an unknown segment is a
+	// request error, and it must not be reported as a query failure.
+	definitions := make([]segmentNode, len(compare))
+	names := make([]string, len(compare))
+	for index, id := range compare {
+		definition, err := s.loadSegment(ctx, siteID, id)
+		if err != nil {
+			writeError(w, 400, "INVALID_SEGMENT", err.Error())
+			return
+		}
+		definitions[index] = definition
+		names[index], _ = s.segmentName(ctx, siteID, id)
+	}
+	// The baseline grid and each segment's grid are the same measurement over
+	// different people, so they run together rather than one after another.
+	var baselineGrid []map[string]any
+	grids := make([][]map[string]any, len(compare))
+	steps := []func(context.Context) error{
+		func(stepCtx context.Context) error {
+			grid, err := s.runCohortGrid(stepCtx, siteID, params, resolver, nil)
+			baselineGrid = grid
+			return err
+		},
+	}
+	for index := range compare {
+		index := index
+		steps = append(steps, func(stepCtx context.Context) error {
+			grid, err := s.runCohortGrid(stepCtx, siteID, params, resolver, &definitions[index])
+			grids[index] = grid
+			return err
+		})
+	}
+	if err := insight.RunParallel(ctx, insight.QueryConcurrency, steps...); err != nil {
 		writeQueryError(w, err)
 		return
 	}
@@ -339,20 +371,9 @@ func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
 	baselineUsers, baselineCurve := pooledRetentionCurve(baselineGrid, periods, params.To, params.Granularity)
 	curves := []map[string]any{{"key": "baseline", "label": "전체", "cohort_users": baselineUsers, "periods": baselineCurve}}
 	segments := []map[string]any{}
-	for _, id := range compare {
-		definition, err := s.loadSegment(ctx, siteID, id)
-		if err != nil {
-			writeError(w, 400, "INVALID_SEGMENT", err.Error())
-			return
-		}
-		name, _ := s.segmentName(ctx, siteID, id)
-		grid, err := s.runCohortGrid(ctx, siteID, params, resolver, &definition)
-		if err != nil {
-			writeQueryError(w, err)
-			return
-		}
-		users, curve := pooledRetentionCurve(grid, periods, params.To, params.Granularity)
-		entry := map[string]any{"key": id, "label": name, "cohort_users": users, "periods": curve}
+	for index, id := range compare {
+		users, curve := pooledRetentionCurve(grids[index], periods, params.To, params.Granularity)
+		entry := map[string]any{"key": id, "label": names[index], "cohort_users": users, "periods": curve}
 		curves = append(curves, entry)
 		segments = append(segments, entry)
 	}

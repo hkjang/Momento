@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.24.3
+
+- The funnel and retention comparisons run their cohorts together rather than one after another. Comparing three segments used to mean four full evaluations in sequence; the funnel comparison went from 9.1 to 7.3 seconds at the median on a two million event site.
+- The load harness now reports the median of three runs with the fastest and slowest alongside it, and checks the budget against the median. A single timing is not evidence: the same probe varied by three seconds between runs on an idle machine, which was enough to make one endpoint look improved and another look regressed when neither had changed.
+- Removed the unused request parameter from the funnel evaluator, which never read it.
+
 ## v0.24.2
 
 - Added a load harness that seeds two million events and times every analytical endpoint through the real router, failing any report that exceeds a 15 second budget. Correctness tests run against a few hundred rows, where a query that scans the site per person still finishes; this answers the question they cannot.

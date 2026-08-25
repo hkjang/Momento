@@ -113,10 +113,19 @@ func seedLoad(t *testing.T, pool *pgxpool.Pool, f fixture) {
 	t.Logf("seeded %d events in %s", loadEventCount, time.Since(started).Round(time.Second))
 }
 
+// loadRepeats is how many times each endpoint is called. A single timing is not
+// evidence: the same probe varied by three seconds between runs on an otherwise
+// idle machine, which is enough to invent a regression or hide one. The median
+// is what the budget is checked against; the spread is printed so a noisy
+// measurement is visible rather than silently trusted.
+const loadRepeats = 3
+
 type loadResult struct {
-	name     string
-	duration time.Duration
-	status   int
+	name    string
+	median  time.Duration
+	fastest time.Duration
+	slowest time.Duration
+	status  int
 }
 
 func TestEndpointLatencyUnderLoad(t *testing.T) {
@@ -183,37 +192,51 @@ func TestEndpointLatencyUnderLoad(t *testing.T) {
 		if method == "" {
 			method = http.MethodGet
 		}
-		request := httptest.NewRequest(method, p.path, strings.NewReader(p.body))
-		request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
-		if p.body != "" {
-			request.Header.Set("Content-Type", "application/json")
+		timings := make([]time.Duration, 0, loadRepeats)
+		status := 0
+		for attempt := 0; attempt < loadRepeats; attempt++ {
+			request := httptest.NewRequest(method, p.path, strings.NewReader(p.body))
+			request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+			if p.body != "" {
+				request.Header.Set("Content-Type", "application/json")
+			}
+			recorder := httptest.NewRecorder()
+			started := time.Now()
+			f.server.Handler().ServeHTTP(recorder, request)
+			timings = append(timings, time.Since(started))
+			status = recorder.Code
+			if recorder.Code >= 400 {
+				t.Errorf("%s answered %d after %s: %s", p.name, recorder.Code, timings[attempt].Round(time.Millisecond), truncateBody(recorder.Body.String()))
+				break
+			}
 		}
-		recorder := httptest.NewRecorder()
-		started := time.Now()
-		f.server.Handler().ServeHTTP(recorder, request)
-		elapsed := time.Since(started)
-		results = append(results, loadResult{name: p.name, duration: elapsed, status: recorder.Code})
-		if recorder.Code >= 400 {
-			t.Errorf("%s answered %d after %s: %s", p.name, recorder.Code, elapsed.Round(time.Millisecond), truncateBody(recorder.Body.String()))
-		}
+		sort.Slice(timings, func(i, j int) bool { return timings[i] < timings[j] })
+		results = append(results, loadResult{
+			name:    p.name,
+			median:  timings[len(timings)/2],
+			fastest: timings[0],
+			slowest: timings[len(timings)-1],
+			status:  status,
+		})
 	}
 
-	sort.SliceStable(results, func(i, j int) bool { return results[i].duration > results[j].duration })
+	sort.SliceStable(results, func(i, j int) bool { return results[i].median > results[j].median })
 	var report strings.Builder
-	report.WriteString(fmt.Sprintf("\nendpoint latency over %d events (budget %s)\n", loadEventCount, loadBudget))
+	report.WriteString(fmt.Sprintf("\nendpoint latency over %d events, median of %d (budget %s)\n", loadEventCount, loadRepeats, loadBudget))
 	for _, result := range results {
 		flag := "  "
-		if result.duration > loadBudget {
+		if result.median > loadBudget {
 			flag = "!!"
 		}
-		report.WriteString(fmt.Sprintf("%s %-24s %8s  http %d\n", flag, result.name, result.duration.Round(time.Millisecond), result.status))
+		report.WriteString(fmt.Sprintf("%s %-24s %9s  [%s .. %s]  http %d\n", flag, result.name,
+			result.median.Round(time.Millisecond), result.fastest.Round(time.Millisecond), result.slowest.Round(time.Millisecond), result.status))
 	}
 	t.Log(report.String())
 
 	for _, result := range results {
-		if result.duration > loadBudget {
-			t.Errorf("%s took %s, over the %s budget: it has no headroom under the %s deadline",
-				result.name, result.duration.Round(time.Millisecond), loadBudget, analyticalTimeout)
+		if result.median > loadBudget {
+			t.Errorf("%s took %s at the median of %d runs, over the %s budget: it has no headroom under the %s deadline",
+				result.name, result.median.Round(time.Millisecond), loadRepeats, loadBudget, analyticalTimeout)
 		}
 	}
 }

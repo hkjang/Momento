@@ -828,19 +828,30 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 	// one deadline instead of multiplying the cost of a wide range.
 	ctx, cancel := s.analyticalContext(r)
 	defer cancel()
-	series := []map[string]any{}
-	var baseline []map[string]any
-	for _, cohort := range cohorts {
-		steps, err := s.runFunnel(ctx, r, siteID, in, resolver, cohort.Definition)
-		if err != nil {
-			writeQueryError(w, err)
-			return
-		}
-		if cohort.Key == "baseline" {
-			baseline = steps
-		}
-		series = append(series, map[string]any{"key": cohort.Key, "label": cohort.Label, "steps": steps, "entered": funnelEntered(steps), "completion_rate": funnelCompletion(steps)})
+	// Each cohort is the same funnel over different people, so they are
+	// independent reads. Results are written into a fixed slot rather than
+	// appended, because the comparison reads better with the baseline first and a
+	// stable column order.
+	series := make([]map[string]any, len(cohorts))
+	steps := make([][]map[string]any, len(cohorts))
+	parallelSteps := make([]func(context.Context) error, 0, len(cohorts))
+	for index, cohort := range cohorts {
+		index, cohort := index, cohort
+		parallelSteps = append(parallelSteps, func(stepCtx context.Context) error {
+			result, err := s.runFunnelContext(stepCtx, siteID, in, resolver, cohort.Definition)
+			if err != nil {
+				return err
+			}
+			steps[index] = result
+			series[index] = map[string]any{"key": cohort.Key, "label": cohort.Label, "steps": result, "entered": funnelEntered(result), "completion_rate": funnelCompletion(result)}
+			return nil
+		})
 	}
+	if err := insight.RunParallel(ctx, insight.QueryConcurrency, parallelSteps...); err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	baseline := steps[0]
 	response := map[string]any{"steps": baseline, "from": from, "to": to, "mode": in.Mode, "within_minutes": in.WithinMinutes}
 	if len(cohorts) > 1 {
 		response["series"] = series
@@ -870,7 +881,7 @@ func (s *Server) segmentName(ctx context.Context, siteID uuid.UUID, id string) (
 
 // runFunnel evaluates the funnel for one cohort. Every cohort shares the same steps,
 // window and mode so the columns stay comparable.
-func (s *Server) runFunnel(ctx context.Context, r *http.Request, siteID uuid.UUID, in funnelRequest, resolver dimensionResolver, cohort *segmentNode) ([]map[string]any, error) {
+func (s *Server) runFunnelContext(ctx context.Context, siteID uuid.UUID, in funnelRequest, resolver dimensionResolver, cohort *segmentNode) ([]map[string]any, error) {
 	from, to, err := s.explicitDateRange(ctx, siteID, in.From, in.To)
 	if err != nil {
 		return nil, err
