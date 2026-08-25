@@ -1,8 +1,24 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.8.0
+- **문서 버전**: v0.21.0
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
-- **문서 개요**: Momento JavaScript SDK 상세 연동법, 이벤트 트래킹 규칙, 쿼리 빌더, 퍼널 및 경로 분석, BI 데이터 내보내기 실전 매뉴얼  
+- **문서 개요**: Momento JavaScript SDK 연동, 이벤트 트래킹 규칙, 방문자 인사이트·추적·이상 감지·기여도, 집단 비교 분석, 정기 배달과 BI 내보내기 실전 매뉴얼  
+
+---
+
+## 목차
+
+1. [플랫폼 아키텍처 개요](#1-플랫폼-아키텍처-개요)
+2. [JavaScript SDK 연동 및 설정 가이드](#2-javascript-sdk-연동-및-설정-가이드) — 설치, CSP 허용, 동의 모드, 식별, 커스텀 이벤트, SPA, 오프라인 큐
+3. [고급 분석 기능 사용법](#3-고급-분석-기능-사용법)
+   - 무엇을 볼지: 3.1 첫 화면, 3.2 방문자 인사이트, 3.3 방문자 추적, 3.4 이상 감지, 3.5 전환 기여도
+   - 누가 다른지: 3.6 행동 기반 Segment, 3.7 Funnel 비교, 3.8 Retention 비교, 3.9 경험 비교
+   - 직접 파보기: 3.10 쿼리 빌더 ~ 3.19 Experiment와 Goal
+   - 이어서: 3.20 정기 배달 연결, 3.21 분석 쿼리 제한
+4. [BI 연동 & 데이터 내보내기](#4-bi-연동--데이터-내보내기-export)
+5. [Query Mode와 비용 보호](#5-query-mode와-비용-보호)
+6. [개인정보 요청 Workflow](#6-개인정보-요청-workflow)
+7. [Console 탐색과 표 활용](#7-console-탐색과-표-활용)
 
 ---
 
@@ -156,7 +172,11 @@ router.on('routeChangeComplete', () => {
 
 ---
 
-### 2.4 첫 화면: 지금 봐야 할 것
+## 3. 고급 분석 기능 사용법
+
+Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의미합니다. API는 `conversion_users`, `conversion_sessions`, `user_conversion_rate`, `session_conversion_rate`를 모두 제공합니다. 날짜는 관리자에게 설정된 Site Timezone 기준이며, 저장 Timestamp 자체는 UTC입니다.
+
+### 3.1 첫 화면: 지금 봐야 할 것
 
 `개요` 화면 상단은 총계보다 먼저 **오늘 확인할 것**을 보여줍니다.
 
@@ -166,11 +186,8 @@ router.on('routeChangeComplete', () => {
 - **달성했거나 순항하는 Goal, 정상·데이터 부족 판정 이상은 넣지 않습니다.** 모든 것을 넣은 목록은 아무 것도 알려주지 않기 때문입니다. 이상이 없으면 그 사실을 명확히 표시합니다.
 - 이 화면은 일별 Rollup 기반 이상 감지와 Metric Registry만 조회하므로 첫 화면 응답 속도에 영향을 주지 않습니다.
 
-## 3. 고급 분석 기능 사용법
+### 3.2 방문자 인사이트 (Visitor Insights)
 
-Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의미합니다. API는 `conversion_users`, `conversion_sessions`, `user_conversion_rate`, `session_conversion_rate`를 모두 제공합니다. 날짜는 관리자에게 설정된 Site Timezone 기준이며, 저장 Timestamp 자체는 UTC입니다.
-
-### 3.0 방문자 인사이트 (Visitor Insights)
 
 좌측 `모니터링 → 방문자 인사이트`는 여러 화면을 순회하지 않고 방문자 상황과 다음 행동을 한 화면에서 확인하는 요약 보고서입니다. 모든 지표는 **이전 동일 기간과 자동 비교**됩니다.
 
@@ -185,7 +202,8 @@ Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의
 
 채널·기기별 사용자 합계는 한 사용자가 여러 채널로 방문하면 중복될 수 있고, 신규 판정은 선택한 환경의 전체 수집 이력을 기준으로 합니다.
 
-### 3.0.1 방문자 추적 (Visitor Timeline)
+### 3.3 방문자 추적 (Visitor Timeline)
+
 
 `탐색 → User Explorer`는 실제 방문자 한 사람을 추적합니다. 개인정보 설정에서 Visitor Profile을 비활성화하면 화면과 API가 모두 차단되고, 조회 사실은 Audit Log에 기록됩니다.
 
@@ -197,7 +215,8 @@ Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의
 - **교차 서비스**: 같은 SSO User가 Workspace의 다른 서비스에서 활동했다면 함께 표시합니다.
 - **가져가기**: `추적 기록 복사`는 사람 단위 맥락과 세션 흐름을 Markdown으로 복사해 장애 티켓이나 개인정보 요청 답변에 바로 붙일 수 있습니다.
 
-### 3.0.2 이상 감지 (Anomaly Detection)
+### 3.4 이상 감지 (Anomaly Detection)
+
 
 `모니터링 → 방문자 인사이트` 상단에서 직전 완료된 하루를 **같은 요일 최근 8주의 중위수**와 비교합니다. 사내 서비스는 요일 주기가 강해 단순 전주 대비나 7일 평균은 오탐이 많고, 부분 집계된 오늘을 평가하면 매일 아침 급감으로 보입니다. 그래서 완료된 하루만, 같은 요일끼리 비교합니다.
 
@@ -210,7 +229,8 @@ Overview의 `conversion_rate`는 호환성을 위해 User Conversion Rate를 의
 - 보낼 상태가 없으면 전송 이력에 `skipped`로 남습니다. 정의에 `"notify_on": ["new","ongoing","recovered"]`를 넣으면 지속 상태도 하루 한 번 보내고, `"always_send": true`는 매번 보냅니다.
 - 화면 조회는 알림 이력을 바꾸지 않습니다. 상태 저장은 배달 경로에서만 일어나므로 대시보드를 새로 고쳐도 "이미 알렸다"는 기록이 바뀌지 않습니다.
 
-### 3.0.3 전환 기여도 (Attribution)
+### 3.5 전환 기여도 (Attribution)
+
 
 SDK는 세션 단위로 유입 정보를 기록하므로 방문(세션)이 Touchpoint입니다. `방문자 인사이트 → 전환 기여도`에서 모델을 바꿔 비교합니다.
 
@@ -227,7 +247,8 @@ SDK는 세션 단위로 유입 정보를 기록하므로 방문(세션)이 Touch
 
 `배분 전환`과 함께 `관여 전환`(경로에 등장한 전환 수), `관여 비중`, `관여만`(이 모델에서 배분받지 못한 전환)과 `평균 경로 방문 수`를 제공해 모델 간 차이를 확인할 수 있습니다. Lookback(기본 30일) 안에 방문 기록이 없는 전환은 `미배분`으로 분리 표기합니다.
 
-### 3.0.3.1 교차 서비스 기여도
+### 3.5.1 교차 서비스 기여도
+
 
 `전환 기여도`의 **배분 범위**를 `전사 서비스`로 바꾸면 같은 Workspace의 다른 서비스 방문도 Touchpoint로 인정합니다. 인사 시스템 공지를 보고 포털에서 신청한 흐름처럼, 서비스 경계를 넘는 기여를 측정합니다.
 
@@ -236,7 +257,8 @@ SDK는 세션 단위로 유입 정보를 기록하므로 방문(세션)이 Touch
 - 범위는 **조회자가 이미 접근할 수 있는 서비스**로만 확장됩니다. 권한이 없는 서비스는 포함되지 않습니다.
 - 다른 서비스의 기여가 없으면 그 사실을 명시합니다.
 
-### 3.0.4 행동 기반 Segment
+### 3.6 행동 기반 Segment
+
 
 Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사용할 수 있습니다.
 
@@ -245,18 +267,8 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 
 숫자 비교(`>=`, `<=`, `=` 등)만 지원합니다. 예를 들어 `entity.sessions >= 3` AND `entity.conversions = 0`은 "세 번 이상 방문했지만 전환하지 않은 사람"입니다. 방문자 인사이트의 `실행 대상`에서 `Segment 만들기`를 누르면 이 정의가 자동 저장되어 Query·Funnel·Action에서 재사용됩니다. 기간 기준과 전체 이력 기준의 차이 때문에 인원이 다를 수 있는 경우에는 안내 문구를 함께 표시합니다.
 
-### 3.0.5 분석 쿼리 제한
+### 3.7 Segment 비교 Funnel
 
-대화형 분석 조회는 25초를 넘기면 중단되고 `분석 쿼리가 25초 제한을 초과했습니다`라는 안내와 함께 대안을 제시합니다. 기간을 좁히거나 Segment로 범위를 줄이고, 반복적으로 필요한 넓은 범위의 집계는 Scheduled Report로 정기 배달받으십시오.
-
-### 3.1 쿼리 빌더 (Query Builder)
-1. **필터링 조건**: 날짜 범위, 부서, 특정 이벤트명, 커스텀 속성(Key-Value) 조건 설정.
-2. **그룹핑 (GroupBy)**: `department`별 또는 `browser`별 시계열 집계 그래프 생성.
-
-### 3.2 2~10단계 퍼널 분석 (Funnel Analysis)
-- 서비스 진입 ➔ 주요 기능 탐색 ➔ 최종 결재/제출까지 단계별 전환율 및 이탈율(Drop-off) 시각화.
-
-### 3.2.1 Segment 비교 Funnel
 
 `퍼널` 화면의 **비교 Segment**에서 최대 3개를 선택하면 전체와 나란히 같은 퍼널을 평가합니다. 단계·모드·최대 전환 시간이 동일하게 적용되므로 열 사이 비교가 성립합니다.
 
@@ -265,26 +277,8 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 - 전체보다 뒤처지는 단계가 없으면 없는 단계를 만들어 표시하지 않습니다.
 - 진입 20명 미만 Segment는 `표본 부족`으로 표시하고 우열을 판정하지 않습니다.
 
-### 3.3 사용자 경로 분석 (Path Analysis)
-- 동일 Session에서 연속으로 발생한 Page·Event 이동을 시작/도착 두 계층 Sankey 다이어그램으로 분석합니다. 왕복 이동도 안전하게 표시하며 현재 Environment의 최근 30일 전환 수와 이동 횟수를 함께 제공합니다.
+### 3.8 Retention Segment 비교
 
-### 3.4 Segment와 저장된 Exploration
-- Segment 화면에서 최대 5단계의 중첩 `AND`/`OR` 조건과 14개 연산자를 조합합니다.
-- `event.has = purchase`를 사용하면 조회 행의 Event 종류와 무관하게 구매 경험이 있는 사용자를 선택합니다.
-- 저장된 Segment는 Query Builder와 Funnel에서 재사용할 수 있으며 Query 조합 자체도 Exploration으로 저장합니다.
-
-### 3.5 Ecommerce와 User Explorer
-- Ecommerce는 `view_item`, `add_to_cart`, `begin_checkout`, `purchase`, `refund`와 `items` 배열을 기준으로 매출·거래·상품 성과를 계산합니다.
-- User Explorer는 Visitor별 Event Timeline과 Deterministic Identity Graph를 제공합니다. 같은 `user_id`로 식별된 브라우저·기기의 Visitor ID는 하나의 canonical user로 연결되며, 로그인 전 익명 Event도 해당 사용자의 Funnel·Segment·전환 및 부서/조직 분석에 포함됩니다.
-- Momento는 fingerprint나 확률 기반 결합을 사용하지 않습니다. `analytics.identify()` 또는 SSO에서 받은 내부 pseudonymous ID만 신뢰하며, 관리자가 Visitor Profile을 비활성화하면 Identity Graph API와 화면도 함께 차단됩니다.
-
-### 3.6 Cohort, Business Journey와 Feature Adoption
-
-- Cohort는 최초 Event/가입/구매 등 Cohort Event와 Return Event를 분리해 Day/Week/Month Retention을 계산합니다.
-- Business Journey는 2~12개의 Event·Service·Feature 조건을 실제 도달 순서와 Conversion Window로 연결합니다.
-- Feature Adoption은 Canonical User의 Organization/Department와 Event의 `feature`를 연결하며 대상자, 사용률, 재사용률, 최근 활성 및 비활성 사용자를 제공합니다.
-
-### 3.6.1 Retention Segment 비교
 
 `코호트` 화면의 **비교 Segment**에서 최대 3개를 선택하면 전체와 Retention 곡선을 비교합니다.
 
@@ -293,11 +287,8 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 - Segment마다 첫 재방문(1주차) 격차와 **격차가 가장 큰 주차**를 제시하며, granularity에 따라 일·주·개월 단위로 표기합니다.
 - Cohort 인원 20명 미만은 `표본 부족`으로 표시하고 우열을 판정하지 않습니다.
 
-### 3.7 Experience와 Release Impact
+### 3.9 집단별 경험 비교
 
-SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vital`, `resource_error` Event로 전송합니다. Release 비교가 필요하면 초기화 시 `releaseVersion`, `gitSha`, `deploymentId`를 지정하십시오. Experience 화면은 오류가 발생한 사용자와 정상 사용자의 전환율을 비교합니다.
-
-### 3.7.1 집단별 경험 비교
 
 `경험` 화면의 **비교 Segment**에서 최대 3개를 선택하면 같은 측정을 집단별로 나눠 봅니다. 사이트 전체 p75는 빠른 환경과 느린 환경을 평균해 둘 다 가립니다.
 
@@ -307,18 +298,58 @@ SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vi
 - 오류 경험 비율이 전체보다 5pp 이상 높으면 보고하고, 15pp 이상은 `심각`입니다.
 - 표본 20건 미만은 판정하지 않습니다. 뚜렷한 격차가 없으면 그 사실을 표시합니다.
 
-### 3.8 AI / Agent / MCP Event 표준
+### 3.10 쿼리 빌더 (Query Builder)
+
+1. **필터링 조건**: 날짜 범위, 부서, 특정 이벤트명, 커스텀 속성(Key-Value) 조건 설정.
+2. **그룹핑 (GroupBy)**: `department`별 또는 `browser`별 시계열 집계 그래프 생성.
+
+### 3.11 2~10단계 퍼널 분석 (Funnel Analysis)
+
+- 서비스 진입 ➔ 주요 기능 탐색 ➔ 최종 결재/제출까지 단계별 전환율 및 이탈율(Drop-off) 시각화.
+
+### 3.12 사용자 경로 분석 (Path Analysis)
+
+- 동일 Session에서 연속으로 발생한 Page·Event 이동을 시작/도착 두 계층 Sankey 다이어그램으로 분석합니다. 왕복 이동도 안전하게 표시하며 현재 Environment의 최근 30일 전환 수와 이동 횟수를 함께 제공합니다.
+
+### 3.13 Segment와 저장된 Exploration
+
+- Segment 화면에서 최대 5단계의 중첩 `AND`/`OR` 조건과 14개 연산자를 조합합니다.
+- `event.has = purchase`를 사용하면 조회 행의 Event 종류와 무관하게 구매 경험이 있는 사용자를 선택합니다.
+- 저장된 Segment는 Query Builder와 Funnel에서 재사용할 수 있으며 Query 조합 자체도 Exploration으로 저장합니다.
+
+### 3.14 Ecommerce와 User Explorer
+
+- Ecommerce는 `view_item`, `add_to_cart`, `begin_checkout`, `purchase`, `refund`와 `items` 배열을 기준으로 매출·거래·상품 성과를 계산합니다.
+- User Explorer는 Visitor별 Event Timeline과 Deterministic Identity Graph를 제공합니다. 같은 `user_id`로 식별된 브라우저·기기의 Visitor ID는 하나의 canonical user로 연결되며, 로그인 전 익명 Event도 해당 사용자의 Funnel·Segment·전환 및 부서/조직 분석에 포함됩니다.
+- Momento는 fingerprint나 확률 기반 결합을 사용하지 않습니다. `analytics.identify()` 또는 SSO에서 받은 내부 pseudonymous ID만 신뢰하며, 관리자가 Visitor Profile을 비활성화하면 Identity Graph API와 화면도 함께 차단됩니다.
+
+### 3.15 Cohort, Business Journey와 Feature Adoption
+
+
+- Cohort는 최초 Event/가입/구매 등 Cohort Event와 Return Event를 분리해 Day/Week/Month Retention을 계산합니다.
+- Business Journey는 2~12개의 Event·Service·Feature 조건을 실제 도달 순서와 Conversion Window로 연결합니다.
+- Feature Adoption은 Canonical User의 Organization/Department와 Event의 `feature`를 연결하며 대상자, 사용률, 재사용률, 최근 활성 및 비활성 사용자를 제공합니다.
+
+### 3.16 Experience와 Release Impact
+
+
+SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vital`, `resource_error` Event로 전송합니다. Release 비교가 필요하면 초기화 시 `releaseVersion`, `gitSha`, `deploymentId`를 지정하십시오. Experience 화면은 오류가 발생한 사용자와 정상 사용자의 전환율을 비교합니다.
+
+### 3.17 AI / Agent / MCP Event 표준
+
 
 `ai_prompt`, `ai_response`, `ai_model_call`, `ai_tool_call`, `ai_agent_run`, `ai_mcp_call`을 사용하고 `model`, `provider`, `agent`, `mcp_server`, `tool`, `success`, `latency_ms`, `input_tokens`, `output_tokens`, `cost`, `fallback_model`을 Property로 전달합니다. 실제 Prompt/Response 원문은 개인정보와 기밀정보 위험 때문에 기본 분석 규격에 포함하지 않는 것을 권장합니다.
 
-### 3.9 Workspace, Feature, Search와 Frustration
+### 3.18 Workspace, Feature, Search와 Frustration
+
 
 - Workspace Roll-Up은 같은 Workspace의 Site를 합쳐 서비스별 사용자·Event·Session·Service Score를 비교합니다. 같은 SSO `user_id`는 Site를 넘어 한 명으로 계산하고 익명 Visitor는 Site별로 격리합니다.
 - Feature Intelligence는 `feature` Property를 기준으로 Adoption, Repeat, Conversion, Error, 기간 추세와 Dead Feature 후보를 계산합니다.
 - Search Analytics는 `search`, `search_result`, `search_click`, `search_no_result`, `search_refine`, `search_exit`, `search_success` 표준 Event를 사용합니다.
 - Frustration Analytics는 Replay를 저장하지 않고 `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`과 오류 Event만으로 막힘을 추정합니다.
 
-### 3.10 Experiment와 Goal
+### 3.19 Experiment와 Goal
+
 
 Metric Goal 평가에는 기간 진행률과 **착지 예상치**가 함께 표시됩니다. 누적 지표는 현재 속도를 기간 끝까지 연장하고, 비율 지표는 누적되지 않으므로 현재 관측값을 그대로 사용합니다. 누적 지표에는 목표까지 남은 양과 `필요 일일 속도`를 제공하며, 기간 진행률이 10% 미만이면 추정을 보류합니다.
 
@@ -328,7 +359,8 @@ Metric Goal 평가에는 기간 진행률과 **착지 예상치**가 함께 표�
 
 ---
 
-### 3.11 발견을 정기 배달로 연결
+### 3.20 발견을 정기 배달로 연결
+
 
 분석 화면에서 찾은 내용을 반복해서 받으려면 `관리 → Action`에서 Scheduled Report를 만듭니다. v0.19부터 정의 문서를 직접 작성하지 않습니다.
 
@@ -336,7 +368,13 @@ Metric Goal 평가에는 기간 진행률과 **착지 예상치**가 함께 표�
 - 이상 감지 알림은 기간 대신 **전송할 상태**(신규·지속·회복)와 `이상이 없어도 매번 전송`을 고릅니다. 나머지 종류는 집계 기간을 고릅니다.
 - 저장 전에 "매주 방문자 인사이트 전체 · PRD · 최근 30일" 같은 한 줄 요약으로 무엇이 언제 전송되는지 확인할 수 있습니다.
 - 방문자 인사이트 화면의 `정기 배달`과 이상 감지 카드의 `알림 설정` 버튼은 종류가 미리 선택된 상태로 이 화면을 엽니다. Delivery Channel은 먼저 등록되어 있어야 합니다.
+- Delivery Channel의 인증 Header는 이름과 값을 행 단위로 입력합니다. 이름 중복, Host 재정의, 줄바꿈, 값 누락은 저장 전에 표시됩니다. 값은 `MOMENTO_ENCRYPTION_KEY`로 암호화 저장되고 목록에는 이름만 나타납니다.
 - 특수한 정의가 필요하면 `고급: Definition JSON 직접 입력`에 값을 넣으면 그 JSON을 그대로 사용합니다.
+
+### 3.21 분석 쿼리 제한
+
+
+대화형 분석 조회는 25초를 넘기면 중단되고 `분석 쿼리가 25초 제한을 초과했습니다`라는 안내와 함께 대안을 제시합니다. 기간을 좁히거나 Segment로 범위를 줄이고, 반복적으로 필요한 넓은 범위의 집계는 Scheduled Report로 정기 배달받으십시오.
 
 ## 4. BI 연동 & 데이터 내보내기 (Export)
 

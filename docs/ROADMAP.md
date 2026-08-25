@@ -155,6 +155,11 @@
 - 첫 실패를 반환하며 남은 조회를 취소해 부분 보고서를 완성된 보고서로 제시하지 않음
 - 상위 context 취소를 성공으로 오인하지 않는 종료 처리
 
+## v0.21 — implemented
+
+- Delivery Channel 인증 Header를 이름·값 행으로 입력하고 서버가 거부할 입력(중복·Host 재정의·줄바꿈·값 누락)을 저장 전에 표시
+- 여덟 번의 기능 릴리스로 어긋난 사용자 가이드 3장 구조를 목적 순서로 재정렬하고 목차 추가
+
 ## Next schema-compatible increments
 
 - Cross-service conversion credit and data-driven attribution weights

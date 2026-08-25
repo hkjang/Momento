@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.21.0
+
+- Replaced the delivery channel headers JSON field with name and value rows, finishing what the scheduled report form started: a channel usually needs one credential, and asking for a JSON document turned a two field task into a syntax exercise.
+- Reported the input the collector would reject before the request is sent: a duplicated header name, a Host override, a line break, or a name with no value.
+- Restructured chapter 3 of the user guide, which eight feature releases had left with a duplicated 2.4, sections nested four levels deep, and the three comparison features scattered across unrelated numbers. Sections now follow the order a reader needs and the document has a table of contents.
+- Corrected the user guide version, which had been left at v0.8.0 while the rest of the documentation moved.
+
 ## v0.20.0
 
 - Ran the eight independent reads behind the visitor insight report concurrently with a ceiling of four, so the page waits for the slowest few queries instead of the sum of all of them, while one request still cannot exhaust the twenty connection pool.

@@ -30,6 +30,13 @@ import {
   type ScheduleKind,
 } from "./scheduleDefinition";
 import { useSearchParams } from "react-router-dom";
+import {
+  buildHeaders,
+  commonHeaderNames,
+  emptyHeaderRow,
+  headerIssues,
+  type HeaderRow,
+} from "./channelHeaders";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
@@ -159,7 +166,8 @@ function Automation() {
   const schedules = useQuery({ queryKey: ["scheduled-reports", site?.site_id], enabled: !!site, queryFn: () => get<Record<string, unknown>[]>(`/api/v1/sites/${site!.site_id}/scheduled-reports`) });
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
   const current = config || settings.data?.automation?.value || { enabled: false, allowed_webhook_hosts: [], delivery_timeout_seconds: 10, max_entity_ids: 0 };
-  const [channel, setChannel] = useState({ name: "", channel_type: "webhook", endpoint_url: "", headers: "{}" });
+  const [channel, setChannel] = useState({ name: "", channel_type: "webhook", endpoint_url: "" });
+  const [headerRows, setHeaderRows] = useState<HeaderRow[]>([{ ...emptyHeaderRow }]);
   const [params] = useSearchParams();
   const linkedKind = parseScheduleKind(params.get("kind"));
   const [schedule, setSchedule] = useState({
@@ -172,7 +180,19 @@ function Automation() {
   const [rawDefinition, setRawDefinition] = useState("");
   useEffect(() => setForm((value) => ({ ...value, environment })), [environment]);
   const configSave = useMutation({ mutationFn: () => put("/api/v1/settings/automation", current), onSuccess: () => { setConfig(null); void qc.invalidateQueries({ queryKey: ["settings"] }); } });
-  const channelSave = useMutation({ mutationFn: () => post(`/api/v1/sites/${site!.site_id}/delivery-channels`, { ...channel, headers: JSON.parse(channel.headers), active: true }), onSuccess: () => { setChannel({ name: "", channel_type: "webhook", endpoint_url: "", headers: "{}" }); void qc.invalidateQueries({ queryKey: ["delivery-channels"] }); } });
+  const channelSave = useMutation({
+    mutationFn: () =>
+      post(`/api/v1/sites/${site!.site_id}/delivery-channels`, {
+        ...channel,
+        headers: buildHeaders(headerRows),
+        active: true,
+      }),
+    onSuccess: () => {
+      setChannel({ name: "", channel_type: "webhook", endpoint_url: "" });
+      setHeaderRows([{ ...emptyHeaderRow }]);
+      void qc.invalidateQueries({ queryKey: ["delivery-channels"] });
+    },
+  });
   const scheduleSave = useMutation({
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/scheduled-reports`, {
@@ -203,7 +223,49 @@ function Automation() {
   return <Stack spacing={3}>
     <Alert severity="info">모든 전송은 관리자 Allowlist와 Audit Log를 거칩니다. 기본값은 비활성이고, Entity ID 전달은 기본 0건입니다.</Alert>
     <Card sx={{ p: 2.5 }}><Typography variant="h6">Automation Security</Typography><Stack spacing={1.5} mt={2}><TextField select label="Scheduler" value={String(Boolean(current.enabled))} onChange={(e) => setConfig({ ...current, enabled: e.target.value === "true" })}><MenuItem value="false">Disabled</MenuItem><MenuItem value="true">Enabled</MenuItem></TextField><TextField label="Allowed Webhook Hosts" value={allowedHosts} onChange={(e) => setConfig({ ...current, allowed_webhook_hosts: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) })} helperText="예: hooks.internal, *.corp.local" /><TextField type="number" label="Delivery Timeout (seconds)" value={Number(current.delivery_timeout_seconds || 10)} onChange={(e) => setConfig({ ...current, delivery_timeout_seconds: Number(e.target.value) })} /><TextField type="number" label="Segment Entity ID 최대 전달 수" value={Number(current.max_entity_ids || 0)} onChange={(e) => setConfig({ ...current, max_entity_ids: Number(e.target.value) })} helperText="0이면 집계만 전달합니다." /><Button variant="contained" disabled={!config || configSave.isPending} onClick={() => configSave.mutate()}>보안 설정 저장</Button></Stack></Card>
-    <Card sx={{ p: 2.5 }}><Typography variant="h6">Delivery Channel</Typography><Typography variant="body2" color="text.secondary" mb={2}>Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent endpoint를 등록합니다. Header 값은 다시 표시되지 않습니다.</Typography><Stack spacing={1.5}><TextField label="이름" value={channel.name} onChange={(e) => setChannel({ ...channel, name: e.target.value })} /><TextField select label="유형" value={channel.channel_type} onChange={(e) => setChannel({ ...channel, channel_type: e.target.value })}>{["webhook", "confluence", "mail", "internal_message", "ai_agent"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField><TextField label="Endpoint URL" value={channel.endpoint_url} onChange={(e) => setChannel({ ...channel, endpoint_url: e.target.value })} /><TextField label="Headers JSON" value={channel.headers} onChange={(e) => setChannel({ ...channel, headers: e.target.value })} /><Button variant="contained" disabled={!channel.name || !channel.endpoint_url || channelSave.isPending} onClick={() => channelSave.mutate()}>Channel 등록</Button>{channelSave.error && <ErrorState error={channelSave.error} />}</Stack><Box mt={2}><DataTable rows={(channels.data || []) as unknown as Record<string, unknown>[]} columns={[{ key: "name", label: "이름" }, { key: "channel_type", label: "유형" }, { key: "endpoint_url", label: "Endpoint" }, { key: "header_names", label: "Headers", format: (v) => (v as string[]).join(", ") || "—" }, { key: "active", label: "상태", format: (v) => <Chip size="small" label={v ? "Active" : "Disabled"} /> }, { key: "id", label: "", align: "right", format: (v) => <Button size="small" color="error" disabled={channelDelete.isPending} onClick={() => channelDelete.mutate(String(v))}>삭제</Button> }]} />{channelDelete.error && <Box mt={1}><ErrorState error={channelDelete.error} /></Box>}</Box></Card>
+    <Card sx={{ p: 2.5 }}><Typography variant="h6">Delivery Channel</Typography><Typography variant="body2" color="text.secondary" mb={2}>Webhook, Confluence, Mail Gateway, 사내 메시지, AI Agent endpoint를 등록합니다. Header 값은 다시 표시되지 않습니다.</Typography><Stack spacing={1.5}><TextField label="이름" value={channel.name} onChange={(e) => setChannel({ ...channel, name: e.target.value })} /><TextField select label="유형" value={channel.channel_type} onChange={(e) => setChannel({ ...channel, channel_type: e.target.value })}>{["webhook", "confluence", "mail", "internal_message", "ai_agent"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField><TextField label="Endpoint URL" value={channel.endpoint_url} onChange={(e) => setChannel({ ...channel, endpoint_url: e.target.value })} /><Box>
+      <Typography variant="body2" fontWeight={600} mb={0.8}>인증 Header</Typography>
+      <Stack spacing={1}>
+        {headerRows.map((row, index) => (
+          <Stack key={index} direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ sm: "center" }}>
+            <TextField
+              size="small"
+              label="이름"
+              value={row.name}
+              placeholder={commonHeaderNames[index % commonHeaderNames.length]}
+              onChange={(e) => setHeaderRows(headerRows.map((item, position) => position === index ? { ...item, name: e.target.value } : item))}
+              sx={{ minWidth: 180 }}
+            />
+            <TextField
+              size="small"
+              fullWidth
+              label="값"
+              type="password"
+              value={row.value}
+              onChange={(e) => setHeaderRows(headerRows.map((item, position) => position === index ? { ...item, value: e.target.value } : item))}
+            />
+            <Button
+              size="small"
+              color="error"
+              disabled={headerRows.length === 1}
+              onClick={() => setHeaderRows(headerRows.filter((_, position) => position !== index))}
+            >
+              삭제
+            </Button>
+          </Stack>
+        ))}
+        <Box>
+          <Button size="small" onClick={() => setHeaderRows([...headerRows, { ...emptyHeaderRow }])}>Header 추가</Button>
+        </Box>
+        {headerIssues(headerRows).map((issue) => (
+          <Alert key={issue} severity="warning">{issue}</Alert>
+        ))}
+        <Typography variant="caption" color="text.secondary">
+          값은 MOMENTO_ENCRYPTION_KEY로 암호화되어 저장되고 목록에는 이름만 표시됩니다. Host는 재정의할 수 없습니다.
+        </Typography>
+      </Stack>
+    </Box>
+    <Button variant="contained" disabled={!channel.name || !channel.endpoint_url || headerIssues(headerRows).length > 0 || channelSave.isPending} onClick={() => channelSave.mutate()}>Channel 등록</Button>{channelSave.error && <ErrorState error={channelSave.error} />}</Stack><Box mt={2}><DataTable rows={(channels.data || []) as unknown as Record<string, unknown>[]} columns={[{ key: "name", label: "이름" }, { key: "channel_type", label: "유형" }, { key: "endpoint_url", label: "Endpoint" }, { key: "header_names", label: "Headers", format: (v) => (v as string[]).join(", ") || "—" }, { key: "active", label: "상태", format: (v) => <Chip size="small" label={v ? "Active" : "Disabled"} /> }, { key: "id", label: "", align: "right", format: (v) => <Button size="small" color="error" disabled={channelDelete.isPending} onClick={() => channelDelete.mutate(String(v))}>삭제</Button> }]} />{channelDelete.error && <Box mt={1}><ErrorState error={channelDelete.error} /></Box>}</Box></Card>
     <Card sx={{ p: 2.5 }}><Typography variant="h6">Scheduled Report / Segment Action</Typography><Typography variant="body2" color="text.secondary" mb={2}>분석에서 Action까지 연결합니다: Segment → Webhook → CRM/Mail/AI Agent/사내 메시지.</Typography><Stack spacing={1.5}>
       <TextField label="이름" value={schedule.name} onChange={(e) => setSchedule({ ...schedule, name: e.target.value })} />
       <TextField select label="Channel" value={schedule.channel_id} onChange={(e) => setSchedule({ ...schedule, channel_id: e.target.value })} helperText={channels.data?.length ? "" : "먼저 Delivery Channel을 등록하십시오."}>{channels.data?.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField>
