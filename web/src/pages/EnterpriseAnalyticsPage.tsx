@@ -6,6 +6,7 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import { describeSignal, frustrationSetupHint, searchSetupHint, zeroResultReadiness } from "./signalGuide";
 
 export type EnterpriseAnalyticsMode = "workspace" | "features" | "search" | "frustration" | "experiments" | "goals" | "calendar";
 
@@ -110,8 +111,12 @@ function SearchAnalytics() {
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
+  const setup = searchSetupHint(q.data?.summary, q.data?.queries as { query?: unknown }[] | undefined);
+  const zeroResult = zeroResultReadiness(q.data?.summary);
   return <Stack spacing={2}>
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(4,1fr)" }, gap: 2 }}><MetricCard label="Searches" value={q.data?.summary.searches || 0} /><MetricCard label="Search Users" value={q.data?.summary.users || 0} /><MetricCard label="Zero Result" value={q.data?.summary.zero_result_rate || 0} type="percent" /><MetricCard label="Search CTR" value={q.data?.summary.search_ctr || 0} type="percent" /></Box>
+    {setup && <Alert severity="info">{setup}</Alert>}
+    {zeroResult && <Alert severity="warning">{zeroResult}</Alert>}
     <DataTable rows={q.data?.queries || []} columns={[{ key: "query", label: "Query" }, { key: "searches", label: "검색", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "zero_results", label: "Zero Result", align: "right" }, { key: "clicks", label: "Clicks", align: "right" }, { key: "ctr", label: "CTR", align: "right", format: percentCell }, { key: "last_seen", label: "Last Seen" }]} />
   </Stack>;
 }
@@ -122,10 +127,12 @@ function Frustration() {
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;
+  const setup = frustrationSetupHint(q.data?.summary);
   return <Stack spacing={2}>
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}><MetricCard label="영향 Session" value={q.data?.summary.affected_sessions || 0} /><MetricCard label="영향률" value={q.data?.summary.affected_session_rate || 0} type="percent" /><MetricCard label="평균 Frustration Score" value={q.data?.summary.average_frustration_score || 0} /></Box>
-    <Alert severity="info">Session Replay 없이 행동 신호만 사용해 개인정보 노출을 줄입니다.</Alert>
-    <DataTable rows={q.data?.signals || []} columns={[{ key: "signal", label: "Signal" }, { key: "count", label: "Count", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "sessions", label: "Sessions", align: "right" }, { key: "weight", label: "Weight", align: "right" }, { key: "last_seen", label: "Last Seen" }]} />
+    <Alert severity="info">Session Replay 없이 행동 신호만 사용해 개인정보 노출을 줄입니다. Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction은 tracker가 자동 감지합니다.</Alert>
+    {setup && <Alert severity="warning">{setup}</Alert>}
+    <DataTable exportFilename="momento-frustration" rows={(q.data?.signals || []).map((row) => ({ ...row, signal_label: describeSignal(String(row.signal)).label, signal_action: describeSignal(String(row.signal)).action }))} columns={[{ key: "signal_label", label: "Signal", format: (v, row) => <Tooltip title={describeSignal(String(row.signal)).meaning}><span>{String(v)}</span></Tooltip> }, { key: "signal_action", label: "확인할 것", minWidth: 260 }, { key: "count", label: "Count", align: "right" }, { key: "users", label: "Users", align: "right" }, { key: "sessions", label: "Sessions", align: "right" }, { key: "weight", label: "Weight", align: "right" }, { key: "last_seen", label: "Last Seen" }]} />
   </Stack>;
 }
 

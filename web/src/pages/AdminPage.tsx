@@ -69,6 +69,7 @@ import {
   buildSDKSnippet,
   consentExample,
   identifyAndEventExample,
+  signalInstrumentation,
   type SDKTrackingMode,
 } from "./sdkGuide";
 
@@ -1349,6 +1350,20 @@ function SiteSDKGuideDialog({
                 개인정보 위험 때문에 기본 수집하지 않으며, 필요할 때만
                 <code> data-collect-element-text=&quot;true&quot;</code>를 사용하세요.
               </Typography>
+              <Typography variant="body2" color="text.secondary" mt={1.5}>
+                Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search,
+                Error After Click, Slow Interaction과 사이트 검색은 별도 계측 없이
+                자동 감지됩니다. 끄려면
+                {" "}
+                <code>data-frustration-signals=&quot;false&quot;</code> 또는
+                {" "}
+                <code>data-search-tracking=&quot;false&quot;</code>를 사용하세요. 검색어
+                자체는 개인정보가 섞일 수 있어 기본 수집하지 않으며, 필요할 때만
+                <code> data-collect-search-terms=&quot;true&quot;</code>를 사용하세요.
+                질의 문자열 이름이 다르면
+                {" "}
+                <code>data-search-params=&quot;kw,keyword&quot;</code>로 지정합니다.
+              </Typography>
             </Card>
           </Stack>
         )}
@@ -1364,6 +1379,15 @@ function SiteSDKGuideDialog({
               Event 이름과 Property는 관리자 → 이벤트 스키마의 Contract와
               맞추세요. 세션 전체에 필요한 값은 Event Property 대신
               <code> setSessionProperties()</code>에 둡니다.
+            </Typography>
+            <CopyField
+              label="검색·Dead Click 정확도를 높이는 계측 힌트"
+              value={signalInstrumentation}
+            />
+            <Typography variant="body2" color="text.secondary">
+              세 속성은 모두 선택 사항입니다. 없어도 검색 횟수와 Frustration
+              신호는 수집되지만, 결과 0건 비율과 클릭된 결과 순위는 페이지가
+              알려줘야만 알 수 있습니다.
             </Typography>
             {mode === "consent-required" && (
               <CopyField label="동의 배너 연결 예시" value={consentExample} />

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.22.0
+
+- The tracker now detects the frustration signals the Frustration report has always scored. Rage clicks (three clicks on one element inside a second), dead clicks (a clickable-looking element that changed nothing), rapid backs, form retries from a resubmit or a failed validation, errors within two seconds of a click, and interactions slower than 500ms are all reported without any instrumentation. Seven of the report's nine signals previously arrived only from hand-written code, so the page was empty for every deployment using the tracker as shipped.
+- Site search is detected from the query string of the results page, so search counts, click-through and refinements appear without instrumentation. `analytics.trackSearch(query, resultCount)` covers applications that search without changing the URL, and `data-momento-search-results` lets a page publish how many results it rendered, which is what makes the zero-result rate trustworthy. `data-momento-search-position` records which result was opened.
+- Search terms stay out of the payload unless the site asks for them with `data-collect-search-terms="true"`, matching how button text is treated. A collected term is normalised, truncated to 100 characters, and stripped of email addresses, phone numbers and resident registration numbers in the browser before the server's own PII policy sees it.
+- The events the tracker emits are no longer treated as unregistered by a strict event contract. Turning on reject mode previously required transcribing every built-in event, and shipping a new automatic signal would have dropped whole batches for the sites that had. A site that does register one keeps its own schema and validation mode.
+- The Frustration report explains each signal and what to check, and both it and Search Analytics now distinguish "nothing is wrong" from "nothing is measuring": an empty report says which setting or snippet version to look at, and a search table with no terms says the term collection is deliberately off.
+- Per-page signal reporting is capped at twenty so a page stuck in a render loop cannot turn into thousands of events.
+- `tracker.js` grew from 15.2KB to 23.0KB minified. The detection code ships whether or not the signals are enabled.
+
 ## v0.21.4
 
 - Verified privacy deletion end to end against a real database. Deleting by SSO user removes every row across raw events, sessions, visitors, visitor sessions, identity links, identified users and both daily rollups, while another person's data on the same site is untouched. Visitor, period and property deletion keep what is outside their boundary, and property deletion strips the key rather than the event.

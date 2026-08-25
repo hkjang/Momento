@@ -70,3 +70,37 @@ test("프록시 경로를 지정하면 설치 코드에 data-endpoint가 붙는�
   });
   assert.doesNotMatch(direct, /data-endpoint/);
 });
+
+test("설치 코드는 자동 감지를 켜고 검색어 수집은 요청할 때만 켠다", async () => {
+  const { buildSDKSnippet } = await import("../src/pages/sdkGuide.ts");
+  const standard = buildSDKSnippet({
+    endpoint: "https://momento.example",
+    siteId: "SITE_123",
+    environment: "prd",
+    mode: "full",
+  });
+  assert.match(standard, /data-frustration-signals="true"/);
+  assert.match(standard, /data-search-tracking="true"/);
+  assert.doesNotMatch(
+    standard,
+    /data-collect-search-terms/,
+    "검색어는 개인정보가 섞일 수 있으므로 기본값이 아니다",
+  );
+
+  const withTerms = buildSDKSnippet({
+    endpoint: "https://momento.example",
+    siteId: "SITE_123",
+    environment: "prd",
+    mode: "full",
+    collectSearchTerms: true,
+  });
+  assert.match(withTerms, /data-collect-search-terms="true"/);
+});
+
+test("계측 힌트는 결과 수·순위·Dead Click 제외를 모두 안내한다", async () => {
+  const { signalInstrumentation } = await import("../src/pages/sdkGuide.ts");
+  assert.match(signalInstrumentation, /data-momento-search-results/);
+  assert.match(signalInstrumentation, /data-momento-search-position/);
+  assert.match(signalInstrumentation, /data-momento-ignore-dead-click/);
+  assert.match(signalInstrumentation, /analytics\.trackSearch/);
+});

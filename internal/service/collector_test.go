@@ -3,6 +3,9 @@ package service
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -165,6 +168,32 @@ func TestEventRevenue(t *testing.T) {
 	for _, tt := range tests {
 		if got := eventRevenue(tt.event); got != tt.want {
 			t.Errorf("eventRevenue(%#v)=%v want %v", tt.event, got, tt.want)
+		}
+	}
+}
+
+// TestAutomaticEventsCoverEverythingTheTrackerEmits reads the tracker source so
+// that adding an automatic event without exempting it from contract
+// registration fails here instead of in a customer's reject-mode environment,
+// where one unregistered event drops the whole batch.
+func TestAutomaticEventsCoverEverythingTheTrackerEmits(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", "sdk", "src", "index.ts"))
+	if err != nil {
+		t.Skipf("tracker source is not available: %v", err)
+	}
+	emitted := regexp.MustCompile(`(?:track|signal)\("([a-z_]+)"`).FindAllStringSubmatch(string(source), -1)
+	if len(emitted) < 10 {
+		t.Fatalf("found only %d emitted events, the pattern no longer matches the tracker", len(emitted))
+	}
+	seen := map[string]bool{}
+	for _, match := range emitted {
+		name := match[1]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if !automaticEvents[name] {
+			t.Errorf("the tracker emits %q but it is not in automaticEvents, so a reject-mode environment would drop the batch", name)
 		}
 	}
 }

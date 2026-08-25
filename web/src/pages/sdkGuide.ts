@@ -11,6 +11,12 @@ export interface SDKSnippetOptions {
    * then stays first party and `connect-src 'self'` is enough.
    */
   proxyPath?: string;
+  /**
+   * Include the search term itself. Off by default: a search box receives text
+   * a person typed, so the tracker reports the shape of the query (length, word
+   * count, whether it was repeated) unless the site opts into the words.
+   */
+  collectSearchTerms?: boolean;
 }
 
 function escapeAttribute(value: string) {
@@ -35,6 +41,9 @@ export function buildSDKSnippet(options: SDKSnippetOptions) {
     `  data-mode="${escapeAttribute(options.mode)}"`,
     ...(proxyPath ? [`  data-endpoint="${escapeAttribute(proxyPath)}"`] : []),
     '  data-auto-rum="true"',
+    '  data-frustration-signals="true"',
+    '  data-search-tracking="true"',
+    ...(options.collectSearchTerms ? ['  data-collect-search-terms="true"'] : []),
     '  data-debug="false"',
     "></script>",
   ].join("\n");
@@ -110,3 +119,23 @@ analytics.consent.grant();
 // 동의를 거부하거나 철회했을 때
 analytics.consent.deny();
 analytics.consent.revoke();`;
+
+/**
+ * signalInstrumentation documents the two hooks that make automatic detection
+ * more precise. Neither is required: without them searches are still counted
+ * and frustration is still detected, but the zero-result rate and the clicked
+ * position cannot be known from the outside.
+ */
+export const signalInstrumentation = `<!-- 검색 결과 수를 알려주면 Zero Result 비율이 정확해집니다 -->
+<div data-momento-search-results="\${results.length}">
+  <!-- 결과 순위를 알려주면 몇 번째 결과를 열었는지 기록됩니다 -->
+  <a href="/doc/1" data-momento-search-position="1">첫 번째 결과</a>
+</div>
+
+<!-- URL이 바뀌지 않는 검색이라면 직접 알려주세요 -->
+<script>
+  analytics.trackSearch(query, results.length);
+</script>
+
+<!-- 정상 동작하는 커스텀 위젯이 Dead Click으로 잡히면 제외하세요 -->
+<div data-momento-ignore-dead-click>...</div>`;

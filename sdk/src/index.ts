@@ -1,6 +1,7 @@
 export type TrackingMode =
   "consent-required" | "cookie-consent" | "cookieless" | "full" | "disabled";
 type ConsentState = "unknown" | "granted" | "denied";
+type RouteKind = "push" | "replace" | "pop";
 type Properties = Record<string, unknown>;
 
 interface TrafficContext {
@@ -31,6 +32,10 @@ export interface MomentoOptions {
   collectElementText?: boolean;
   sanitizeErrorMessages?: boolean;
   autoRUM?: boolean;
+  frustrationSignals?: boolean;
+  searchTracking?: boolean;
+  collectSearchTerms?: boolean;
+  searchParams?: string[];
   appVersion?: string;
   releaseVersion?: string;
   gitSha?: string;
@@ -48,6 +53,44 @@ interface QueuedEvent {
   debug?: boolean;
   contract_version: number;
 }
+
+/**
+ * Frustration detection thresholds.
+ *
+ * These are the numbers the signal definitions in the console are written
+ * against, so they live here as named constants rather than inline literals.
+ * Rage clicks follow the industry convention of three clicks on one element
+ * inside a second; a slow interaction is the "poor" end of the INP scale.
+ */
+const RAGE_CLICK_WINDOW_MS = 1000;
+const RAGE_CLICK_THRESHOLD = 3;
+const DEAD_CLICK_WINDOW_MS = 1200;
+const RAPID_BACK_MS = 3000;
+const ERROR_AFTER_CLICK_MS = 2000;
+const SLOW_INTERACTION_MS = 500;
+const REPEATED_SEARCH_WINDOW_MS = 120000;
+const SEARCH_RESULT_WAIT_MS = 1500;
+const SEARCH_RESULT_POLL_MS = 300;
+
+/** A page cannot report an unbounded number of signals. */
+const SIGNALS_PER_PAGE = 20;
+
+const DEFAULT_SEARCH_PARAMS = [
+  "q",
+  "query",
+  "search",
+  "searchword",
+  "keyword",
+  "kwd",
+  "term",
+  "s",
+];
+
+const INTERACTIVE_SELECTOR =
+  "a,button,input,select,textarea,summary,label,[role=button],[role=link],[role=tab],[role=menuitem],[onclick],[data-analytics-button]";
+
+const RESULTS_ATTRIBUTE = "data-momento-search-results";
+const POSITION_ATTRIBUTE = "data-momento-search-position";
 
 const VISITOR_KEY = "momento_visitor_id";
 const SESSION_KEY = "momento_session";
@@ -83,12 +126,48 @@ function sanitizedURL(raw: string): string {
   }
 }
 
-function sanitizedError(value: unknown): string {
+/**
+ * redactPII removes the identifiers that most often leak into free text before
+ * it leaves the browser. Error messages and search terms are both free text
+ * typed or produced by a person, so they share one redactor.
+ */
+function redactPII(value: unknown, limit: number): string {
   return String(value ?? "")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
     .replace(/\b\d{6}-?[1-4]\d{6}\b/g, "[REDACTED_ID]")
     .replace(/\b01[016789]-?\d{3,4}-?\d{4}\b/g, "[REDACTED_PHONE]")
-    .slice(0, 500);
+    .slice(0, limit);
+}
+
+function sanitizedError(value: unknown): string {
+  return redactPII(value, 500);
+}
+
+/** elementSignature identifies an element well enough to group repeat clicks. */
+function elementSignature(element: Element): string {
+  const tag = element.tagName?.toLowerCase() || "unknown";
+  if (element.id) return `${tag}#${element.id}`;
+  const className =
+    typeof element.className === "string"
+      ? element.className.trim().split(/\s+/)[0]
+      : "";
+  const parent = element.parentElement;
+  const index = parent ? Array.prototype.indexOf.call(parent.children, element) : -1;
+  return `${tag}${className ? "." + className : ""}${index >= 0 ? ":" + index : ""}`;
+}
+
+/**
+ * looksClickable decides whether nothing happening after a click is worth
+ * reporting. A paragraph that does not react is not a dead click; a styled div
+ * that the application treats as a button is.
+ */
+function looksClickable(element: Element): boolean {
+  if (element.closest?.(INTERACTIVE_SELECTOR)) return true;
+  try {
+    return getComputedStyle(element).cursor === "pointer";
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -175,6 +254,18 @@ export class MomentoTracker {
   private consentState: ConsentState = "unknown";
   private acquisition: TrafficContext = {};
   private cspReported = false;
+  private routeHooks: Array<(kind: RouteKind, previousAt: number, previousPath: string) => void> = [];
+  private routeInstalled = false;
+  private lastRouteAt = 0;
+  private lastRoutePath = "";
+  private rageBurst: { signature: string; at: number; count: number; timer?: number } | null = null;
+  private deadClickPending = false;
+  private lastClick: { at: number; properties: Properties } | null = null;
+  private formAttempts = new Map<string, number>();
+  private lastInvalidForm = { key: "", at: 0 };
+  private slowInteractionSeen = 0;
+  private searchState: { query: string; at: number } | null = null;
+  private signalsThisPage = 0;
 
   init(options: MomentoOptions) {
     if (!options.siteId || !options.endpoint)
@@ -194,6 +285,9 @@ export class MomentoTracker {
       collectElementText: false,
       sanitizeErrorMessages: true,
       autoRUM: true,
+      frustrationSignals: true,
+      searchTracking: true,
+      collectSearchTerms: false,
       ...options,
       environment,
       contractVersion,
@@ -209,8 +303,12 @@ export class MomentoTracker {
     if (!this.initialized) this.installCSPDiagnostics();
     if (this.options.autoTrack && !this.initialized) this.installAutoTracking();
     if (this.options.autoRUM && !this.initialized) this.installRUM();
+    if (this.options.frustrationSignals && !this.initialized)
+      this.installFrustrationSignals();
+    const firstRun = !this.initialized;
     this.initialized = true;
     if (this.options.autoTrack) this.track("page_view");
+    if (this.options.searchTracking && firstRun) this.installSearchTracking();
     this.log("initialized", {
       siteId: options.siteId,
       mode: this.options.mode,
@@ -233,6 +331,22 @@ export class MomentoTracker {
   setSessionProperties(properties: Properties = {}) {
     this.sessionProperties = { ...this.sessionProperties, ...properties };
     this.persistSession();
+  }
+
+  /**
+   * trackSearch reports a site search the tracker cannot see by itself, for
+   * applications that search without changing the URL. Pass resultCount when
+   * it is known — the zero-result rate is the most actionable search metric and
+   * it cannot be derived from the query alone.
+   */
+  trackSearch(query: string, resultCount?: number) {
+    if (!query || !query.trim()) return;
+    this.recordSearch(query, {
+      source: "manual",
+      ...(Number.isFinite(resultCount as number)
+        ? { result_count: Math.max(0, Math.trunc(resultCount as number)) }
+        : {}),
+    });
   }
 
   track(name: string, properties: Properties = {}) {
@@ -683,10 +797,30 @@ export class MomentoTracker {
     else addEventListener("load", navigation, { once: true });
   }
 
-  private installAutoTracking() {
-    const route = () => {
-      this.trackedScroll.clear();
-      window.setTimeout(() => this.track("page_view"), 0);
+  /**
+   * installRouteTracking patches history once and lets every feature register a
+   * hook. Page views, search detection and back-navigation timing all need to
+   * know that the route changed, and each of them patching history separately
+   * would report a route change several times.
+   */
+  private installRouteTracking() {
+    if (this.routeInstalled) return;
+    this.routeInstalled = true;
+    this.lastRouteAt = Date.now();
+    this.lastRoutePath = typeof location !== "undefined" ? location.pathname : "";
+    const fire = (kind: RouteKind) => {
+      const previousAt = this.lastRouteAt;
+      const previousPath = this.lastRoutePath;
+      this.lastRouteAt = Date.now();
+      this.lastRoutePath = location.pathname;
+      this.signalsThisPage = 0;
+      for (const hook of this.routeHooks) {
+        try {
+          hook(kind, previousAt, previousPath);
+        } catch {
+          /* one hook must not stop the others */
+        }
+      }
     };
     for (const method of ["pushState", "replaceState"] as const) {
       const original = history[method];
@@ -695,41 +829,75 @@ export class MomentoTracker {
         ...args: Parameters<History[typeof method]>
       ) {
         const value = original.apply(this, args);
-        route();
+        fire(method === "pushState" ? "push" : "replace");
         return value;
       } as History[typeof method];
     }
-    addEventListener("popstate", route);
+    addEventListener("popstate", () => fire("pop"));
+  }
+
+  private onRoute(
+    hook: (kind: RouteKind, previousAt: number, previousPath: string) => void,
+  ) {
+    this.installRouteTracking();
+    this.routeHooks.push(hook);
+  }
+
+  /** elementProperties describes a clicked element the same way for every signal. */
+  private elementProperties(target: HTMLElement): Properties {
+    const props: Properties = {
+      element_tag: target.tagName?.toLowerCase(),
+      element_id: target.id || undefined,
+      button:
+        target.dataset?.analyticsButton ||
+        target.getAttribute?.("aria-label") ||
+        undefined,
+      feature: target.dataset?.analyticsFeature || undefined,
+    };
+    if (this.options?.collectElementText)
+      props.element_text = target.innerText?.trim().slice(0, 100) || undefined;
+    return props;
+  }
+
+  /**
+   * signal reports a frustration or search signal under a per-page cap. A page
+   * stuck in a render loop must not turn into thousands of events.
+   */
+  private signal(name: string, properties: Properties = {}) {
+    if (this.signalsThisPage >= SIGNALS_PER_PAGE) return;
+    this.signalsThisPage += 1;
+    this.track(name, properties);
+  }
+
+  private installAutoTracking() {
+    this.onRoute(() => {
+      this.trackedScroll.clear();
+      window.setTimeout(() => this.track("page_view"), 0);
+    });
     addEventListener(
       "click",
       (event) => {
-        const target = (event.target as Element | null)?.closest(
-          "a,button,[role=button]",
-        ) as HTMLElement | null;
-        if (!target) return;
-        const anchor = target.closest("a") as HTMLAnchorElement | null;
-        const props: Properties = {
-          element_tag: target.tagName.toLowerCase(),
-          element_id: target.id || undefined,
-          button:
-            target.dataset.analyticsButton ||
-            target.getAttribute("aria-label") ||
-            undefined,
-          feature: target.dataset.analyticsFeature || undefined,
-        };
-        if (this.options?.collectElementText)
-          props.element_text =
-            target.innerText?.trim().slice(0, 100) || undefined;
-        if (anchor?.href && anchor.origin !== location.origin) {
-          props.url = sanitizedURL(anchor.href);
-          this.track("outbound_click", props);
-        } else if (
-          anchor?.download ||
-          /\.(pdf|zip|docx?|xlsx?|pptx?|csv)$/i.test(anchor?.pathname || "")
-        ) {
-          props.url = sanitizedURL(anchor?.href || "");
-          this.track("file_download", props);
-        } else this.track("click", props);
+        const element = event.target as HTMLElement | null;
+        if (!element) return;
+        const target = (element.closest?.("a,button,[role=button]") ||
+          null) as HTMLElement | null;
+        if (target) {
+          const anchor = target.closest("a") as HTMLAnchorElement | null;
+          const props = this.elementProperties(target);
+          if (anchor?.href && anchor.origin !== location.origin) {
+            props.url = sanitizedURL(anchor.href);
+            this.track("outbound_click", props);
+          } else if (
+            anchor?.download ||
+            /\.(pdf|zip|docx?|xlsx?|pptx?|csv)$/i.test(anchor?.pathname || "")
+          ) {
+            props.url = sanitizedURL(anchor?.href || "");
+            this.track("file_download", props);
+          } else this.track("click", props);
+          if (this.options?.searchTracking) this.observeSearchClick(target, anchor);
+        }
+        if (this.options?.frustrationSignals)
+          this.observeClickFrustration(target || element);
       },
       { capture: true },
     );
@@ -773,6 +941,7 @@ export class MomentoTracker {
             line: error.lineno,
             column: error.colno,
           });
+          this.reportErrorAfterClick("error");
           return;
         }
         const target = event.target as
@@ -783,17 +952,19 @@ export class MomentoTracker {
             resource: sanitizedURL(target.src || target.href || ""),
             resource_type: target.tagName?.toLowerCase(),
           });
+        this.reportErrorAfterClick("resource_error");
       },
       true,
     );
-    addEventListener("unhandledrejection", (event) =>
+    addEventListener("unhandledrejection", (event) => {
       this.track("error", {
         message: this.options?.sanitizeErrorMessages
           ? sanitizedError(event.reason)
           : String(event.reason),
         type: "unhandledrejection",
-      }),
-    );
+      });
+      this.reportErrorAfterClick("unhandledrejection");
+    });
     addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") void this.flush(true);
     });
@@ -807,6 +978,324 @@ export class MomentoTracker {
       },
       (this.options?.heartbeatSeconds || 15) * 1000,
     );
+  }
+
+  /**
+   * installFrustrationSignals turns the signals the Frustration report scores
+   * into something the tracker produces on its own. Before this the report
+   * weighed seven signals that only hand-written instrumentation ever sent, so
+   * the page was empty for everyone using the tracker as shipped.
+   *
+   * Click-driven signals are detected inside the single click listener that
+   * auto-tracking already installs; the rest are wired here.
+   */
+  private installFrustrationSignals() {
+    this.onRoute((kind, previousAt, previousPath) => {
+      if (kind !== "pop") return;
+      const dwell = Date.now() - previousAt;
+      if (dwell > RAPID_BACK_MS) return;
+      this.signal("rapid_back", {
+        dwell_ms: dwell,
+        from_path: previousPath || undefined,
+        to_path: location.pathname,
+      });
+    });
+
+    addEventListener("submit", (event) => {
+      const form = event.target as HTMLFormElement | null;
+      if (!form) return;
+      const key = this.formKey(form);
+      const attempt = (this.formAttempts.get(key) || 0) + 1;
+      this.formAttempts.set(key, attempt);
+      if (attempt < 2) return;
+      this.signal("form_retry", {
+        form_id: form.id || form.name || undefined,
+        attempt,
+        reason: "resubmit",
+      });
+    });
+
+    addEventListener(
+      "invalid",
+      (event) => {
+        const field = event.target as HTMLElement | null;
+        const form = field?.closest?.("form") as HTMLFormElement | null;
+        const key = form ? this.formKey(form) : "detached";
+        const now = Date.now();
+        if (this.lastInvalidForm.key === key && now - this.lastInvalidForm.at < 1000)
+          return;
+        this.lastInvalidForm = { key, at: now };
+        this.signal("form_retry", {
+          form_id: form?.id || form?.name || undefined,
+          field: (field as HTMLInputElement | null)?.name || field?.id || undefined,
+          reason: "validation",
+        });
+      },
+      true,
+    );
+
+    if (typeof PerformanceObserver === "undefined") return;
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          const timing = entry as PerformanceEntry & {
+            duration: number;
+            interactionId?: number;
+          };
+          if ((timing.interactionId || 0) <= 0) continue;
+          if (timing.duration < SLOW_INTERACTION_MS) continue;
+          if (this.slowInteractionSeen >= SIGNALS_PER_PAGE) break;
+          this.slowInteractionSeen += 1;
+          this.signal("slow_interaction", {
+            duration_ms: Math.round(timing.duration),
+            interaction: entry.name,
+          });
+        }
+      });
+      observer.observe({
+        type: "event",
+        durationThreshold: SLOW_INTERACTION_MS,
+      } as PerformanceObserverInit);
+    } catch {
+      /* the browser does not report event timing */
+    }
+  }
+
+  private formKey(form: HTMLFormElement): string {
+    return form.id || form.name || form.getAttribute("action") || "form";
+  }
+
+  /**
+   * observeClickFrustration counts repeat clicks on one element and checks
+   * whether a click that looked actionable actually did anything.
+   */
+  private observeClickFrustration(target: HTMLElement) {
+    this.lastClick = { at: Date.now(), properties: this.elementProperties(target) };
+    const signature = elementSignature(target);
+    const now = Date.now();
+    const burst = this.rageBurst;
+    if (burst && burst.signature === signature && now - burst.at <= RAGE_CLICK_WINDOW_MS) {
+      burst.at = now;
+      burst.count += 1;
+      if (burst.count === RAGE_CLICK_THRESHOLD) {
+        // Report after the burst settles so the count is the real one, not three.
+        burst.timer = window.setTimeout(() => {
+          this.signal("rage_click", {
+            ...this.elementProperties(target),
+            clicks: this.rageBurst?.count || RAGE_CLICK_THRESHOLD,
+            window_ms: RAGE_CLICK_WINDOW_MS,
+          });
+          this.rageBurst = null;
+        }, RAGE_CLICK_WINDOW_MS);
+      }
+      return;
+    }
+    if (burst?.timer) window.clearTimeout(burst.timer);
+    this.rageBurst = { signature, at: now, count: 1 };
+    this.checkDeadClick(target);
+  }
+
+  /**
+   * checkDeadClick reports a click that changed nothing. Navigation, a DOM
+   * mutation, a scroll, a focus move or a text selection all count as something
+   * happening, so only a genuinely inert click is reported. One check runs at a
+   * time: the observer is attached on demand and disconnected immediately.
+   */
+  private checkDeadClick(target: HTMLElement) {
+    if (this.deadClickPending) return;
+    if (typeof MutationObserver === "undefined") return;
+    if (!looksClickable(target)) return;
+    const anchor = target.closest?.("a") as HTMLAnchorElement | null;
+    if (anchor?.href) return;
+    const type = (target as HTMLInputElement).type;
+    if (type === "submit" || type === "reset" || type === "file") return;
+    if (target.closest?.("[data-momento-ignore-dead-click]")) return;
+    this.deadClickPending = true;
+    let mutated = false;
+    const observer = new MutationObserver(() => {
+      mutated = true;
+    });
+    try {
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
+    } catch {
+      this.deadClickPending = false;
+      return;
+    }
+    const before = {
+      url: location.href,
+      scroll: typeof scrollY === "number" ? scrollY : 0,
+      focus: document.activeElement,
+    };
+    window.setTimeout(() => {
+      observer.disconnect();
+      this.deadClickPending = false;
+      if (mutated) return;
+      if (location.href !== before.url) return;
+      if ((typeof scrollY === "number" ? scrollY : 0) !== before.scroll) return;
+      if (document.activeElement !== before.focus) return;
+      if (window.getSelection?.()?.toString()) return;
+      this.signal("dead_click", {
+        ...this.elementProperties(target),
+        waited_ms: DEAD_CLICK_WINDOW_MS,
+      });
+    }, DEAD_CLICK_WINDOW_MS);
+  }
+
+  /** reportErrorAfterClick links a failure to the action that preceded it. */
+  private reportErrorAfterClick(kind: string) {
+    if (!this.options?.frustrationSignals) return;
+    const click = this.lastClick;
+    if (!click) return;
+    const since = Date.now() - click.at;
+    if (since > ERROR_AFTER_CLICK_MS) return;
+    this.signal("error_after_click", {
+      ...click.properties,
+      error_kind: kind,
+      since_click_ms: since,
+    });
+  }
+
+  /**
+   * installSearchTracking reports site search without asking the application to
+   * instrument it. A search is recognised from the query string of the results
+   * page, which is how search works in nearly every application; anything that
+   * searches without changing the URL can call trackSearch instead.
+   */
+  private installSearchTracking() {
+    this.onRoute(() => {
+      this.searchState = null;
+      void this.detectSearchFromURL();
+    });
+    void this.detectSearchFromURL();
+  }
+
+  private searchParamNames(): string[] {
+    const extra = this.options?.searchParams || [];
+    return [...extra, ...DEFAULT_SEARCH_PARAMS];
+  }
+
+  private searchTermFromURL(): { query: string; param: string } | null {
+    let params: URLSearchParams;
+    try {
+      params = new URLSearchParams(location.search || "");
+    } catch {
+      return null;
+    }
+    for (const name of this.searchParamNames()) {
+      const value = params.get(name);
+      if (value && value.trim()) return { query: value, param: name };
+    }
+    return null;
+  }
+
+  private async detectSearchFromURL() {
+    const found = this.searchTermFromURL();
+    if (!found) return;
+    const count = await this.awaitResultCount();
+    this.recordSearch(found.query, {
+      source: "url",
+      param: found.param,
+      ...(count === undefined ? {} : { result_count: count }),
+    });
+  }
+
+  /**
+   * awaitResultCount waits briefly for the application to publish how many
+   * results it rendered. The zero-result rate is the metric that makes search
+   * analytics actionable and it cannot be inferred from the query, so the
+   * tracker gives the page a moment to set the attribute before reporting.
+   */
+  private async awaitResultCount(): Promise<number | undefined> {
+    const read = () => {
+      const holder = document.querySelector?.(`[${RESULTS_ATTRIBUTE}]`);
+      if (!holder) return undefined;
+      const raw = holder.getAttribute(RESULTS_ATTRIBUTE);
+      const value = Number(raw);
+      return raw !== null && raw !== "" && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : undefined;
+    };
+    const immediate = read();
+    if (immediate !== undefined) return immediate;
+    const attempts = Math.ceil(SEARCH_RESULT_WAIT_MS / SEARCH_RESULT_POLL_MS);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, SEARCH_RESULT_POLL_MS),
+      );
+      const value = read();
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  /**
+   * recordSearch reports one search and, when it follows another closely, says
+   * whether the person repeated the same words or refined them. Those are
+   * different problems: a repeat means the results were not usable, a refinement
+   * means the first wording was not specific enough.
+   */
+  private recordSearch(rawQuery: string, extra: Properties) {
+    const normalized = rawQuery.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 100);
+    if (!normalized) return;
+    const now = Date.now();
+    const previous = this.searchState;
+    if (previous && previous.query === normalized && now - previous.at < 2000) return;
+    this.searchState = { query: normalized, at: now };
+    const words = normalized.split(" ").filter(Boolean);
+    const props: Properties = {
+      ...extra,
+      query_length: normalized.length,
+      query_words: words.length,
+    };
+    if (this.options?.collectSearchTerms) props.query = redactPII(normalized, 100);
+    this.track("search", props);
+    if (!previous || now - previous.at > REPEATED_SEARCH_WINDOW_MS) return;
+    const refined =
+      previous.query !== normalized &&
+      (normalized.startsWith(previous.query) || previous.query.startsWith(normalized));
+    if (previous.query === normalized)
+      this.signal("repeated_search", {
+        seconds_since: Math.round((now - previous.at) / 1000),
+        ...(this.options?.collectSearchTerms ? { query: redactPII(normalized, 100) } : {}),
+      });
+    else if (refined)
+      this.track("search_refine", {
+        seconds_since: Math.round((now - previous.at) / 1000),
+        direction: normalized.length > previous.query.length ? "narrowed" : "widened",
+        ...(this.options?.collectSearchTerms
+          ? { query: redactPII(normalized, 100), previous_query: redactPII(previous.query, 100) }
+          : {}),
+      });
+  }
+
+  /**
+   * observeSearchClick reports which result a person opened. Position matters
+   * more than the count: clicks that land far down the list say the ranking is
+   * wrong even when the search looks successful.
+   */
+  private observeSearchClick(target: HTMLElement, anchor: HTMLAnchorElement | null) {
+    if (!anchor?.href) return;
+    const container = target.closest?.(`[${RESULTS_ATTRIBUTE}]`) as HTMLElement | null;
+    if (!container && !this.searchState) return;
+    const marked = target.closest?.(`[${POSITION_ATTRIBUTE}]`);
+    let position: number | undefined;
+    if (marked) {
+      const value = Number(marked.getAttribute(POSITION_ATTRIBUTE));
+      if (Number.isFinite(value)) position = Math.trunc(value);
+    } else if (container) {
+      const links = Array.prototype.slice.call(container.querySelectorAll("a[href]"));
+      const index = links.indexOf(anchor);
+      if (index >= 0) position = index + 1;
+    }
+    this.track("search_click", {
+      url: sanitizedURL(anchor.href),
+      ...(position === undefined ? {} : { position }),
+    });
   }
 }
 
@@ -834,6 +1323,15 @@ if (script?.dataset.siteId) {
     debug: script.dataset.debug === "true",
     collectElementText: script.dataset.collectElementText === "true",
     autoRUM: script.dataset.autoRum !== "false",
+    frustrationSignals: script.dataset.frustrationSignals !== "false",
+    searchTracking: script.dataset.searchTracking !== "false",
+    collectSearchTerms: script.dataset.collectSearchTerms === "true",
+    searchParams: script.dataset.searchParams
+      ? script.dataset.searchParams
+          .split(",")
+          .map((name) => name.trim())
+          .filter(Boolean)
+      : undefined,
     appVersion: script.dataset.appVersion,
     releaseVersion: script.dataset.releaseVersion,
     gitSha: script.dataset.gitSha,

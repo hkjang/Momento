@@ -180,9 +180,9 @@ export default function DataTable({
         <Table stickyHeader size={dense ? "small" : "medium"} sx={{ minWidth }}>
           <TableHead>
             <TableRow>
-              {columns.map((column) => (
+              {columns.map((column, index) => (
                 <TableCell
-                  key={column.key}
+                  key={`${column.key}-${index}`}
                   align={column.align}
                   sx={{ minWidth: column.minWidth }}
                 >
@@ -194,8 +194,8 @@ export default function DataTable({
           <TableBody>
             {paged.map((row, index) => (
               <TableRow hover key={rowKey(row, index)}>
-                {columns.map((column) => (
-                  <TableCell key={column.key} align={column.align}>
+                {columns.map((column, columnIndex) => (
+                  <TableCell key={`${column.key}-${columnIndex}`} align={column.align}>
                     {column.format ? (
                       column.format(row[column.key], row)
                     ) : typeof row[column.key] === "number" ? (

@@ -9,7 +9,7 @@
 ## 목차
 
 1. [플랫폼 아키텍처 개요](#1-플랫폼-아키텍처-개요)
-2. [JavaScript SDK 연동 및 설정 가이드](#2-javascript-sdk-연동-및-설정-가이드) — 설치, CSP 허용, 동의 모드, 식별, 커스텀 이벤트, SPA, 오프라인 큐
+2. [JavaScript SDK 연동 및 설정 가이드](#2-javascript-sdk-연동-및-설정-가이드) — 설치, 자동 감지 신호와 사이트 검색, CSP 허용, 동의 모드, 식별, 커스텀 이벤트, SPA, 오프라인 큐
 3. [고급 분석 기능 사용법](#3-고급-분석-기능-사용법)
    - 무엇을 볼지: 3.1 첫 화면, 3.2 방문자 인사이트, 3.3 방문자 추적, 3.4 이상 감지, 3.5 전환 기여도
    - 누가 다른지: 3.6 행동 기반 Segment, 3.7 Funnel 비교, 3.8 Retention 비교, 3.9 경험 비교
@@ -56,13 +56,55 @@ Momento는 사내 애플리케이션 및 인트라넷 환경에서 발생하는 
 | `data-debug` | Boolean | 선택 | `true`이면 브라우저 콘솔에 SDK 진단 로그 출력 |
 | `data-collect-element-text` | Boolean | 선택 | 버튼 문구 수집. 개인정보 최소화를 위해 기본값은 `false` |
 | `data-auto-rum` | Boolean | 선택 | Core Web Vitals와 Resource Error 자동 수집. 기본 `true` |
+| `data-frustration-signals` | Boolean | 선택 | Rage Click, Dead Click, Rapid Back, Form Retry, Error After Click, Slow Interaction 자동 감지. 기본 `true` |
+| `data-search-tracking` | Boolean | 선택 | 결과 페이지의 질의 문자열로 사이트 검색 자동 인식. 기본 `true` |
+| `data-collect-search-terms` | Boolean | 선택 | 검색어 원문 수집. 개인정보 최소화를 위해 기본값은 `false` |
+| `data-search-params` | String | 선택 | 검색어 질의 문자열 이름 추가 지정(쉼표 구분). 기본값은 `q,query,search,searchword,keyword,kwd,term,s` |
 | `data-release-version` | String | 선택 | Release Impact 비교용 애플리케이션 릴리스 |
 | `data-git-sha` | String | 선택 | 배포 소스 revision |
 | `data-endpoint` | String | 선택 | Collector 주소 override. 절대 URL 또는 같은 Origin의 프록시 경로(`/momento`) |
 
 Collector endpoint는 `tracker.js`를 제공한 Origin의 `/collect/v1/events`로 자동 설정됩니다. Page View, SPA History 변경, 클릭, 스크롤, Form, Download, Outbound Link, Error, Heartbeat, LCP/INP/CLS/FCP/TTFB와 Resource Error는 기본 자동 수집됩니다.
 
-### 2.1.1 Content-Security-Policy 허용
+### 2.1.1 자동 감지되는 Frustration 신호와 사이트 검색
+
+별도 계측 없이 다음을 감지합니다. 감지 기준은 화면의 신호 설명과 동일합니다.
+
+| Event | 감지 기준 |
+| :--- | :--- |
+| `rage_click` | 같은 요소를 1초 안에 3번 이상 클릭. 실제 클릭 수를 `clicks`로 전달 |
+| `dead_click` | 클릭 가능해 보이는 요소를 눌렀지만 1.2초 동안 DOM 변화, 이동, 스크롤, 포커스 이동, 텍스트 선택이 모두 없음 |
+| `rapid_back` | 도착 후 3초 안에 뒤로 이동. 머문 시간을 `dwell_ms`로 전달 |
+| `form_retry` | 같은 Form 재제출(`reason=resubmit`) 또는 입력 검증 실패(`reason=validation`) |
+| `repeated_search` | 같은 검색어를 2분 안에 재검색 |
+| `error_after_click` | 클릭 후 2초 안에 오류 발생. 원인 요소를 함께 전달 |
+| `slow_interaction` | 입력 응답이 500ms 초과(INP `poor` 구간) |
+| `search` | 결과 페이지 질의 문자열에서 검색 인식. `query_length`, `query_words`, `result_count` 전달 |
+| `search_click` | 검색 결과 링크 클릭. 순위를 `position`으로 전달 |
+| `search_refine` | 검색어를 좁히거나 넓혀 재검색. 방향을 `direction`으로 전달 |
+
+한 페이지에서 보고하는 신호 수는 20건으로 제한되어, 렌더 루프에 빠진 화면이 수천 건의 Event로 번지지 않습니다.
+
+정확도를 높이는 선택 계측은 세 가지입니다. 없어도 검색 횟수와 Frustration 신호는 수집되지만, 결과 0건 비율과 클릭된 결과 순위는 페이지가 알려줘야만 알 수 있습니다.
+
+```html
+<div data-momento-search-results="12">
+  <a href="/doc/1" data-momento-search-position="1">첫 번째 결과</a>
+</div>
+
+<!-- 정상 동작하는 위젯이 Dead Click으로 잡히면 제외 -->
+<div data-momento-ignore-dead-click>...</div>
+```
+
+URL이 바뀌지 않는 검색은 직접 알려줍니다.
+
+```js
+analytics.trackSearch(query, results.length);
+```
+
+검색어 원문은 사람이 입력한 자유 텍스트이므로 기본적으로 보내지 않습니다. `data-collect-search-terms="true"`를 켜면 공백 정리와 소문자 정규화 후 100자까지 전송하며, 이메일·주민등록번호·휴대전화 번호는 브라우저에서 먼저 제거하고 서버의 PII 정책이 한 번 더 검사합니다.
+
+### 2.1.2 Content-Security-Policy 허용
 
 측정 대상 애플리케이션이 CSP를 사용하면 `tracker.js` 로드와 수집 요청을 명시적으로 허용해야 합니다. 예를 들어 `connect-src 'self' ws: wss:`만 허용된 페이지에서는 브라우저가 `/collect/v1/events` 요청을 차단하고 콘솔에 `Refused to connect ... violates the document's Content Security Policy`를 남깁니다.
 
@@ -345,8 +387,10 @@ SDK의 자동 RUM은 LCP, INP, CLS, FCP, TTFB, Load와 Resource Error를 `web_vi
 
 - Workspace Roll-Up은 같은 Workspace의 Site를 합쳐 서비스별 사용자·Event·Session·Service Score를 비교합니다. 같은 SSO `user_id`는 Site를 넘어 한 명으로 계산하고 익명 Visitor는 Site별로 격리합니다.
 - Feature Intelligence는 `feature` Property를 기준으로 Adoption, Repeat, Conversion, Error, 기간 추세와 Dead Feature 후보를 계산합니다.
-- Search Analytics는 `search`, `search_result`, `search_click`, `search_no_result`, `search_refine`, `search_exit`, `search_success` 표준 Event를 사용합니다.
-- Frustration Analytics는 Replay를 저장하지 않고 `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`과 오류 Event만으로 막힘을 추정합니다.
+- Search Analytics는 `search`, `search_result`, `search_click`, `search_no_result`, `search_refine`, `search_exit`, `search_success` 표준 Event를 사용합니다. `search`, `search_click`, `search_refine`은 tracker가 자동 전송하므로 별도 계측 없이 검색 횟수, CTR, 재검색을 볼 수 있습니다(2.1.1 참고).
+- Frustration Analytics는 Replay를 저장하지 않고 `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`과 오류 Event만으로 막힘을 추정합니다. 아홉 신호 모두 tracker가 자동 감지합니다.
+- 두 화면은 표가 비어 있을 때 "문제가 없다"와 "측정되지 않는다"를 구분해 안내합니다. Session은 있는데 신호가 0건이면 스니펫 버전과 `data-frustration-signals` 설정을 확인하라고 표시하고, 검색 횟수는 있는데 검색어가 모두 `(not set)`이면 `data-collect-search-terms` 안내를 표시합니다. 결과 0건이 한 건도 없으면 `data-momento-search-results` 계측이 빠졌을 가능성을 함께 알립니다.
+- Frustration 표는 각 신호의 뜻과 확인할 것을 함께 보여주므로 신호 이름만 보고 해석을 추측하지 않아도 됩니다.
 
 ### 3.19 Experiment와 Goal
 

@@ -23,6 +23,21 @@ import (
 
 var eventNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 var environmentPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+// automaticEvents are the events the tracker emits on its own. They are part of
+// the product rather than a customer's schema, so a strict contract does not
+// have to redeclare them; a site that does register one keeps its own schema and
+// validation mode. Without this, turning on reject mode would drop every batch
+// that carried a built-in event, and shipping a new automatic signal would break
+// the sites that had transcribed the previous list.
+var automaticEvents = map[string]bool{
+	"page_view": true, "click": true, "outbound_click": true, "file_download": true,
+	"scroll": true, "form_start": true, "form_submit": true, "user_engagement": true,
+	"error": true, "resource_error": true, "web_vital": true,
+	"rage_click": true, "dead_click": true, "rapid_back": true, "form_retry": true,
+	"repeated_search": true, "error_after_click": true, "slow_interaction": true,
+	"search": true, "search_click": true, "search_refine": true,
+}
+
 var knownBotPattern = regexp.MustCompile(`(?i)(bot\b|crawler|spider|slurp|bingpreview|headlesschrome)`)
 var monitoringPattern = regexp.MustCompile(`(?i)(uptime|pingdom|healthcheck|monitoring|prometheus)`)
 var emailPIIPattern = regexp.MustCompile(`(?i)\b[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}\b`)
@@ -131,7 +146,9 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 		contracts, known := definitions[req.Events[i].Name]
 		warnings := []string{}
 		if !known {
-			warnings = append(warnings, "event is not registered")
+			if !automaticEvents[req.Events[i].Name] {
+				warnings = append(warnings, "event is not registered")
+			}
 		} else {
 			if req.Events[i].ContractVersion == 0 {
 				req.Events[i].ContractVersion = contracts.current

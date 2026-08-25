@@ -23,6 +23,7 @@
 - 기여도: 단일 터치(first/last/last-non-direct)와 다중 터치(선형·시간 감쇠·위치 기반) 채널 배분, SSO 기반 교차 서비스 배분, 관여 전환, 평균 경로 길이, Metric Goal 착지 예측
 - 방문자 인사이트: 전기간 자동 비교 KPI, 신규·재방문 구조, 채널 그룹 분류, 진입 페이지 이탈, 방문 빈도·최근성, 기기 격차, 우선순위 인사이트와 실행 대상 Segment, Markdown 즉시 복사·다운로드·정기 배달
 - 분석: 첫 화면 「지금 봐야 할 것」(이상 감지·Goal 미달 전망 통합), Overview, Realtime, Acquisition, Pages, Events, Visitors, Sessions, Cohort/Retention, Site·Cross-Site Business Journey, Workspace Roll-Up, Feature/Search/Frustration, Experiment, Web Vitals/Error/Release Impact, Insight/Root Cause, Ecommerce, User Timeline
+- 자동 감지: Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction과 사이트 검색(검색어·결과 수·결과 순위)을 별도 계측 없이 수집
 - Identity/집계: fingerprint 없는 SSO/identify 기반 Deterministic Identity Graph, canonical User Property, Visitor/Session 요약, Site-local 일별 집계와 기존 Raw Event 자동 backfill
 - 거버넌스: 버전형 Event Contract와 CI 검증, Formula 지원 Semantic Metric Registry, Metric Goal, Event Catalog·Lineage, DEV/STG/PRD 정책, Tracking Health Score, PII·Cardinality 이슈, Adoption 대상자 분모
 - 비밀값 관리: `MOMENTO_ENCRYPTION_KEY` 기반 AES-256-GCM 저장, 재기동 후 키 재조회, 키 교체용 이전 키 병행과 재암호화, 설치 진단(CSP·허용 도메인·환경·적재 파이프라인)

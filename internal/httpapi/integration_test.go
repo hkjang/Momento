@@ -630,3 +630,139 @@ func TestGovernanceEndpointsRunAgainstPostgres(t *testing.T) {
 		}
 	}
 }
+
+// TestRejectModeAcceptsAutomaticEventsButNotUnregisteredOnes pins the behaviour
+// that lets a site turn on strict contracts. The tracker emits twenty-one events
+// on its own; if those counted as unregistered, enabling reject mode would drop
+// every batch that carried one, and each new automatic signal would break the
+// sites that had transcribed the previous list.
+func TestRejectModeAcceptsAutomaticEventsButNotUnregisteredOnes(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `UPDATE site_environments SET contract_mode='reject' WHERE site_id=$1 AND name='prd'`, f.siteID); err != nil {
+		t.Fatalf("switch to reject mode: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE site_environments SET contract_mode='allow' WHERE site_id=$1 AND name='prd'`, f.siteID)
+	})
+
+	send := func(t *testing.T, eventName string) int {
+		t.Helper()
+		payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"visitor-contract","session_id":"session-contract",
+			"context":{"page":{"url":"https://portal.internal/search","title":"검색","referrer":""},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{}},
+			"events":[{"id":"%s","name":"%s","timestamp":%d,"properties":{"query_words":2},"contract_version":1}]}`,
+			f.siteKey, f.trackingKey, uuid.NewString(), eventName, time.Now().UnixMilli())
+		request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://portal.internal")
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	for _, name := range []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "search", "search_click", "search_refine", "page_view", "web_vital"} {
+		if code := send(t, name); code != http.StatusAccepted {
+			t.Fatalf("reject mode refused the automatic event %s with %d", name, code)
+		}
+	}
+
+	if code := send(t, "definitely_not_registered"); code == http.StatusAccepted {
+		t.Fatal("reject mode accepted an unregistered custom event, so the contract is not enforced")
+	}
+
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	if stored := f.countEvents(t, "rage_click"); stored == 0 {
+		t.Fatal("the automatic signal was accepted but never stored")
+	}
+	if stored := f.countEvents(t, "definitely_not_registered"); stored != 0 {
+		t.Fatalf("the rejected event reached storage %d times", stored)
+	}
+}
+
+// TestAutomaticSignalsReachTheReportsThatScoreThem follows the new tracker
+// signals from the collector to the two reports that read them. Both reports
+// existed before anything produced their events, so the point of this test is
+// that ingesting what the tracker now sends actually moves the numbers.
+func TestAutomaticSignalsReachTheReportsThatScoreThem(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	today := time.Now().Format("2006-01-02")
+	from := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
+	site := "/api/v1/sites/" + f.siteKey
+
+	events := []string{
+		fmt.Sprintf(`{"id":"%s","name":"rage_click","timestamp":%d,"properties":{"element_id":"save","clicks":4},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+		fmt.Sprintf(`{"id":"%s","name":"dead_click","timestamp":%d,"properties":{"element_id":"filter"},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+		fmt.Sprintf(`{"id":"%s","name":"error_after_click","timestamp":%d,"properties":{"element_id":"submit","error_kind":"error"},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+		fmt.Sprintf(`{"id":"%s","name":"search","timestamp":%d,"properties":{"query":"연차 신청","result_count":0,"source":"url"},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+		fmt.Sprintf(`{"id":"%s","name":"search","timestamp":%d,"properties":{"query":"출장 정산","result_count":12,"source":"url"},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+		fmt.Sprintf(`{"id":"%s","name":"search_click","timestamp":%d,"properties":{"query":"출장 정산","position":2},"contract_version":1}`, uuid.NewString(), time.Now().UnixMilli()),
+	}
+	payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"visitor-signals","session_id":"session-signals",
+		"context":{"page":{"url":"https://portal.internal/search","title":"검색","referrer":""},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{}},
+		"events":[%s]}`, f.siteKey, f.trackingKey, strings.Join(events, ","))
+
+	request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://portal.internal")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("collect = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+
+	frustration := f.get(t, site+"/frustration?from="+from+"&to="+today)
+	summary, _ := frustration["summary"].(map[string]any)
+	if summary == nil || summary["affected_sessions"] == nil {
+		t.Fatalf("frustration report has no summary: %v", frustration)
+	}
+	if affected, _ := summary["affected_sessions"].(float64); affected < 1 {
+		t.Fatalf("the ingested signals left the frustration report empty: %v", summary)
+	}
+	if score, _ := summary["average_frustration_score"].(float64); score <= 0 {
+		t.Fatalf("frustration score was not computed: %v", summary)
+	}
+	reported := map[string]bool{}
+	for _, row := range frustration["signals"].([]any) {
+		signal, _ := row.(map[string]any)
+		reported[fmt.Sprint(signal["signal"])] = true
+	}
+	for _, want := range []string{"rage_click", "dead_click", "error_after_click"} {
+		if !reported[want] {
+			t.Errorf("the frustration report does not list %s", want)
+		}
+	}
+
+	search := f.get(t, site+"/search-analytics?from="+from+"&to="+today)
+	searchSummary, _ := search["summary"].(map[string]any)
+	if searchSummary == nil {
+		t.Fatalf("search report has no summary: %v", search)
+	}
+	if searches, _ := searchSummary["searches"].(float64); searches < 2 {
+		t.Fatalf("searches were not counted: %v", searchSummary)
+	}
+	// One of the two searches returned nothing, which is the metric the tracker's
+	// result-count hook exists to make possible.
+	if zero, _ := searchSummary["zero_results"].(float64); zero < 1 {
+		t.Fatalf("a zero-result search was not recognised: %v", searchSummary)
+	}
+	if clicks, _ := searchSummary["clicks"].(float64); clicks < 1 {
+		t.Fatalf("the result click was not counted: %v", searchSummary)
+	}
+	queries := map[string]bool{}
+	for _, row := range search["queries"].([]any) {
+		item, _ := row.(map[string]any)
+		queries[fmt.Sprint(item["query"])] = true
+	}
+	if !queries["연차 신청"] || !queries["출장 정산"] {
+		t.Errorf("the query table is missing a search term: %v", queries)
+	}
+}

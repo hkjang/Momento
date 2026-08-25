@@ -142,6 +142,7 @@ Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter �
 - 각 Environment는 Event Contract 정책 `allow`, `warn`, `reject`와 일별 Cardinality Limit를 가집니다.
 - Event Contract는 Version마다 JSON Schema, Validation Mode, Changelog, 작성자와 활성시각을 보관합니다.
 - Draft는 수집에 사용할 수 없습니다. Active Version을 바꾸면 이전 Active는 Deprecated가 되지만 Retry 호환을 위해 계속 검증할 수 있습니다.
+- tracker가 스스로 보내는 Event(`page_view`, `click`, `outbound_click`, `file_download`, `scroll`, `form_start`, `form_submit`, `user_engagement`, `error`, `resource_error`, `web_vital`, `rage_click`, `dead_click`, `rapid_back`, `form_retry`, `repeated_search`, `error_after_click`, `slow_interaction`, `search`, `search_click`, `search_refine`)는 제품 구성 요소이므로 `reject` 모드에서도 미등록으로 거부되지 않습니다. 직접 등록하면 그 Site의 Schema와 Validation Mode가 그대로 적용됩니다. 이 예외가 없으면 `reject`를 켜는 순간 내장 Event가 섞인 모든 배치가 거부되고, 새 자동 신호가 추가될 때마다 기존 Site가 깨집니다.
 - PRD를 비활성화할 수 없으며 SDK와 Server API가 Environment를 생략하면 PRD가 적용됩니다.
 
 ## 11. Semantic Metric과 Data Quality

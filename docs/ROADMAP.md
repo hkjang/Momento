@@ -177,6 +177,14 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.22.0 — implemented
+
+- Frustration 신호 7종 자동 감지: Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction
+- 사이트 검색 자동 인식: 질의 문자열 기반 `search`, 결과 순위 포함 `search_click`, 재검색 구분 `search_refine`, `trackSearch()` API
+- 검색어 수집은 opt-in, 브라우저 단계 PII 제거, 페이지당 신호 20건 상한
+- 내장 Event는 strict Contract에서 미등록 거부 대상에서 제외
+- 두 리포트의 빈 표를 "문제 없음"과 "측정 안 됨"으로 구분해 안내
+
 ## v0.21.4 — implemented
 
 - 개인정보 삭제·Retention·Aggregate 재집계 통합 검증. 삭제 모드 4종, 파생 테이블 8종 잔존 0건, 타인 데이터 보존, 승인 전 Export 차단 확인
