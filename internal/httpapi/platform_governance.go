@@ -491,7 +491,7 @@ func (s *Server) querySemanticMetric(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -632,7 +632,7 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)

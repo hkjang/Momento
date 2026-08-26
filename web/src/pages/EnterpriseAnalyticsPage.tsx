@@ -31,7 +31,7 @@ function WorkspaceRollup() {
   const q = useQuery({ queryKey: ["workspace-rollup", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; services: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/workspace-rollup?${rangeQuery(days, site!.timezone)}`) });
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />;
   if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
   if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   return <Stack spacing={2}>
@@ -106,7 +106,7 @@ function FeatureIntelligence() {
   const q = useQuery({ queryKey: ["feature-intelligence", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ population: number; features: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/feature-intelligence?${rangeQuery(days, site!.timezone)}`) });
   const narrower = narrowerRange(days, [30, 60, 90]);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} options={[30, 60, 90]} timezone={site.timezone} />;
+  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} options={[30, 60, 90]} timezone={site.timezone} />;
   if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
   if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   return <Stack spacing={2}>
@@ -124,7 +124,7 @@ function SearchAnalytics() {
   const q = useQuery({ queryKey: ["search-analytics", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; queries: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(days, site!.timezone)}`) });
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />;
   if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
   if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   const setup = searchSetupHint(q.data?.summary, q.data?.queries as { query?: unknown }[] | undefined);
@@ -145,7 +145,7 @@ function Frustration() {
   const q = useQuery({ queryKey: ["frustration", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[]; impact: FrictionImpact[]; impact_caveat: string }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(days, site!.timezone)}`) });
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />;
   if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
   if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   const setup = frustrationSetupHint(q.data?.summary);

@@ -157,7 +157,7 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -531,7 +531,7 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -746,7 +746,7 @@ func (s *Server) channelAttribution(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	model := strings.TrimSpace(r.URL.Query().Get("model"))

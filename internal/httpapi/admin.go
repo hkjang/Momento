@@ -170,7 +170,7 @@ func (s *Server) rotateMyKey(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.timezone,s.engagement_threshold_seconds,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id WHERE $1 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2) ORDER BY s.created_at`, p.Role, p.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.timezone,s.engagement_threshold_seconds,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name,coalesce(q.max_exact_days,$3) FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id LEFT JOIN query_policies q ON q.site_id=s.id WHERE $1 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2) ORDER BY s.created_at`, p.Role, p.ID, defaultQueryPolicy().MaxExactDays)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -181,11 +181,14 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var key, name, service, timezone, prefix, serverPrefix, workspace, org string
 		var domains []string
-		var timeout, engagementThreshold int
+		var timeout, engagementThreshold, maxExactDays int
 		var active bool
 		var created time.Time
-		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &timezone, &engagementThreshold, &active, &prefix, &serverPrefix, &created, &workspace, &org); err == nil {
-			out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "timezone": timezone, "engagement_threshold_seconds": engagementThreshold, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org})
+		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &timezone, &engagementThreshold, &active, &prefix, &serverPrefix, &created, &workspace, &org, &maxExactDays); err == nil {
+			out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "timezone": timezone, "engagement_threshold_seconds": engagementThreshold, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org,
+				// The console builds its period options from this, so it never offers a
+				// range the site's policy will refuse.
+				"max_exact_days": maxExactDays})
 		}
 	}
 	writeJSON(w, 200, out)
@@ -909,7 +912,7 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 	case "period":
 		deleteFrom, deleteTo, err = s.explicitDateRange(r.Context(), siteID, in.From, in.To)
 		if err != nil {
-			writeError(w, 400, "INVALID_RANGE", err.Error())
+			writeRangeError(w, err)
 			return
 		}
 	default:

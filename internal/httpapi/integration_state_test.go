@@ -575,3 +575,71 @@ func TestIdentityRebuildMatchesTheReferenceSemantics(t *testing.T) {
 		}
 	}
 }
+
+// TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder covers a governance gap.
+// A site's query policy caps how far back an interactive read may go, and the
+// administration screen presents that as a limit in force. It was consulted by
+// one handler — the query builder — while every report screen read whatever
+// range it was asked for, and those are the heavy ones the limit exists for.
+func TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO query_policies(site_id,max_exact_days,max_complexity_score,background_threshold,fast_sample_percent,preview_sample_percent)
+		VALUES($1,14,90,60,10,1) ON CONFLICT(site_id) DO UPDATE SET max_exact_days=excluded.max_exact_days`, f.siteID); err != nil {
+		t.Fatalf("set the policy: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM query_policies WHERE site_id=$1`, f.siteID)
+	})
+
+	site := "/api/v1/sites/" + f.siteKey
+	within, today := f.siteDates(t, 10)
+	beyond := f.siteDate(t, -60)
+
+	// Every report shares one range helper, so checking a representative spread
+	// shows the limit reaches all of them rather than one path.
+	for _, report := range []string{"overview", "visitor-insights", "frustration", "search-analytics", "experience", "visitors", "events"} {
+		request := httptest.NewRequest(http.MethodGet, site+"/"+report+"?from="+beyond+"&to="+today, nil)
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("%s answered %d for a 60 day range under a 14 day policy, want 400", report, recorder.Code)
+			continue
+		}
+		if !strings.Contains(recorder.Body.String(), "RANGE_EXCEEDS_POLICY") {
+			t.Errorf("%s refused the range without saying the policy is why: %s", report, truncateBody(recorder.Body.String()))
+		}
+		// The refusal has to name the limit, or the reader cannot pick a range that
+		// will work.
+		if !strings.Contains(recorder.Body.String(), "14") {
+			t.Errorf("%s did not tell the reader what the limit is: %s", report, truncateBody(recorder.Body.String()))
+		}
+	}
+
+	// A range inside the limit still answers.
+	for _, report := range []string{"overview", "frustration"} {
+		f.get(t, site+"/"+report+"?from="+within+"&to="+today)
+	}
+
+	// The limit travels to the console with the site, so the period control can
+	// offer only what will be accepted.
+	sites := f.do(t, http.MethodGet, "/api/v1/sites", "")
+	list, _ := sites["list"].([]any)
+	found := false
+	for _, item := range list {
+		row, _ := item.(map[string]any)
+		if fmt.Sprint(row["site_id"]) != f.siteKey {
+			continue
+		}
+		found = true
+		if limit, _ := row["max_exact_days"].(float64); limit != 14 {
+			t.Errorf("the site reports max_exact_days = %v, want the policy's 14", row["max_exact_days"])
+		}
+	}
+	if !found {
+		t.Fatalf("the seeded site is missing from the site list: %v", sites)
+	}
+}

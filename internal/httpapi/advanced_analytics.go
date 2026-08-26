@@ -83,7 +83,7 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `SELECT s.session_id,s.visitor_id,coalesce(i.user_id,s.user_id),s.started_at,s.last_event_at,extract(epoch from(s.last_event_at-s.started_at))::double precision,s.event_count,s.page_views,s.conversion_count,s.engaged,s.active_engagement_ms,s.heartbeat_count,s.interaction_count,s.landing_page,s.exit_page,s.source,s.medium,s.campaign,s.device_type FROM sessions s LEFT JOIN visitor_identities i ON i.site_id=s.site_id AND i.visitor_id=s.visitor_id WHERE s.site_id=$1 AND s.environment=$4 AND s.last_event_at >= $2 AND s.last_event_at < $3 ORDER BY s.last_event_at DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
@@ -112,7 +112,7 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	var users, buyers, transactions, carts, checkouts int64

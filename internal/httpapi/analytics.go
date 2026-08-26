@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -59,10 +60,53 @@ func (s *Server) dateRange(r *http.Request, siteID uuid.UUID) (time.Time, time.T
 			to = to.AddDate(0, 0, 1)
 		}
 	}
-	if !from.Before(to) || to.Sub(from) > 3660*24*time.Hour {
-		return from, to, fmt.Errorf("date range must be positive and at most 10 years")
+	if !from.Before(to) {
+		return from, to, fmt.Errorf("date range must be positive")
+	}
+	// The site's query policy caps how far back an interactive read may go. It was
+	// enforced only by the query builder, so an administrator who lowered the limit
+	// to protect the database still had every report screen reading without one —
+	// and those are the heavy ones.
+	if err := s.enforceRangePolicy(r.Context(), siteID, from, to); err != nil {
+		return from, to, err
 	}
 	return from.UTC(), to.UTC(), nil
+}
+
+// rangeExceedsPolicy is returned when a request asks for more days than the
+// site's query policy allows. It is a distinct type so the handler can answer
+// with its own code instead of folding it into a malformed-range error.
+type rangeExceedsPolicy struct {
+	Days    int
+	Allowed int
+}
+
+func (e rangeExceedsPolicy) Error() string {
+	return fmt.Sprintf("조회 기간 %d일은 이 사이트의 최대 정확 조회 기간 %d일을 넘습니다. 기간을 줄이거나 관리자에게 정책 조정을 요청하세요.", e.Days, e.Allowed)
+}
+
+// writeRangeError answers a bad range. A range the site's policy forbids is a
+// different problem from a malformed one — one is fixed by choosing a shorter
+// period, the other by correcting the dates — so they do not share a code.
+func writeRangeError(w http.ResponseWriter, err error) {
+	var policy rangeExceedsPolicy
+	if errors.As(err, &policy) {
+		writeError(w, 400, "RANGE_EXCEEDS_POLICY", err.Error())
+		return
+	}
+	writeRangeError(w, err)
+}
+
+func (s *Server) enforceRangePolicy(ctx context.Context, siteID uuid.UUID, from, to time.Time) error {
+	policy := s.loadQueryPolicy(ctx, siteID)
+	if policy.MaxExactDays <= 0 {
+		return nil
+	}
+	days := int(math.Ceil(to.Sub(from).Hours() / 24))
+	if days > policy.MaxExactDays {
+		return rangeExceedsPolicy{Days: days, Allowed: policy.MaxExactDays}
+	}
+	return nil
 }
 
 func (s *Server) explicitDateRange(ctx context.Context, siteID uuid.UUID, fromValue, toValue string) (time.Time, time.Time, error) {
@@ -188,7 +232,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -330,7 +374,7 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE is_conversion),max(event_timestamp) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1 ORDER BY 2 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
@@ -355,7 +399,7 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),max(coalesce(page_title,'')),count(*),count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_name='page_view' AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY page_url ORDER BY 3 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
@@ -380,7 +424,7 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	type dimension struct{ key, expr string }
@@ -420,7 +464,7 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `WITH grouped AS (
@@ -519,7 +563,7 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.explicitDateRange(r.Context(), siteID, in.DateRange.From, in.DateRange.To)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	plan, planError := s.planAnalyticsQuery(r.Context(), siteID, in, from, to)
@@ -691,7 +735,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_timestamp,event_name,visitor_id,session_id,user_id,page_url,source,medium,campaign,device_type,browser,network_name,properties,environment,contract_version FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 ORDER BY event_timestamp LIMIT 100000`, siteID, from, to, requestEnvironment(r))
@@ -796,7 +840,7 @@ func (s *Server) funnel(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.explicitDateRange(r.Context(), siteID, in.From, in.To)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	if in.Mode == "" {
@@ -995,7 +1039,7 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	view, err := normalizePathView(r.URL.Query().Get("view"))

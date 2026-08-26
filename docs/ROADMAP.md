@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.28.0 — implemented
+
+- `최대 정확 조회 기간` 정책을 전체 리포트 엔드포인트에 적용(기존에는 쿼리 빌더 1곳)
+- 정책 초과를 `RANGE_EXCEEDS_POLICY`로 구분하고 현재 한도를 함께 반환
+- 콘솔 기간 선택지가 사이트 정책 한도를 반영
+- v0.27.0에서 추가한 넓은 기간을 200만 건으로 실측: 예산 초과 없음
+
 ## v0.27.0 — implemented
 
 - 분석 기간 선택을 9개 화면에 추가(경험 비교·Retention·Adoption·Frustration·검색·Feature·Workspace·AI·Ecommerce)

@@ -33,7 +33,7 @@ func (s *Server) workspaceRollup(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -186,7 +186,7 @@ func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request)
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	var in struct {
@@ -268,7 +268,7 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -316,7 +316,7 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -438,7 +438,7 @@ func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -665,7 +665,7 @@ func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	if starts != nil && starts.After(from) {

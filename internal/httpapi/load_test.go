@@ -157,6 +157,11 @@ func TestEndpointLatencyUnderLoad(t *testing.T) {
 
 	from, today := f.siteDates(t, 30)
 	long := f.siteDate(t, -90)
+	// Since v0.27.0 the screens let a reader choose a wider period, and every
+	// measurement before this one used the default. A range the console offers
+	// but the server cannot answer is worse than not offering it.
+	quarter := f.siteDate(t, -90)
+	year := f.siteDate(t, -365)
 	site := "/api/v1/sites/" + f.siteKey
 	frictionSegment := saveLoadSegment(t, f, "부하 시험 · 막힘",
 		`{"combinator":"and","rules":[{"field":"entity.frustration_signals","operator":">=","value":1}]}`)
@@ -189,6 +194,19 @@ func TestEndpointLatencyUnderLoad(t *testing.T) {
 		{name: "realtime", path: site + "/realtime"},
 		{name: "visitor-search", path: site + "/visitor-search?q=load-v-1&from=" + from + "&to=" + today},
 		{name: "visitor-timeline", path: site + "/visitors/load-v-1/timeline?from=" + long + "&to=" + today + "&limit=200"},
+		// The widest period each screen now offers.
+		{name: "overview 90d", path: site + "/overview?from=" + quarter + "&to=" + today},
+		{name: "visitor-insights 90d", path: site + "/visitor-insights?from=" + quarter + "&to=" + today},
+		{name: "experience 90d", path: site + "/experience?from=" + quarter + "&to=" + today},
+		{name: "experience+segment 90d", path: site + "/experience?from=" + quarter + "&to=" + today + "&segment_ids=" + frictionSegment},
+		{name: "frustration 90d", path: site + "/frustration?from=" + quarter + "&to=" + today},
+		{name: "search-analytics 90d", path: site + "/search-analytics?from=" + quarter + "&to=" + today},
+		{name: "feature-intelligence 90d", path: site + "/feature-intelligence?from=" + quarter + "&to=" + today},
+		{name: "adoption 90d", path: site + "/adoption?from=" + quarter + "&to=" + today},
+		{name: "cohort 365d", path: site + "/cohort?from=" + year + "&to=" + today + "&granularity=week&periods=24"},
+		{name: "cohort 365d+segment", path: site + "/cohort?from=" + year + "&to=" + today + "&granularity=week&periods=24&segment_ids=" + frictionSegment},
+		{name: "ecommerce 90d", path: site + "/ecommerce?from=" + quarter + "&to=" + today},
+		{name: "workspace-rollup 90d", path: site + "/workspace-rollup?from=" + quarter + "&to=" + today},
 		{
 			name: "query-builder+segment", method: http.MethodPost, path: "/api/v1/query",
 			body: fmt.Sprintf(`{"site_id":"%s","segment_id":"%s","date_range":{"from":"%s","to":"%s"},"dimensions":["device.type"],"metrics":["events","users"]}`,

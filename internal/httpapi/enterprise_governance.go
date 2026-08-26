@@ -444,7 +444,7 @@ func (s *Server) listAnnotations(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `SELECT a.id,a.site_id,a.environment,a.occurred_at,a.ended_at,a.kind,a.title,a.description,a.source,a.metadata,a.created_at

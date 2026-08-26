@@ -21,6 +21,8 @@ export interface Site {
   workspace: string;
   organization: string;
   created_at: string;
+  /** Longest period this site's query policy allows an interactive read to cover. */
+  max_exact_days?: number;
 }
 
 export interface SiteEnvironment {

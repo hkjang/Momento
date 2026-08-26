@@ -82,3 +82,29 @@ test("기간 줄이기는 더 짧은 선택지가 있을 때만 제안한다", a
   assert.equal(narrowerRange(7), null, "가장 짧은 기간에서는 줄일 곳이 없다");
   assert.equal(narrowerRange(14), 7, "선택지에 없는 값에서도 더 짧은 쪽으로 내려간다");
 });
+
+test("정책이 허용하지 않는 기간은 선택지에 넣지 않는다", async () => {
+  const { allowedRanges } = await import("../src/components/queryError.ts");
+  assert.deepEqual(allowedRanges([7, 30, 90], 180), [7, 30, 90], "제한이 넉넉하면 그대로");
+  assert.deepEqual(allowedRanges([90, 180, 365], 180), [90, 180], "365일은 제한을 넘으므로 제외");
+  assert.deepEqual(allowedRanges([7, 30, 90], undefined), [7, 30, 90], "제한을 모르면 줄이지 않는다");
+  assert.deepEqual(
+    allowedRanges([7, 30, 90], 3),
+    [7],
+    "가장 짧은 기간마저 제한을 넘으면 빈 선택 대신 그 기간을 남겨 거절 사유를 보게 한다",
+  );
+});
+
+test("정책 초과는 기간 줄이기와 정기 배달을 제시한다", async () => {
+  const { describeQueryError } = await import("../src/components/queryError.ts");
+  const recovery = describeQueryError(
+    Object.assign(new Error("180일을 넘습니다"), { code: "RANGE_EXCEEDS_POLICY" }),
+    { canNarrowRange: true },
+  );
+  assert.match(recovery.title, /정책이 허용하지 않습니다/);
+  assert.deepEqual(
+    recovery.actions.map((action) => action.kind),
+    ["narrow", "link"],
+  );
+  assert.equal(recovery.detail, "180일을 넘습니다");
+});

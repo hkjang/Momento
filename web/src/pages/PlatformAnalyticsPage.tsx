@@ -111,7 +111,7 @@ function Cohort() {
           <TextField select label="표시 주차" value={periods} onChange={(e) => setPeriods(Number(e.target.value))}>
             {[8, 12, 16, 24].map((value) => <MenuItem key={value} value={value}>{value}주</MenuItem>)}
           </TextField>
-          <RangeSelect days={days} setDays={setDays} options={[90, 180, 365]} />
+          <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} options={[90, 180, 365]} />
           <TextField
             select
             label="비교 Segment"
@@ -253,7 +253,7 @@ function Adoption() {
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
   return <Stack spacing={2}>
-    <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />
+    <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />
     {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /> : <DataTable rows={q.data?.rows || []} columns={[
     { key: "organization", label: "조직" }, { key: "department", label: "부서" }, { key: "feature", label: "기능" },
     { key: "eligible_users", label: "대상자", align: "right" }, { key: "users", label: "사용자", align: "right" },
@@ -301,11 +301,11 @@ function Experience() {
   if (q.isLoading) return <Loading />;
   if (q.error)
     return <Stack spacing={2}>
-      <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />
+      <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />
       <ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} />
     </Stack>;
   return <Stack spacing={2}>
-    <RangeSelect days={days} setDays={setDays} timezone={site.timezone} note="Core Web Vitals와 오류는 이 기간의 이벤트 기준" />
+    <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} note="Core Web Vitals와 오류는 이 기간의 이벤트 기준" />
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}>
       <MetricCard label="오류 영향 사용자" value={q.data?.impact.error_users || 0} />
       <MetricCard label="오류 사용자 전환율" value={q.data?.impact.error_user_conversion_rate || 0} type="percent" />
@@ -444,7 +444,7 @@ function AIAnalytics() {
   });
   if (!site) return <NoSite />;
   return <Stack spacing={2}>
-    <Card sx={{ p: 2 }}><Stack direction={{ xs: "column", sm: "row" }} gap={2} alignItems={{ sm: "center" }}><TextField select label="분석 차원" value={group} onChange={(e) => setGroup(e.target.value)} sx={{ minWidth: 220 }}>{["model", "provider", "agent", "mcp_server", "tool"].map((item) => <MenuItem value={item} key={item}>{item}</MenuItem>)}</TextField><RangeSelect days={days} setDays={setDays} timezone={site.timezone} /></Stack></Card>
+    <Card sx={{ p: 2 }}><Stack direction={{ xs: "column", sm: "row" }} gap={2} alignItems={{ sm: "center" }}><TextField select label="분석 차원" value={group} onChange={(e) => setGroup(e.target.value)} sx={{ minWidth: 220 }}>{["model", "provider", "agent", "mcp_server", "tool"].map((item) => <MenuItem value={item} key={item}>{item}</MenuItem>)}</TextField><RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} /></Stack></Card>
     {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} /> : <DataTable rows={q.data?.rows || []} columns={[
       { key: "label", label: group }, { key: "calls", label: "호출", align: "right" }, { key: "users", label: "사용자", align: "right" }, { key: "success_rate", label: "성공률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "average_latency_ms", label: "평균 지연(ms)", align: "right" }, { key: "input_tokens", label: "Input Token", align: "right" }, { key: "output_tokens", label: "Output Token", align: "right" }, { key: "cost", label: "Cost", align: "right" }, { key: "fallbacks", label: "Fallback", align: "right" },
     ]} />}

@@ -1,4 +1,5 @@
 import { MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { allowedRanges } from "./queryError";
 
 /**
  * RangeSelect gives a screen a period without the full analysis toolbar, which
@@ -16,13 +17,17 @@ export default function RangeSelect({
   options = [7, 30, 90],
   timezone,
   note,
+  maxExactDays,
 }: {
   days: number;
   setDays(days: number): void;
   options?: number[];
   timezone?: string;
   note?: string;
+  /** The site's policy limit, so a refused period is never offered. */
+  maxExactDays?: number;
 }) {
+  const available = allowedRanges(options, maxExactDays);
   return (
     <Stack direction="row" alignItems="center" gap={1.5} flexWrap="wrap">
       <TextField
@@ -33,7 +38,7 @@ export default function RangeSelect({
         onChange={(event) => setDays(Number(event.target.value))}
         sx={{ minWidth: 140 }}
       >
-        {options.map((option) => (
+        {available.map((option) => (
           <MenuItem key={option} value={option}>
             {`최근 ${option}일`}
           </MenuItem>

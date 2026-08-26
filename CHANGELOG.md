@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.28.0
+
+- The site's maximum exact query period now applies to every analytical report. It was consulted by one handler — the query builder — while twenty-eight others read whatever range they were asked for, so an administrator who lowered the limit to protect the database still had every heavy report reading without one. The administration screen presented a limit that was not in force.
+- A period the policy forbids is refused as `RANGE_EXCEEDS_POLICY` rather than folded into a malformed-range error, and the refusal names the current limit so a reader can pick a period that will work.
+- The period control offers only what the policy allows: the limit travels to the console with the site. If even the shortest period is over the limit the control keeps it, so the reader sees the refusal and its reason instead of an empty control.
+- Measured the wider periods added in v0.27.0 against two million events. They are not slower — the ninety day overview is faster than the thirty day one, because the dominant cost is whole-history work rather than the window. Nothing exceeded the budget, so the ranges shipped last release are safe.
+
 ## v0.27.0
 
 - Nine analytical screens gained a period control. The range was written into the request and could not be changed, so asking what happened this week was impossible on the frustration screen and the retention grid was fixed at six months. Experience comparison, retention, adoption, frustration, search analytics, feature intelligence, workspace roll-up, AI analytics and ecommerce now choose their own period.

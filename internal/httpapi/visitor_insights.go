@@ -16,7 +16,7 @@ func (s *Server) visitorInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	timezone, location, err := s.siteTimezone(r.Context(), siteID)

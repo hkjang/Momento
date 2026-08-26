@@ -288,7 +288,7 @@ func (s *Server) cohortReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	timezone, _, err := s.siteTimezone(r.Context(), siteID)

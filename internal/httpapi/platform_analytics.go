@@ -157,7 +157,7 @@ func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) 
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	var in struct {
@@ -322,7 +322,7 @@ func (s *Server) adoptionReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	rows, err := s.DB.Query(r.Context(), `WITH usage AS (
@@ -372,7 +372,7 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	environment := requestEnvironment(r)
@@ -533,7 +533,7 @@ func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	group := r.URL.Query().Get("group_by")
@@ -589,7 +589,7 @@ func (s *Server) insightsReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := s.dateRange(r, siteID)
 	if err != nil {
-		writeError(w, 400, "INVALID_RANGE", err.Error())
+		writeRangeError(w, err)
 		return
 	}
 	_, location, _ := s.siteTimezone(r.Context(), siteID)

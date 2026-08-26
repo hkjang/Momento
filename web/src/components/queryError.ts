@@ -59,6 +59,17 @@ export function describeQueryError(
           ...retry,
         ],
       };
+    case "RANGE_EXCEEDS_POLICY":
+      return {
+        title: "이 기간은 사이트 정책이 허용하지 않습니다",
+        explanation:
+          "관리자가 정한 최대 정확 조회 기간을 넘었습니다. 더 짧은 기간을 고르거나, 이 범위가 정기적으로 필요하면 정기 배달로 받으세요.",
+        actions: [
+          ...narrow,
+          { kind: "link", label: "정기 배달로 받기", to: automation },
+        ],
+        detail: message,
+      };
     case "QUERY_CANCELED":
       return {
         title: "조회가 중단되었습니다",
@@ -139,4 +150,18 @@ export function slowQueryNotice(elapsedMs: number): string | null {
 export function narrowerRange(days: number, options: number[] = [7, 30, 90]): number | null {
   const shorter = options.filter((option) => option < days).sort((a, b) => b - a);
   return shorter.length ? shorter[0] : null;
+}
+
+/**
+ * allowedRanges drops the periods a site's policy will refuse. Offering a period
+ * the server rejects turns a limit into a broken screen, so the choice reflects
+ * the limit instead of colliding with it.
+ */
+export function allowedRanges(options: number[], maxExactDays?: number): number[] {
+  if (!maxExactDays || maxExactDays <= 0) return options;
+  const allowed = options.filter((option) => option <= maxExactDays);
+  // Never leave the control empty: if even the shortest period is over the
+  // limit, keep it so the reader sees the refusal and its explanation rather
+  // than a control with nothing in it.
+  return allowed.length ? allowed : [options[0]];
 }

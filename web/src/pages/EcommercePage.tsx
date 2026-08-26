@@ -50,7 +50,7 @@ export default function EcommercePage() {
   });
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />;
   if (query.isLoading)
     return (
       <Stack spacing={2}>
