@@ -226,20 +226,15 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 			"events": events, "conversions": conversions, "errors": errors, "revenue": revenue,
 			"from": from, "to": to}
 	case "adoption":
-		rows, err := a.DB.Query(ctx, `SELECT coalesce(properties->>'feature','(not set)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1 ORDER BY 2 DESC LIMIT 50`, delivery.SiteID, from, to, environment)
+		// The adoption screen's own numbers. This used to run a separate query that
+		// returned feature events and users, which is the feature intelligence
+		// report — a digest named after one screen carrying another's content, with
+		// no adoption rate in it.
+		rows, err := insight.New(a.DB).Adoption(ctx, delivery.SiteID, environment, from, to, 50)
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		items := []map[string]any{}
-		for rows.Next() {
-			var feature string
-			var events, users int64
-			if rows.Scan(&feature, &events, &users) == nil {
-				items = append(items, map[string]any{"feature": feature, "events": events, "users": users})
-			}
-		}
-		data["features"] = items
+		data = map[string]any{"features": rows, "from": from, "to": to}
 	case "experience":
 		var errors, affected int64
 		err := a.DB.QueryRow(ctx, `SELECT count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5)`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&errors, &affected)

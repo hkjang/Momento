@@ -325,41 +325,20 @@ func (s *Server) adoptionReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `WITH usage AS (
-		SELECT entity_id,coalesce(canonical_user_properties->>'organization','(미지정)') organization,coalesce(canonical_user_properties->>'department','(미지정)') department,properties->>'feature' feature,count(*) events,min(event_timestamp) first_used,max(event_timestamp) last_used
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1,2,3,4
-	), population AS (
-		SELECT coalesce(canonical_user_properties->>'organization','(미지정)') organization,coalesce(canonical_user_properties->>'department','(미지정)') department,count(DISTINCT entity_id) observed_population
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY 1,2
-	)
-	SELECT u.organization,u.department,u.feature,count(*) users,sum(u.events),count(*) FILTER(WHERE u.events>=2),count(*) FILTER(WHERE u.last_used >= $3-interval '7 days'),count(*) FILTER(WHERE u.last_used < $3-interval '30 days'),coalesce(t.eligible_users,p.observed_population),min(u.first_used),max(u.last_used)
-	FROM usage u JOIN population p USING(organization,department) LEFT JOIN LATERAL (
-		SELECT target.eligible_users FROM adoption_targets target
-		WHERE target.site_id=$1 AND (target.organization='' OR target.organization=u.organization) AND (target.department='' OR target.department=u.department) AND target.feature=u.feature
-		ORDER BY ((target.organization<>'')::int+(target.department<>'')::int) DESC LIMIT 1
-	) t ON true
-	GROUP BY u.organization,u.department,u.feature,t.eligible_users,p.observed_population ORDER BY users DESC`, siteID, from, to, requestEnvironment(r))
+	// The same numbers the scheduled digest sends, from one implementation: the
+	// digest used to run its own query and answered with feature events under the
+	// adoption report's name.
+	rows, err := insight.New(s.DB).Adoption(r.Context(), siteID, requestEnvironment(r), from, to, 0)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var organization, department, feature string
-		var users, events, repeatUsers, active7, dormant, eligible int64
-		var first, last time.Time
-		if rows.Scan(&organization, &department, &feature, &users, &events, &repeatUsers, &active7, &dormant, &eligible, &first, &last) != nil {
-			continue
-		}
-		adoptionRate, repeatRate := float64(0), float64(0)
-		if eligible > 0 {
-			adoptionRate = float64(users) * 100 / float64(eligible)
-		}
-		if users > 0 {
-			repeatRate = float64(repeatUsers) * 100 / float64(users)
-		}
-		out = append(out, map[string]any{"organization": organization, "department": department, "feature": feature, "users": users, "events": events, "eligible_users": eligible, "adoption_rate": adoptionRate, "repeat_users": repeatUsers, "repeat_usage_rate": repeatRate, "active_7d": active7, "dormant_users": dormant, "first_used": first, "last_used": last})
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, map[string]any{"organization": row.Organization, "department": row.Department, "feature": row.Feature,
+			"users": row.Users, "events": row.Events, "eligible_users": row.EligibleUsers, "adoption_rate": row.AdoptionRate,
+			"repeat_users": row.RepeatUsers, "repeat_usage_rate": row.RepeatUsageRate, "active_7d": row.Active7d,
+			"dormant_users": row.DormantUsers, "first_used": row.FirstUsed, "last_used": row.LastUsed})
 	}
 	writeJSON(w, 200, map[string]any{"environment": requestEnvironment(r), "rows": out})
 }

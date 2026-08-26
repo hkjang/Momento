@@ -735,3 +735,72 @@ func TestDeliveredNumbersMatchTheScreenTheyAreNamedAfter(t *testing.T) {
 		}
 	}
 }
+
+// TestAdoptionDigestCarriesTheAdoptionReport pins what a digest named after a
+// screen contains. The adoption digest ran its own query and answered with
+// feature events and users — the feature intelligence report's content under the
+// adoption report's name, with no adoption rate in it, so a schedule called
+// "Adoption 요약" delivered no adoption.
+func TestAdoptionDigestCarriesTheAdoptionReport(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	received := make(chan map[string]any, 2)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		received <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	if _, err := pool.Exec(ctx, `UPDATE settings SET value=$1 WHERE key='automation'`,
+		`{"enabled":true,"allowed_webhook_hosts":["127.0.0.1"],"delivery_timeout_seconds":10,"max_entity_ids":0}`); err != nil {
+		t.Fatalf("enable automation: %v", err)
+	}
+	channel := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/delivery-channels",
+		fmt.Sprintf(`{"name":"adoption-webhook","channel_type":"webhook","endpoint_url":"%s","active":true}`, target.URL))
+	channelID, _ := channel["id"].(string)
+	report := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/scheduled-reports",
+		fmt.Sprintf(`{"channel_id":"%s","name":"Adoption 요약","report_kind":"adoption","interval_minutes":1440,"definition":{"environment":"prd","days":30},"enabled":true}`, channelID))
+	reportID, _ := report["id"].(string)
+	if err := (service.Automation{DB: pool, Secrets: f.server.Secrets}).RunByID(ctx, uuid.MustParse(reportID)); err != nil {
+		t.Fatalf("adoption delivery: %v", err)
+	}
+
+	var delivered []any
+	select {
+	case payload := <-received:
+		data, _ := payload["data"].(map[string]any)
+		delivered, _ = data["features"].([]any)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the webhook never received the adoption delivery")
+	}
+	if len(delivered) == 0 {
+		t.Fatal("the adoption digest carried no rows")
+	}
+
+	screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/adoption")
+	rows, _ := screen["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("the adoption screen returned no rows: %v", screen)
+	}
+
+	// Every field the screen shows for a row has to be in the delivered row, with
+	// the same value. Comparing the first row is enough to catch a digest that is
+	// computing something else entirely, which is what this test exists for.
+	want, _ := rows[0].(map[string]any)
+	got, _ := delivered[0].(map[string]any)
+	for _, key := range []string{"feature", "department", "organization", "users", "events", "eligible_users", "adoption_rate", "repeat_usage_rate", "dormant_users"} {
+		if got[key] == nil {
+			t.Errorf("the delivered adoption row has no %s: %v", key, got)
+			continue
+		}
+		if fmt.Sprint(got[key]) != fmt.Sprint(want[key]) {
+			t.Errorf("%s is %v in the digest and %v on the screen", key, got[key], want[key])
+		}
+	}
+	if len(delivered) != len(rows) && len(rows) <= 50 {
+		t.Errorf("the digest carried %d rows and the screen shows %d", len(delivered), len(rows))
+	}
+}

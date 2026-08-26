@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.30.2
+
+- The adoption digest carries the adoption report. It ran its own query and answered with feature events and users — the feature intelligence report's content under the adoption report's name — so a schedule called Adoption 요약 delivered no adoption rate, no eligible population and no dormant users.
+- The adoption computation now lives in one place that the screen and the digest both call, which is the fix for the cause rather than the instance: the digest drifted because it had its own copy of the query.
+- Checked the other delivery kinds against their screens: the experience digest's error count and affected users agree with the experience report's impact figures, the AI digest reports what the AI screen reports, and the segment digest is its own definition rather than a screen's.
+- The test compares every field of a delivered row against the screen's row rather than checking that the payload is non-empty.
+
 ## v0.30.1
 
 - A scheduled report now covers the period the screen it is named after covers. Every delivery measured from the moment the schedule happened to fire, while every screen reads the site's calendar and ends at local midnight, so a seven day digest and the seven day screen described different spans — and the digest's span moved every time the send time drifted. Both windows now come from the same rule.
