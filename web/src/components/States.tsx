@@ -10,14 +10,25 @@ import {
 import AddRounded from "@mui/icons-material/AddRounded";
 import InboxOutlined from "@mui/icons-material/InboxOutlined";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
-import { useNavigate } from "react-router-dom";
-import type { ReactNode } from "react";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { describeQueryError, slowQueryNotice } from "./queryError";
 
 export function Loading({
   label = "데이터를 불러오는 중",
 }: {
   label?: string;
 }) {
+  // A reader watching a skeleton for fifteen seconds cannot tell a heavy query
+  // from a broken screen, and the deadline arrives without warning. The notice
+  // says what is happening while there is still time to act on it.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = window.setInterval(() => setElapsed(Date.now() - started), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const notice = slowQueryNotice(elapsed);
   return (
     <Stack spacing={2} aria-label={label} aria-busy="true">
       <Box
@@ -46,6 +57,11 @@ export function Loading({
       <Typography variant="caption" color="text.secondary" textAlign="center">
         {label}
       </Typography>
+      {notice && (
+        <Alert severity="info" role="status">
+          {notice}
+        </Alert>
+      )}
     </Stack>
   );
 }
@@ -53,32 +69,59 @@ export function Loading({
 export function ErrorState({
   error,
   retry,
+  narrowRange,
 }: {
   error: unknown;
   retry?: () => void;
+  /** Supplied by screens that own a range control, so the advice is clickable. */
+  narrowRange?: () => void;
 }) {
+  const recovery = describeQueryError(error, {
+    canRetry: !!retry,
+    canNarrowRange: !!narrowRange,
+  });
   return (
-    <Alert
-      severity="error"
-      action={
-        retry ? (
-          <Button
-            color="inherit"
-            size="small"
-            startIcon={<RefreshRounded />}
-            onClick={retry}
-          >
-            다시 시도
-          </Button>
-        ) : undefined
-      }
-    >
-      <Typography fontWeight={700}>요청을 완료하지 못했습니다</Typography>
-      <Typography variant="body2">
-        {error instanceof Error
-          ? error.message
-          : "데이터를 불러오지 못했습니다."}
-      </Typography>
+    <Alert severity="error">
+      <Typography fontWeight={700}>{recovery.title}</Typography>
+      <Typography variant="body2">{recovery.explanation}</Typography>
+      {recovery.detail && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.5, wordBreak: "break-word" }}
+        >
+          {recovery.detail}
+        </Typography>
+      )}
+      {recovery.actions.length > 0 && (
+        <Stack direction="row" gap={1} flexWrap="wrap" mt={1.2}>
+          {recovery.actions.map((action) =>
+            action.kind === "link" ? (
+              <Button
+                key={action.to}
+                size="small"
+                color="inherit"
+                variant="outlined"
+                component={RouterLink}
+                to={action.to}
+              >
+                {action.label}
+              </Button>
+            ) : (
+              <Button
+                key={action.kind}
+                size="small"
+                color="inherit"
+                variant={action.kind === "retry" ? "outlined" : "text"}
+                startIcon={action.kind === "retry" ? <RefreshRounded /> : undefined}
+                onClick={action.kind === "retry" ? retry : narrowRange}
+              >
+                {action.label}
+              </Button>
+            ),
+          )}
+        </Stack>
+      )}
     </Alert>
   );
 }

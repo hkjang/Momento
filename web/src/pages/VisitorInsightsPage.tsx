@@ -24,6 +24,7 @@ import AnalysisToolbar from "../components/AnalysisToolbar";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import { narrowerRange } from "../components/queryError";
 import AudienceList from "../components/AudienceList";
 import {
   anomalySeverityLabel,
@@ -69,6 +70,8 @@ const kpiType: Record<string, "percent" | "duration" | undefined> = {
 export default function VisitorInsightsPage() {
   const { site, environment } = useSite();
   const [days, setDays] = useState(30);
+  // Only offer to narrow the range when there is a shorter one to move to.
+  const narrower = narrowerRange(days);
   const [toast, setToast] = useState("");
   const [model, setModel] = useState("last_non_direct");
   const [halfLife, setHalfLife] = useState(7);
@@ -119,7 +122,11 @@ export default function VisitorInsightsPage() {
     return (
       <Stack spacing={2}>
         {toolbar}
-        <ErrorState error={q.error} retry={() => q.refetch()} />
+        <ErrorState
+          error={q.error}
+          retry={() => q.refetch()}
+          narrowRange={narrower === null ? undefined : () => setDays(narrower)}
+        />
       </Stack>
     );
   const report = q.data!;

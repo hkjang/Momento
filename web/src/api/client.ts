@@ -32,12 +32,17 @@ export interface SiteEnvironment {
 }
 
 export class APIError extends Error {
-  constructor(
-    public status: number,
-    public code: string,
-    message: string,
-  ) {
+  // Declared and assigned rather than written as constructor parameter
+  // properties: those are a TypeScript-only construct, and the test runner
+  // strips types without compiling them, so a test that imports this module
+  // fails to parse it.
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.26.0
+
+- A failed query now offers the recovery instead of describing it. The server already answered a timeout with advice — narrow the range, use a segment, run it in Fast mode, have it delivered on a schedule — and the console printed that as text under a generic "요청을 완료하지 못했습니다", leaving the reader to find where any of those live. Each step is now a button that goes there.
+- The advice is only offered where it can be taken. A screen with a fixed range does not get a "narrow the range" button, and neither does a reader already on the shortest one; a permission error gets no buttons at all, because nothing on that screen would fix it.
+- Cancelled, failed and rejected queries are told apart. A cancelled query says that leaving the screen cancels it, a failed one keeps the server's message for reporting, and being over the segment comparison limit says why the limit exists.
+- Waiting says what is happening. After eight seconds the loading state reports that the query is taking longer than usual, and after twenty that it is approaching the limit — while there is still time to act rather than after the failure.
+- `APIError` no longer uses constructor parameter properties, which the test runner cannot parse, so error-handling logic can be covered by tests.
+
 ## v0.25.1
 
 - Added a scale guard that CI runs on every push. Two severe defects shipped because every test ran against a few hundred rows, where a query that scans the site per person and one that reads the table in visitor order both finish instantly. Fifty thousand events seed in two seconds and make the first class unmissable: with the aggregate that shipped before v0.24.1 restored, every segment-carrying report answers 504 and the query builder runs for nearly eight minutes on that data.
