@@ -488,3 +488,90 @@ func TestBehaviouralSegmentRefusesToRunWithoutAScope(t *testing.T) {
 		t.Fatalf("the error does not say what is missing: %v", err)
 	}
 }
+
+// TestIdentityRebuildMatchesTheReferenceSemantics pins the rewrite of the
+// identity rebuild. The previous form joined raw_events back to a per-visitor
+// CTE, which the planner answered with a merge join over the whole table in
+// visitor order — two million random heap fetches on a mid-sized site, inside a
+// transaction that stays open. Both forms are run here against the same data so
+// the faster one is shown to derive the same links.
+func TestIdentityRebuildMatchesTheReferenceSemantics(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	const reference = `WITH latest_identity AS (
+		SELECT DISTINCT ON(site_id,visitor_id) site_id,visitor_id,user_id
+		FROM raw_events WHERE site_id=$1 AND user_id IS NOT NULL
+		ORDER BY site_id,visitor_id,event_timestamp DESC,id DESC
+	)
+	SELECT e.site_id,e.visitor_id,i.user_id,min(e.event_timestamp),
+		min(e.event_timestamp) FILTER(WHERE e.user_id=i.user_id),max(e.event_timestamp)
+	FROM raw_events e JOIN latest_identity i ON i.site_id=e.site_id AND i.visitor_id=e.visitor_id
+	WHERE e.site_id=$1 GROUP BY e.site_id,e.visitor_id,i.user_id`
+
+	// The shipped statement is an INSERT, so its SELECT is compared by running the
+	// rebuild and reading back what it wrote.
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+	if err := service.RebuildSiteDerivedData(ctx, tx, f.siteID); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+
+	type link struct {
+		visitor, user       string
+		first, linked, last time.Time
+	}
+	read := func(query string) map[string]link {
+		t.Helper()
+		rows, err := tx.Query(ctx, query, f.siteID)
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		defer rows.Close()
+		out := map[string]link{}
+		for rows.Next() {
+			var site uuid.UUID
+			var item link
+			if err := rows.Scan(&site, &item.visitor, &item.user, &item.first, &item.linked, &item.last); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			out[item.visitor] = item
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("rows: %v", err)
+		}
+		return out
+	}
+
+	expected := read(reference)
+	actual := read(`SELECT site_id,visitor_id,user_id,first_seen,linked_at,last_seen FROM visitor_identities WHERE site_id=$1`)
+	if len(expected) == 0 {
+		t.Fatal("the fixture produced no identity links, so the comparison proves nothing")
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("the rebuild wrote %d links, the reference derives %d", len(actual), len(expected))
+	}
+	for visitor, want := range expected {
+		got, ok := actual[visitor]
+		if !ok {
+			t.Errorf("%s is missing from the rebuild", visitor)
+			continue
+		}
+		if got.user != want.user {
+			t.Errorf("%s linked to %q, want %q", visitor, got.user, want.user)
+		}
+		for name, pair := range map[string][2]time.Time{
+			"first_seen": {got.first, want.first},
+			"linked_at":  {got.linked, want.linked},
+			"last_seen":  {got.last, want.last},
+		} {
+			if !pair[0].Equal(pair[1]) {
+				t.Errorf("%s %s = %s, want %s", visitor, name, pair[0], pair[1])
+			}
+		}
+	}
+}

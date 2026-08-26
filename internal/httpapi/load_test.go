@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hkjang/Momento/internal/service"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -92,25 +93,46 @@ func seedLoad(t *testing.T, pool *pgxpool.Pool, f fixture) {
 		f.siteID, loadEventCount); err != nil {
 		t.Fatalf("seed events: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO visitor_identities(site_id,visitor_id,user_id,first_seen,last_seen,linked_at)
-		SELECT site_id,visitor_id,min(user_id),min(event_timestamp),max(event_timestamp),min(event_timestamp)
-		FROM raw_events WHERE site_id=$1 AND user_id IS NOT NULL GROUP BY site_id,visitor_id
-		ON CONFLICT DO NOTHING`, f.siteID); err != nil {
-		t.Fatalf("seed identities: %v", err)
+	// A bulk insert leaves the planner with statistics from before the load, and
+	// the rebuild's plan depends on them: run against stale statistics it picks a
+	// merge join that reads the table in visitor order. A site that has been
+	// collecting normally has been analysed, so the harness analyses before
+	// rebuilding rather than measuring a plan a running deployment would not get.
+	if _, err := pool.Exec(ctx, "ANALYZE raw_events"); err != nil {
+		t.Fatalf("analyze before rebuild: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions(site_id,session_id,environment,visitor_id,user_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,device_type)
-		SELECT site_id,session_id,'prd',min(visitor_id),min(user_id),min(event_timestamp),max(event_timestamp),count(*),
-			count(*) FILTER(WHERE event_name='page_view'),count(*) FILTER(WHERE is_conversion),count(*) > 2,min(page_url),max(page_url),min(device_type)
-		FROM raw_events WHERE site_id=$1 GROUP BY site_id,session_id
-		ON CONFLICT DO NOTHING`, f.siteID); err != nil {
-		t.Fatalf("seed sessions: %v", err)
+
+	// Production runs the aggregation worker, so a site that has been collecting
+	// for months has its daily rollups filled in. Measuring against empty rollups
+	// would report the latency of a path a real deployment rarely takes, so the
+	// harness rebuilds them the same way the worker does rather than writing its
+	// own version of the aggregate.
+	rebuildStarted := time.Now()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin rebuild: %v", err)
 	}
-	for _, table := range []string{"raw_events", "visitor_identities", "sessions"} {
+	if err := service.RebuildSiteDerivedData(ctx, tx, f.siteID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("rebuild derived data: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit rebuild: %v", err)
+	}
+	t.Logf("rebuilt derived aggregates in %s", time.Since(rebuildStarted).Round(time.Second))
+	for _, table := range []string{"raw_events", "visitor_identities", "identified_users", "visitors", "sessions", "daily_site_metrics", "daily_site_visitors", "daily_site_sessions"} {
 		if _, err := pool.Exec(ctx, "ANALYZE "+table); err != nil {
 			t.Fatalf("analyze %s: %v", table, err)
 		}
 	}
-	t.Logf("seeded %d events in %s", loadEventCount, time.Since(started).Round(time.Second))
+	var rollupDays int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM daily_site_metrics WHERE site_id=$1`, f.siteID).Scan(&rollupDays); err != nil {
+		t.Fatalf("count rollups: %v", err)
+	}
+	if rollupDays == 0 {
+		t.Fatal("the rebuild produced no daily rollups, so the measurement would not reflect a real deployment")
+	}
+	t.Logf("seeded %d events and %d rollup days in %s", loadEventCount, rollupDays, time.Since(started).Round(time.Second))
 }
 
 // loadRepeats is how many times each endpoint is called. A single timing is not

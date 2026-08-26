@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.25.0
+
+- Fixed a rebuild query that did not finish. Deriving visitor identities joined raw events back to a per-visitor subquery, and the planner answered that by reading the whole table in visitor order through an index — millions of random heap fetches. On a two million event site it was still running after thirty-three minutes; three grouped scans and two hash joins produce the same rows in under two seconds. An integration test runs both forms against the same data and compares every link, timestamp included.
+- That rebuild runs inside the privacy deletion request, in the same transaction as the delete. On a site of any size the request could not complete, so the deletion it was part of was rolled back: deleting a person's data was not merely slow, it did not finish. The same query backs the full rebuild job, the timezone change and the retention sweep, and it holds a transaction open while it runs — a run left blocked an unrelated statement for ten minutes.
+- The rebuild refreshes the planner's statistics before it starts and after each step a later step reads. It empties a table, fills it with hundreds of thousands of rows, and the next step joins it while the planner still believes it holds three — which turned a join of two small tables into a nested loop that ran for five minutes. A database user that may not analyse a table still rebuilds, on whatever statistics exist.
+- The load harness now rebuilds the daily rollups the way the aggregation worker does before measuring. Reporting latency against empty rollups measured a path a running deployment rarely takes.
+
 ## v0.24.3
 
 - The funnel and retention comparisons run their cohorts together rather than one after another. Comparing three segments used to mean four full evaluations in sequence; the funnel comparison went from 9.1 to 7.3 seconds at the median on a two million event site.

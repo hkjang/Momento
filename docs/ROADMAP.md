@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.25.0 — implemented
+
+- Identity 재집계 쿼리 재작성: raw_events 자기 조인(merge join, 전체 테이블 visitor 순 인덱스 스캔) → 그룹 스캔 3회 + hash join 2회. 33분 미완료 → 1.8초
+- 재집계는 개인정보 삭제 요청 안에서 동기 실행되므로, 이 문제로 삭제 자체가 완료되지 못했음
+- 재집계 각 단계 전후로 통계 갱신. 방금 채운 테이블을 다음 단계가 조인하며 nested loop를 선택하는 문제 해소
+- 부하 하네스가 측정 전 일별 rollup을 운영과 동일한 경로로 생성
+
 ## v0.24.3 — implemented
 
 - Funnel·Retention 비교의 코호트 병렬 실행. Funnel+Segment 9.1초 → 7.3초(중앙값)
