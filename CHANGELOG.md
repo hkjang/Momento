@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.30.4
+
+- Verified the search report's numbers against known inputs for the first time. The fixture carried no search events, so nothing in the suite had ever checked a search figure; six searches by five people with one returning nothing and one result clicked now pin the count, the distinct user count, the zero-result rate and the click-through rate.
+- Pinned the agreement between the screens and the MCP tools for search and retention. Both pairs own separate copies of their query — the arrangement that let one defect ship three times in the adoption report — and they agree today, so a test is what keeps them agreeing.
+- No new disagreement was found in this pass. Search, retention and experience each answer the same from the screen and the tool, which is worth stating rather than implying by silence.
+
 ## v0.30.3
 
 - `analyze_feature_adoption` returns the adoption report. It ran its own query and answered with feature events and users, so an agent asked about adoption received no adoption rate, no eligible population and no dormant users — the same defect fixed in the digest last release, in a third place. All three now call one implementation.

@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.30.4 — implemented
+
+- 검색 리포트 숫자를 알려진 입력으로 최초 검증(Fixture에 검색 이벤트가 없어 미검증 상태였음)
+- 검색·Retention의 화면 ↔ MCP 도구 일치를 테스트로 고정
+- 이번 점검에서 새로운 불일치는 발견되지 않음
+
 ## v0.30.3 — implemented
 
 - MCP `analyze_feature_adoption`이 Adoption 리포트 내용을 반환하도록 수정(화면·배달과 동일 구현)

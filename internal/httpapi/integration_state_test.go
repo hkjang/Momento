@@ -895,3 +895,164 @@ func TestAdoptionAgreesAcrossScreenDigestAndTool(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchNumbersAreCorrectAndAgreeAcrossPaths does two things the suite could
+// not do before: it checks the search report's arithmetic against known inputs,
+// and it checks that the screen and the MCP tool answer the same.
+//
+// The fixture carried no search events, so nothing in the suite had ever verified
+// a search number. Meanwhile the screen and the tool each own their own copy of
+// the query, which is the arrangement that let the same defect ship three times
+// in the adoption report — the copies agree today and a test is what keeps them
+// agreeing.
+func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 7)
+
+	// Five people search once and find results, one of them searches again and
+	// finds nothing, and one clicks a result. Every number below follows from that.
+	base := time.Now().Add(-3 * time.Hour)
+	insert := func(visitor, event, properties string, offset int) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,page_url)
+			VALUES($1,$2,'prd',$3,$4,$5,$6,$6,$7::jsonb,false,'https://portal.internal/search')`,
+			uuid.NewString(), f.siteID, visitor, visitor+"-session", event, base.Add(time.Duration(offset)*time.Minute), properties); err != nil {
+			t.Fatalf("seed %s: %v", event, err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		insert(fmt.Sprintf("search-visitor-%d", i), "search", `{"query":"연차","result_count":4}`, i)
+	}
+	insert("search-visitor-0", "search", `{"query":"없는말","result_count":0}`, 10)
+	insert("search-visitor-1", "search_click", `{"query":"연차","position":1}`, 11)
+
+	screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/search-analytics?from="+from+"&to="+today)
+	summary, _ := screen["summary"].(map[string]any)
+	if summary == nil {
+		t.Fatalf("the search report has no summary: %v", screen)
+	}
+	for _, expected := range []struct {
+		key   string
+		value float64
+	}{
+		{"searches", 6},
+		{"users", 5},
+		{"zero_results", 1},
+		{"clicks", 1},
+	} {
+		if got, _ := summary[expected.key].(float64); got != expected.value {
+			t.Errorf("%s is %v, want %v from the seeded searches", expected.key, summary[expected.key], expected.value)
+		}
+	}
+	// One click out of six searches, and one of the six returned nothing.
+	if rate, _ := summary["search_ctr"].(float64); rate < 16.6 || rate > 16.7 {
+		t.Errorf("search_ctr is %v, want one click in six searches", summary["search_ctr"])
+	}
+	if rate, _ := summary["zero_result_rate"].(float64); rate < 16.6 || rate > 16.7 {
+		t.Errorf("zero_result_rate is %v, want one empty result in six searches", summary["zero_result_rate"])
+	}
+
+	tool := f.callMCP(t, "analyze_search", fmt.Sprintf(`"from":%q,"to":%q`, from, today))
+	var toolSummary map[string]any
+	if err := json.Unmarshal([]byte(tool), &toolSummary); err != nil {
+		t.Fatalf("decode the tool payload: %v (%s)", err, truncateBody(tool))
+	}
+	for _, key := range []string{"searches", "users", "zero_results", "clicks", "search_ctr", "zero_result_rate"} {
+		if fmt.Sprint(toolSummary[key]) != fmt.Sprint(summary[key]) {
+			t.Errorf("%s is %v from the tool and %v on the screen", key, toolSummary[key], summary[key])
+		}
+	}
+}
+
+// TestRetentionAgreesBetweenTheScreenAndTheTool pins another pair that each own
+// a copy of the query. The shapes differ — the screen nests periods under a
+// cohort and the tool returns flat rows — so the numbers are compared, not the
+// documents.
+func TestRetentionAgreesBetweenTheScreenAndTheTool(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	from := f.siteDate(t, -90)
+	today := f.siteDate(t, 0)
+
+	screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/cohort?from="+from+"&to="+today+"&granularity=week&periods=6")
+	cohorts, _ := screen["cohorts"].([]any)
+	if len(cohorts) == 0 {
+		t.Fatalf("the retention screen returned no cohorts: %v", screen)
+	}
+	type cell struct{ users, size float64 }
+	expected := map[string]cell{}
+	for _, item := range cohorts {
+		row, _ := item.(map[string]any)
+		size, _ := row["size"].(float64)
+		periods, _ := row["periods"].([]any)
+		for _, entry := range periods {
+			period, _ := entry.(map[string]any)
+			users, _ := period["users"].(float64)
+			expected[fmt.Sprintf("%v/%v", row["cohort"], period["period"])] = cell{users: users, size: size}
+		}
+	}
+
+	tool := f.callMCP(t, "analyze_retention", fmt.Sprintf(`"from":%q,"to":%q`, from, today))
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(tool), &rows); err != nil {
+		t.Fatalf("decode the tool payload: %v (%s)", err, truncateBody(tool))
+	}
+	if len(rows) == 0 {
+		t.Fatal("the retention tool returned no rows")
+	}
+	// The tool takes no period count, so it returns every week it finds while the
+	// screen was asked for six. Every cell the screen shows has to appear in the
+	// tool's answer; the extra weeks beyond the screen's request are not a
+	// disagreement.
+	byKey := map[string]map[string]any{}
+	for _, row := range rows {
+		byKey[fmt.Sprintf("%v/%v", row["cohort"], row["week"])] = row
+	}
+	compared := 0
+	for key, want := range expected {
+		row, ok := byKey[key]
+		if !ok {
+			t.Errorf("the screen shows cohort %s and the tool does not report it", key)
+			continue
+		}
+		compared++
+		if users, _ := row["users"].(float64); users != want.users {
+			t.Errorf("cohort %s has %v users from the tool and %v on the screen", key, row["users"], want.users)
+		}
+		if size, _ := row["size"].(float64); size != want.size {
+			t.Errorf("cohort %s has size %v from the tool and %v on the screen", key, row["size"], want.size)
+		}
+	}
+	if compared == 0 {
+		t.Fatal("no cohort could be compared, so the agreement is unproven")
+	}
+}
+
+// callMCP invokes one tool and returns its text payload, which is where every
+// tool puts its answer.
+func (f fixture) callMCP(t *testing.T, tool, arguments string) string {
+	t.Helper()
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q,"arguments":{"site_id":%q,%s}}}`,
+		tool, f.siteKey, arguments)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	var envelope map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("%s returned an undecodable envelope: %s", tool, truncateBody(recorder.Body.String()))
+	}
+	result, _ := envelope["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("%s returned no content: %s", tool, truncateBody(recorder.Body.String()))
+	}
+	item, _ := content[0].(map[string]any)
+	if isError, _ := result["isError"].(bool); isError {
+		t.Fatalf("%s answered with an error: %v", tool, item["text"])
+	}
+	return fmt.Sprint(item["text"])
+}
