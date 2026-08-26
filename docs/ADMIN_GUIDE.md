@@ -53,6 +53,18 @@ Momento는 PKCE(S256)가 적용된 표준 OIDC(OpenID Connect) SSO 통합을 지
 
 ---
 
+## 2.2.0 보존 정책이 실제로 적용되는 범위
+
+| 항목 | 적용 |
+| :--- | :--- |
+| Raw Event (월) | 적용 — 기간이 지난 Raw Event 삭제 |
+| Session (월) | 적용 |
+| 집계 (월) | **적용** — 일별 집계 3종에서 기간이 지난 날짜 삭제. 비우면 무기한 보관 |
+| Debugger / Dead Letter (일) | 적용 |
+| Realtime (시간) | **적용되지 않음** — 별도의 Realtime 저장소가 없어 삭제 대상이 없습니다. API 호환을 위해 값은 계속 저장됩니다 |
+
+집계 보존은 v0.29.0부터 적용됩니다. 이전에는 값을 저장만 하고 읽지 않아, 기간을 설정해도 일별 집계가 무기한 보관됐습니다.
+
 ## 2.2.1 삭제와 보존의 검증 범위
 
 개인정보 삭제는 규정 준수 약속이므로 통합 테스트로 확인합니다. `user_id` 모드 삭제 후 `raw_events`, `sessions`, `visitors`, `visitor_sessions`, `visitor_identities`, `identified_users`, `daily_site_visitors`, `daily_site_sessions` 여덟 개 테이블에 잔존 행이 없고, 같은 사이트의 다른 사람 데이터는 남아 있는지 확인합니다. `visitor`, `period`, `property` 모드도 각각 경계 밖 데이터 보존과 property만 제거되는지 확인합니다.

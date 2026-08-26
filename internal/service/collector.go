@@ -1157,6 +1157,18 @@ func (w Worker) cleanup(ctx context.Context) error {
 	if _, err := w.DB.Exec(ctx, `DELETE FROM sessions s WHERE s.last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=s.site_id),25))`); err != nil {
 		return err
 	}
+	// Daily aggregates were kept forever: the retention screen accepted a limit
+	// for them and nothing ever read it, so a site that asked to keep two years of
+	// rollups kept ten. A null policy still means keep them, which is why the
+	// delete only touches sites that set a number.
+	for _, table := range []string{"daily_site_metrics", "daily_site_visitors", "daily_site_sessions"} {
+		if _, err := w.DB.Exec(ctx, `DELETE FROM `+table+` d WHERE EXISTS(
+			SELECT 1 FROM retention_policies p
+			WHERE p.site_id=d.site_id AND p.aggregation_months IS NOT NULL
+				AND d.event_date < (current_date - make_interval(months=>p.aggregation_months))::date)`); err != nil {
+			return err
+		}
+	}
 	if _, err := w.DB.Exec(ctx, `DELETE FROM event_inbox i WHERE i.processed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=i.site_id),$1))`, debugDays); err != nil {
 		return err
 	}

@@ -17,6 +17,12 @@ export interface SDKSnippetOptions {
    * count, whether it was repeated) unless the site opts into the words.
    */
   collectSearchTerms?: boolean;
+  /**
+   * The site's session timeout. Sessions are decided in the browser, so this is
+   * the only way the console setting reaches the tracker; a site that changes it
+   * has to update the installed snippet for the change to take effect.
+   */
+  sessionTimeoutMinutes?: number;
 }
 
 function escapeAttribute(value: string) {
@@ -39,6 +45,9 @@ export function buildSDKSnippet(options: SDKSnippetOptions) {
     `  data-environment="${escapeAttribute(options.environment)}"`,
     '  data-contract-version="1"',
     `  data-mode="${escapeAttribute(options.mode)}"`,
+    ...(options.sessionTimeoutMinutes && options.sessionTimeoutMinutes !== 30
+      ? [`  data-session-timeout="${options.sessionTimeoutMinutes}"`]
+      : []),
     ...(proxyPath ? [`  data-endpoint="${escapeAttribute(proxyPath)}"`] : []),
     '  data-auto-rum="true"',
     '  data-frustration-signals="true"',

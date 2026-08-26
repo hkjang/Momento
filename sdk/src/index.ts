@@ -1322,6 +1322,9 @@ if (script?.dataset.siteId) {
     contractVersion: Number(script.dataset.contractVersion || 1),
     debug: script.dataset.debug === "true",
     collectElementText: script.dataset.collectElementText === "true",
+    // The site's session timeout is configured in the console; sessionization
+    // happens here, so the snippet is how that setting reaches the tracker.
+    sessionTimeoutMinutes: Number(script.dataset.sessionTimeout) || undefined,
     autoRUM: script.dataset.autoRum !== "false",
     frustrationSignals: script.dataset.frustrationSignals !== "false",
     searchTracking: script.dataset.searchTracking !== "false",

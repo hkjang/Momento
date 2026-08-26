@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.29.0
+
+- Audited every administrative setting for whether anything reads it, after finding last release that the query period limit was enforced in one handler out of twenty-nine. Three settings were accepted, validated, stored, and then read by nothing.
+- The aggregate retention limit now deletes. The retention screen offers a period for the daily rollups and the sweep never consulted it, so a site that asked to keep one year of aggregates kept all of them forever. An empty value still means keep indefinitely, so only a site that set a number is affected.
+- The site's session timeout now reaches the tracker. Sessions are decided in the browser, and the tracker used its own thirty minute default while the configured value went nowhere; the installed snippet now carries it as `data-session-timeout`. Because the decision is made in the browser, changing the setting requires updating the installed snippet, and the console says so rather than implying it takes effect on its own.
+- The realtime retention field is labelled as not applied. Momento keeps no separate realtime store, so there is nothing for the value to trim; it is still accepted for API compatibility, and the screen says what it does instead of leaving a control that silently does nothing.
+- Cardinality limits, PII detection mode, retention of raw events and sessions, blocked properties, query string stripping, allowed domains and contract mode were checked and are enforced.
+
 ## v0.28.0
 
 - The site's maximum exact query period now applies to every analytical report. It was consulted by one handler — the query builder — while twenty-eight others read whatever range they were asked for, so an administrator who lowered the limit to protect the database still had every heavy report reading without one. The administration screen presented a limit that was not in force.

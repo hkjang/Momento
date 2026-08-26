@@ -1095,6 +1095,8 @@ interface SiteGuide {
   endpoint?: string;
   trackingKey?: string;
   serverAPIKey?: string;
+  /** The site's configured session timeout, so the snippet can carry it. */
+  sessionTimeoutMinutes?: number;
 }
 
 interface TrackingCode {
@@ -1159,6 +1161,7 @@ function SiteSDKGuideDialog({
         environment,
         mode,
         proxyPath: useProxy ? proxyPath : undefined,
+        sessionTimeoutMinutes: guide.sessionTimeoutMinutes,
       })
     : "Collector 주소를 확인하고 있습니다…";
   const csp = buildCSPGuidance(endpoint || location.origin, proxyPath);
@@ -1349,6 +1352,11 @@ function SiteSDKGuideDialog({
                 <code>data-deployment-id</code>를 추가하세요. 버튼 문구는
                 개인정보 위험 때문에 기본 수집하지 않으며, 필요할 때만
                 <code> data-collect-element-text=&quot;true&quot;</code>를 사용하세요.
+              </Typography>
+              <Typography variant="body2" color="text.secondary" mt={1.5}>
+                Session은 브라우저에서 구분하므로, 사이트의 Session Timeout 설정은
+                이 스니펫의 <code>data-session-timeout</code>으로 전달됩니다. 설정을
+                바꾸면 설치된 스니펫도 갱신해야 적용됩니다.
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={1.5}>
                 Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search,
@@ -1603,6 +1611,8 @@ function SitesAdmin() {
         endpoint: d.collector_endpoint,
         trackingKey: d.tracking_key,
         serverAPIKey: d.server_api_key,
+        // A site created here always starts at the default timeout, so the
+        // snippet carries no override until an administrator changes it.
       });
       setOpen(false);
       setName("");
@@ -1724,6 +1734,7 @@ function SitesAdmin() {
                       id: site.id,
                       siteId: site.site_id,
                       name: site.name,
+                      sessionTimeoutMinutes: site.session_timeout_minutes,
                     })
                   }
                 >
@@ -2627,7 +2638,7 @@ function RetentionAdmin() {
                   event.target.value ? Number(event.target.value) : null,
                 )
               }
-              helperText="비워 두면 무기한"
+              helperText="비워 두면 무기한. 설정하면 일별 집계 테이블에서 이 기간보다 오래된 날짜를 삭제합니다"
             />
             <TextField
               label="Realtime (시간)"
@@ -2636,7 +2647,11 @@ function RetentionAdmin() {
               onChange={(event) =>
                 set("realtime_hours", Number(event.target.value))
               }
-              helperText="1~168시간"
+              // Kept for API compatibility, and labelled for what it is: Momento
+              // keeps no separate realtime store, so there is nothing for this
+              // value to trim. Saying so is better than a control that silently
+              // does nothing.
+              helperText="1~168시간 · 현재 적용되지 않습니다. 별도의 Realtime 저장소가 없어 삭제할 대상이 없습니다"
             />
             <TextField
               label="Debugger / Dead Letter (일)"

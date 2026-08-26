@@ -256,3 +256,74 @@ func TestRetentionAndAggregateMaintenance(t *testing.T) {
 		t.Fatalf("%d aggregate jobs failed: %v", failed, reason)
 	}
 }
+
+// TestAggregateRetentionAppliesTheConfiguredLimit covers a setting that was
+// accepted and stored and then read by nothing. The retention screen offers a
+// limit for the daily rollups, and the sweep deleted raw events, sessions and
+// debug rows while keeping every aggregate forever — so a site that asked to
+// keep two years of rollups kept all of them.
+func TestAggregateRetentionAppliesTheConfiguredLimit(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	// Two rollup days: one inside a one month limit, one well outside it.
+	recent := time.Now().AddDate(0, 0, -3).Format("2006-01-02")
+	ancient := time.Now().AddDate(0, -8, 0).Format("2006-01-02")
+	for _, day := range []string{recent, ancient} {
+		if _, err := pool.Exec(ctx, `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+			VALUES($1,$2::date,'prd',10,5,1,0) ON CONFLICT(site_id,event_date,environment) DO UPDATE SET events=10`, f.siteID, day); err != nil {
+			t.Fatalf("seed rollup %s: %v", day, err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO daily_site_visitors(site_id,event_date,environment,visitor_id,first_seen,last_seen,event_count)
+			VALUES($1,$2::date,'prd','retention-visitor',now(),now(),3) ON CONFLICT DO NOTHING`, f.siteID, day); err != nil {
+			t.Fatalf("seed visitor rollup %s: %v", day, err)
+		}
+	}
+
+	countDay := func(day string) int64 {
+		t.Helper()
+		var count int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM daily_site_metrics WHERE site_id=$1 AND event_date=$2::date`, f.siteID, day).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", day, err)
+		}
+		return count
+	}
+
+	// With no aggregation limit set, nothing is removed: a site that has not asked
+	// for a limit keeps its history.
+	if _, err := pool.Exec(ctx, `INSERT INTO retention_policies(site_id,raw_event_months,session_months,aggregation_months,realtime_hours,debug_days)
+		VALUES($1,13,25,NULL,24,7) ON CONFLICT(site_id) DO UPDATE SET aggregation_months=NULL`, f.siteID); err != nil {
+		t.Fatalf("clear the aggregation limit: %v", err)
+	}
+	if err := (service.Worker{DB: pool}).ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention with no limit: %v", err)
+	}
+	if countDay(ancient) == 0 {
+		t.Fatal("an aggregate was deleted although the site set no aggregation limit")
+	}
+
+	// With a one month limit the old rollup goes and the recent one stays.
+	if _, err := pool.Exec(ctx, `UPDATE retention_policies SET aggregation_months=1 WHERE site_id=$1`, f.siteID); err != nil {
+		t.Fatalf("set the aggregation limit: %v", err)
+	}
+	if err := (service.Worker{DB: pool}).ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention with a limit: %v", err)
+	}
+	if countDay(ancient) != 0 {
+		t.Errorf("the rollup from eight months ago survived a one month aggregation limit")
+	}
+	if countDay(recent) == 0 {
+		t.Errorf("the rollup from three days ago was deleted under a one month limit")
+	}
+	var visitorRows int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM daily_site_visitors WHERE site_id=$1 AND event_date=$2::date`, f.siteID, ancient).Scan(&visitorRows); err != nil {
+		t.Fatalf("count visitor rollups: %v", err)
+	}
+	if visitorRows != 0 {
+		t.Errorf("the per-visitor rollup from eight months ago survived: the limit has to reach every daily table")
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE retention_policies SET aggregation_months=NULL WHERE site_id=$1`, f.siteID)
+	})
+}

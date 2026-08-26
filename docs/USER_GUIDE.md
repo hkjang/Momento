@@ -56,6 +56,7 @@ Momento는 사내 애플리케이션 및 인트라넷 환경에서 발생하는 
 | `data-debug` | Boolean | 선택 | `true`이면 브라우저 콘솔에 SDK 진단 로그 출력 |
 | `data-collect-element-text` | Boolean | 선택 | 버튼 문구 수집. 개인정보 최소화를 위해 기본값은 `false` |
 | `data-auto-rum` | Boolean | 선택 | Core Web Vitals와 Resource Error 자동 수집. 기본 `true` |
+| `data-session-timeout` | Number | 선택 | Session 구분 기준(분). 관리 콘솔의 사이트 Session Timeout 설정이 이 속성으로 전달됩니다. 기본 `30` |
 | `data-frustration-signals` | Boolean | 선택 | Rage Click, Dead Click, Rapid Back, Form Retry, Error After Click, Slow Interaction 자동 감지. 기본 `true` |
 | `data-search-tracking` | Boolean | 선택 | 결과 페이지의 질의 문자열로 사이트 검색 자동 인식. 기본 `true` |
 | `data-collect-search-terms` | Boolean | 선택 | 검색어 원문 수집. 개인정보 최소화를 위해 기본값은 `false` |

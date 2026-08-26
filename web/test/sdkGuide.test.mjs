@@ -104,3 +104,28 @@ test("계측 힌트는 결과 수·순위·Dead Click 제외를 모두 안내한
   assert.match(signalInstrumentation, /data-momento-ignore-dead-click/);
   assert.match(signalInstrumentation, /analytics\.trackSearch/);
 });
+
+test("설치 코드는 사이트의 Session Timeout을 담아 tracker에 전달한다", async () => {
+  const { buildSDKSnippet } = await import("../src/pages/sdkGuide.ts");
+  const custom = buildSDKSnippet({
+    endpoint: "https://momento.example",
+    siteId: "SITE_123",
+    environment: "prd",
+    mode: "full",
+    sessionTimeoutMinutes: 60,
+  });
+  assert.match(custom, /data-session-timeout="60"/);
+
+  const standard = buildSDKSnippet({
+    endpoint: "https://momento.example",
+    siteId: "SITE_123",
+    environment: "prd",
+    mode: "full",
+    sessionTimeoutMinutes: 30,
+  });
+  assert.doesNotMatch(
+    standard,
+    /data-session-timeout/,
+    "기본값과 같으면 속성을 넣지 않아 스니펫이 불필요하게 길어지지 않는다",
+  );
+});
