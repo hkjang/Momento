@@ -78,7 +78,10 @@ test("captures page and acquisition context when each event occurs", async () =>
     gitSha: "abc123",
     sessionProperties: { login_status: "anonymous" },
   });
-  tracker.setSessionProperties({ login_status: "authenticated", workflow: "approval" });
+  tracker.setSessionProperties({
+    login_status: "authenticated",
+    workflow: "approval",
+  });
   tracker.track("click", { button: "from-a" });
 
   setGlobal(
@@ -114,7 +117,11 @@ test("migrates v0.4 identity into the scoped production storage", async () => {
   storage.setItem("momento_visitor_id", "legacy-visitor");
   storage.setItem(
     "momento_session",
-    JSON.stringify({ id: "legacy-session", last: Date.now(), traffic: { source: "legacy" } }),
+    JSON.stringify({
+      id: "legacy-session",
+      last: Date.now(),
+      traffic: { source: "legacy" },
+    }),
   );
   setGlobal("localStorage", storage);
   const deliveries = [];
@@ -135,7 +142,10 @@ test("migrates v0.4 identity into the scoped production storage", async () => {
 
   assert.equal(deliveries[0].visitor_id, "legacy-visitor");
   assert.equal(deliveries[0].session_id, "legacy-session");
-  assert.equal(deliveries[0].events[0].properties.release_version, "event-supplied");
+  assert.equal(
+    deliveries[0].events[0].properties.release_version,
+    "event-supplied",
+  );
   assert.equal(
     storage.getItem("momento_visitor_id:SITE_UPGRADE:prd"),
     "legacy-visitor",
@@ -203,16 +213,28 @@ test("data-endpoint keeps the collector first party for a strict CSP", async () 
   const { resolveEndpoint } = await import("../src/index.ts");
 
   assert.equal(
-    resolveEndpoint(undefined, "https://momento.internal/tracker.js", "https://service.internal"),
+    resolveEndpoint(
+      undefined,
+      "https://momento.internal/tracker.js",
+      "https://service.internal",
+    ),
     "https://momento.internal",
     "the script origin stays the default collector",
   );
   assert.equal(
-    resolveEndpoint("https://momento.internal/", "", "https://service.internal"),
+    resolveEndpoint(
+      "https://momento.internal/",
+      "",
+      "https://service.internal",
+    ),
     "https://momento.internal",
   );
   assert.equal(
-    resolveEndpoint("/momento/", "https://momento.internal/tracker.js", "https://service.internal"),
+    resolveEndpoint(
+      "/momento/",
+      "https://momento.internal/tracker.js",
+      "https://service.internal",
+    ),
     "/momento",
     "a path proxies the collector on the tracked origin",
   );
@@ -246,4 +268,141 @@ test("a proxied endpoint posts to the same origin", async () => {
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "/momento/collect/v1/events");
   assert.equal(requests[0].body.site_id, "SITE_PROXY");
+});
+
+// The offline queue survives page loads, and a queue entry carried no session of
+// its own: the collector reads the session from the payload and applies it to
+// every event in it. So a batch queued while the network was down went out under
+// whatever session was current when it finally reconnected. Measured on the
+// server, a batch of yesterday's events delivered under today's session produced
+// a session 26 hours long, took its landing page from the previous visit, and
+// raised the average session duration on the overview.
+test("delivers queued events under the session they happened in", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  setGlobal("location", new URL("https://service.internal/yesterday"));
+
+  // Day one: every delivery fails, so the events land in the offline queue.
+  setGlobal("fetch", async () => {
+    throw new Error("network unreachable");
+  });
+  const yesterday = new MomentoTracker();
+  yesterday.init({
+    siteId: "SITE_OFFLINE",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+    sessionTimeoutMinutes: 30,
+  });
+  yesterday.track("page_view", {});
+  yesterday.track("purchase", { value: 1000 });
+  await yesterday.flush();
+
+  const keys = [...storage.values.keys()];
+  const offlineKey = keys.find((key) => key.includes("offline_queue"));
+  const sessionKey = keys.find((key) => key.includes("momento_session"));
+  const stored = JSON.parse(storage.getItem(offlineKey) || "[]");
+  assert.ok(stored.length >= 2, "the failed delivery was not queued offline");
+  const firstSession = JSON.parse(storage.getItem(sessionKey)).id;
+  for (const event of stored) {
+    assert.equal(
+      event.session_id,
+      firstSession,
+      `queued ${event.name} does not record the session it happened in`,
+    );
+  }
+
+  // Day one's tracker still holds a pending flush timer. Denying consent makes
+  // any timer that fires a no-op, so it cannot deliver into day two's recording
+  // and make this test depend on which fired first.
+  yesterday.consent.deny();
+
+  // Day two loads the browser fresh: its own storage, holding what day one left —
+  // the same visitor, a session long past its timeout, and yesterday's queue.
+  const nextDay = new MemoryStorage();
+  nextDay.setItem(
+    keys.find((key) => key.includes("visitor_id")),
+    storage.getItem(keys.find((key) => key.includes("visitor_id"))),
+  );
+  nextDay.setItem(
+    sessionKey,
+    JSON.stringify({
+      ...JSON.parse(storage.getItem(sessionKey)),
+      last: Date.now() - 26 * 60 * 60 * 1000,
+    }),
+  );
+  nextDay.setItem(
+    offlineKey,
+    JSON.stringify(
+      stored.map((event) => ({
+        ...event,
+        timestamp: event.timestamp - 26 * 60 * 60 * 1000,
+      })),
+    ),
+  );
+  setGlobal("localStorage", nextDay);
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  setGlobal("location", new URL("https://service.internal/today"));
+  const today = new MomentoTracker();
+  today.init({
+    siteId: "SITE_OFFLINE",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+    sessionTimeoutMinutes: 30,
+  });
+  today.track("page_view", {});
+  await today.flush();
+
+  assert.ok(
+    deliveries.length >= 2,
+    "yesterday's events were sent in the same payload as today's",
+  );
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const delivery of deliveries) {
+    const old = delivery.events.filter((event) => event.timestamp < cutoff);
+    const fresh = delivery.events.filter((event) => event.timestamp >= cutoff);
+    assert.ok(
+      !(old.length && fresh.length),
+      "one payload mixes yesterday's events with today's, so they share a session id",
+    );
+    assert.equal(
+      delivery.session_id,
+      old.length ? firstSession : delivery.session_id,
+      "yesterday's events were delivered under a different session than the one they happened in",
+    );
+    // The session belongs on the payload, not repeated on every event.
+    for (const event of delivery.events) {
+      assert.equal(
+        event.session_id,
+        undefined,
+        "session_id leaked into the wire format",
+      );
+      assert.equal(
+        event.visitor_id,
+        undefined,
+        "visitor_id leaked into the wire format",
+      );
+    }
+  }
+  const oldPayload = deliveries.find((d) =>
+    d.events.some((e) => e.timestamp < cutoff),
+  );
+  assert.ok(oldPayload, "yesterday's events were never delivered");
+  assert.equal(
+    oldPayload.session_id,
+    firstSession,
+    "yesterday's events were attributed to today's session",
+  );
+  const newPayload = deliveries.find((d) =>
+    d.events.every((e) => e.timestamp >= cutoff),
+  );
+  assert.ok(newPayload, "today's event was never delivered");
+  assert.notEqual(
+    newPayload.session_id,
+    firstSession,
+    "today's events were attributed to yesterday's session",
+  );
 });

@@ -45,9 +45,7 @@ function matchOne(node, selector) {
 }
 
 function matches(node, selector) {
-  return selector
-    .split(",")
-    .some((part) => matchOne(node, part.trim()));
+  return selector.split(",").some((part) => matchOne(node, part.trim()));
 }
 
 const registry = [];
@@ -90,7 +88,8 @@ function el(tag, options = {}) {
       const found = [];
       const walk = (parent) => {
         for (const child of parent.children) {
-          if (matches(child, selector.replace(/\[href\]$/, ""))) found.push(child);
+          if (matches(child, selector.replace(/\[href\]$/, "")))
+            found.push(child);
           walk(child);
         }
       };
@@ -182,7 +181,14 @@ function harness(url = "https://service.internal/page/a") {
     },
   );
   setGlobal("PerformanceObserver", undefined);
-  setGlobal("performance", { getEntriesByType: () => [] });
+  // now() matters as much as the entry list: every browser has it, the tracker
+  // measures its in-page windows with it, and a stub without it sent the tracker
+  // back to the wall clock — where a two second backward jump on this machine made
+  // a search two seconds old look 120ms old and swallowed the signal.
+  setGlobal("performance", {
+    getEntriesByType: () => [],
+    now: () => Number(process.hrtime.bigint() / 1000000n),
+  });
   document.getSelection = undefined;
   window.getSelection = () => ({ toString: () => "" });
   const deliveries = [];
@@ -280,7 +286,11 @@ test("an error right after a click is attributed to that click", async () => {
   const button = el("button", { id: "submit-approval" });
   harnessAttach(button);
   dispatch("click", { target: button });
-  dispatch("error", { message: "approval failed", filename: "app.js", lineno: 4 });
+  dispatch("error", {
+    message: "approval failed",
+    filename: "app.js",
+    lineno: 4,
+  });
   const found = await events(tracker, deliveries);
   const linked = found.find((event) => event.name === "error_after_click");
   assert.ok(linked, "the error is linked to the click that preceded it");
@@ -355,7 +365,9 @@ test("a search is detected from the query string without the term by default", a
 });
 
 test("an opted-in search term is collected, normalised and stripped of identifiers", async () => {
-  const { deliveries } = harness("https://service.internal/search?query=A%20%20B");
+  const { deliveries } = harness(
+    "https://service.internal/search?query=A%20%20B",
+  );
   const tracker = start({ collectSearchTerms: true });
   await wait(1800);
   const searches = (await events(tracker, deliveries)).filter(
@@ -376,7 +388,9 @@ test("the result count is read from the page so zero-result searches are visible
   const { deliveries, documentElement } = harness(
     "https://service.internal/search?q=nothing",
   );
-  const results = el("div", { attributes: { "data-momento-search-results": "0" } });
+  const results = el("div", {
+    attributes: { "data-momento-search-results": "0" },
+  });
   documentElement.append(results);
   const tracker = start();
   await wait(400);
@@ -397,7 +411,11 @@ test("repeating a search is separated from refining one", async () => {
   const found = await events(tracker, deliveries);
   const repeated = found.filter((event) => event.name === "repeated_search");
   const refined = found.filter((event) => event.name === "search_refine");
-  assert.equal(repeated.length, 1, "the same words again means the results failed");
+  assert.equal(
+    repeated.length,
+    1,
+    "the same words again means the results failed",
+  );
   assert.equal(refined.length, 1, "narrowing the words is a different problem");
   assert.equal(refined[0].properties.direction, "narrowed");
   assert.equal(refined[0].properties.previous_query, "연차");
@@ -412,7 +430,9 @@ test("opening a result reports its position in the list", async () => {
   const { deliveries, documentElement } = harness(
     "https://service.internal/search?q=vacation",
   );
-  const results = el("div", { attributes: { "data-momento-search-results": "2" } });
+  const results = el("div", {
+    attributes: { "data-momento-search-results": "2" },
+  });
   const first = el("a", { href: "https://service.internal/doc/1" });
   const second = el("a", { href: "https://service.internal/doc/2" });
   results.append(first, second);
@@ -435,7 +455,9 @@ test("signals stay switched off when the site disables them", async () => {
   harnessAttach(button);
   for (let i = 0; i < 4; i += 1) dispatch("click", { target: button });
   await wait(1800);
-  const names = new Set((await events(tracker, deliveries)).map((event) => event.name));
+  const names = new Set(
+    (await events(tracker, deliveries)).map((event) => event.name),
+  );
   assert.equal(names.has("rage_click"), false);
   assert.equal(names.has("search"), false);
   assert.equal(names.has("click"), true, "ordinary tracking is unaffected");
@@ -444,3 +466,42 @@ test("signals stay switched off when the site disables them", async () => {
 function harnessAttach(node) {
   document.documentElement.append(node);
 }
+
+// The tracker compares its in-page windows against a clock. Date.now() is not a
+// clock that only moves forward: an NTP correction, a laptop resuming, or someone
+// setting the system time moves it, and this was observed here — a wait of 2099ms
+// by the monotonic clock read as 120ms of wall time, which put two searches two
+// seconds apart inside the 2000ms window that suppresses a repeated keystroke and
+// dropped the repeated_search signal.
+//
+// So the windows are measured with performance.now(). This forces the jump that
+// was seen by accident.
+test("in-page windows survive the system clock moving backwards", async () => {
+  const { deliveries } = harness();
+  const tracker = start({ collectSearchTerms: true });
+  const realNow = Date.now;
+  let skew = 0;
+  Date.now = () => realNow() + skew;
+  try {
+    tracker.trackSearch("연차");
+    await wait(2100);
+    // The system clock jumps back two seconds, so by wall time the two searches
+    // are 100ms apart and the repeat looks like a keystroke.
+    skew = -2000;
+    tracker.trackSearch("연차");
+  } finally {
+    Date.now = realNow;
+  }
+  const found = await events(tracker, deliveries);
+  const repeated = found.filter((event) => event.name === "repeated_search");
+  assert.equal(
+    repeated.length,
+    1,
+    "a backward jump in the system clock swallowed the repeated search",
+  );
+  assert.equal(
+    found.filter((event) => event.name === "search").length,
+    2,
+    "the second search was dropped as a duplicate keystroke",
+  );
+});

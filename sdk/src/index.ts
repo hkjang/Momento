@@ -52,6 +52,13 @@ interface QueuedEvent {
   context?: EventContext;
   debug?: boolean;
   contract_version: number;
+  // The session and visitor this event happened in. The collector reads them per
+  // payload rather than per event, and a queue survives page loads, so without
+  // these an event queued while the network was down was delivered under whatever
+  // session happened to be current when it finally went out. They are stripped
+  // before the payload is sent, so the wire format is unchanged.
+  session_id?: string;
+  visitor_id?: string;
 }
 
 /**
@@ -106,6 +113,30 @@ function id(): string {
   });
 }
 
+/**
+ * elapsed reads a clock that cannot move backwards, for the windows the tracker
+ * compares against within one page: the rage-click burst, the retry on a form,
+ * an error after a click, how long a page was open, and the gap between two
+ * searches.
+ *
+ * Date.now() is not that clock. It follows the system clock, and an NTP
+ * correction, a laptop resuming, or someone setting the time moves it. Measured
+ * here: a wait of 2099ms by the monotonic clock read as 120ms of wall time, which
+ * put two searches two seconds apart inside the window that suppresses a repeated
+ * keystroke and swallowed the signal. A jump the other way would split a live
+ * visit into two sessions.
+ *
+ * Event timestamps stay on the wall clock, because the server needs the real time
+ * an event happened. So does the session timeout, because it has to survive a page
+ * load and nothing else does.
+ */
+function elapsed(): number {
+  return typeof performance !== "undefined" &&
+    typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
 function storageAvailable(): boolean {
   try {
     localStorage.setItem("__momento_test", "1");
@@ -152,7 +183,9 @@ function elementSignature(element: Element): string {
       ? element.className.trim().split(/\s+/)[0]
       : "";
   const parent = element.parentElement;
-  const index = parent ? Array.prototype.indexOf.call(parent.children, element) : -1;
+  const index = parent
+    ? Array.prototype.indexOf.call(parent.children, element)
+    : -1;
   return `${tag}${className ? "." + className : ""}${index >= 0 ? ":" + index : ""}`;
 }
 
@@ -186,7 +219,9 @@ export function resolveEndpoint(
   const value = (configured || "").trim();
   if (!value) {
     try {
-      return scriptSrc ? new URL(scriptSrc, fallbackOrigin).origin : fallbackOrigin;
+      return scriptSrc
+        ? new URL(scriptSrc, fallbackOrigin).origin
+        : fallbackOrigin;
     } catch {
       return fallbackOrigin;
     }
@@ -254,11 +289,18 @@ export class MomentoTracker {
   private consentState: ConsentState = "unknown";
   private acquisition: TrafficContext = {};
   private cspReported = false;
-  private routeHooks: Array<(kind: RouteKind, previousAt: number, previousPath: string) => void> = [];
+  private routeHooks: Array<
+    (kind: RouteKind, previousAt: number, previousPath: string) => void
+  > = [];
   private routeInstalled = false;
   private lastRouteAt = 0;
   private lastRoutePath = "";
-  private rageBurst: { signature: string; at: number; count: number; timer?: number } | null = null;
+  private rageBurst: {
+    signature: string;
+    at: number;
+    count: number;
+    timer?: number;
+  } | null = null;
   private deadClickPending = false;
   private lastClick: { at: number; properties: Properties } | null = null;
   private formAttempts = new Map<string, number>();
@@ -362,6 +404,8 @@ export class MomentoTracker {
       context: this.context(),
       debug: this.debugEnabled,
       contract_version: this.options?.contractVersion || 1,
+      session_id: this.sessionId,
+      visitor_id: this.visitorId,
     });
     this.lastEventAt = timestamp;
     this.persistSession();
@@ -399,7 +443,9 @@ export class MomentoTracker {
       if (!blocked.startsWith(origin)) return;
       this.cspReported = true;
       const directive = String(
-        violation.effectiveDirective || violation.violatedDirective || "connect-src",
+        violation.effectiveDirective ||
+          violation.violatedDirective ||
+          "connect-src",
       );
       console.error(
         `[Momento] ${directive} 위반으로 수집이 차단되었습니다. 측정 대상 애플리케이션의 CSP에 "script-src 'self' ${origin}; connect-src 'self' ${origin}"을 추가하거나, ${origin} 을 같은 Origin 경로로 프록시하고 tracker script에 data-endpoint="/momento"를 지정하십시오.`,
@@ -410,47 +456,78 @@ export class MomentoTracker {
   async flush(useBeacon = false) {
     if (!this.options || !this.queue.length || !this.canTrack()) return;
     const events = this.queue.splice(0, this.options.batchSize || 10);
-    const payload = JSON.stringify({
-      site_id: this.options.siteId,
-      environment: this.options.environment,
-      visitor_id: this.visitorId,
-      session_id: this.sessionId,
-      user_id: this.userId || undefined,
-      user_properties: this.userProperties,
-      session_properties: this.sessionProperties,
-      context: events[0]?.context || this.context(),
-      events,
-    });
     try {
-      if (useBeacon && navigator.sendBeacon) {
-        const ok = navigator.sendBeacon(
-          this.collectorURL(),
-          new Blob([payload], { type: "text/plain;charset=UTF-8" }),
-        );
-        if (!ok) throw new Error("sendBeacon rejected payload");
-      } else {
-        const response = await fetch(this.collectorURL(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: payload,
-          keepalive: true,
-        });
-        if (!response.ok)
-          throw new Error(`collector returned ${response.status}`);
+      // One payload per session, because the collector reads the session from the
+      // payload and applies it to every event in it. A batch restored from the
+      // offline queue can hold yesterday's events, and sending those under today's
+      // session pulled its start time back to yesterday: a 26 hour session, a
+      // landing page from the previous visit, and an average session duration that
+      // rose with every reconnection.
+      for (const group of this.groupBySession(events)) {
+        await this.deliver(group, useBeacon);
       }
       if (this.queue.length) this.scheduleFlush();
     } catch (error) {
+      // The whole batch goes back, including groups already sent. Redelivery is
+      // safe: every event carries an id and the collector ignores one it has.
       this.queue.unshift(...events);
       this.saveOffline();
       this.log("delivery failed; queued offline", error);
     }
   }
 
+  /** groupBySession splits a batch into runs that share a session and visitor. */
+  private groupBySession(events: QueuedEvent[]): QueuedEvent[][] {
+    const groups = new Map<string, QueuedEvent[]>();
+    for (const event of events) {
+      // An event queued by a version that did not record them belongs to whoever
+      // is current, which is the old behaviour and the best available guess.
+      const key = `${event.visitor_id || this.visitorId}\u0000${event.session_id || this.sessionId}`;
+      const group = groups.get(key);
+      if (group) group.push(event);
+      else groups.set(key, [event]);
+    }
+    return [...groups.values()];
+  }
+
+  private async deliver(events: QueuedEvent[], useBeacon: boolean) {
+    const first = events[0];
+    const payload = JSON.stringify({
+      site_id: this.options!.siteId,
+      environment: this.options!.environment,
+      visitor_id: first?.visitor_id || this.visitorId,
+      session_id: first?.session_id || this.sessionId,
+      user_id: this.userId || undefined,
+      user_properties: this.userProperties,
+      session_properties: this.sessionProperties,
+      context: first?.context || this.context(),
+      // The session and visitor are payload-level on the wire, so they are not
+      // repeated on each event.
+      events: events.map(({ session_id, visitor_id, ...event }) => event),
+    });
+    if (useBeacon && navigator.sendBeacon) {
+      const ok = navigator.sendBeacon(
+        this.collectorURL(),
+        new Blob([payload], { type: "text/plain;charset=UTF-8" }),
+      );
+      if (!ok) throw new Error("sendBeacon rejected payload");
+      return;
+    }
+    const response = await fetch(this.collectorURL(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+      keepalive: true,
+    });
+    if (!response.ok) throw new Error(`collector returned ${response.status}`);
+  }
+
   consent = {
     grant: () => {
       const wasTracking = this.canTrack();
       this.consentState = "granted";
-      if (storageAvailable()) localStorage.setItem(this.storageKey(CONSENT_KEY), "granted");
+      if (storageAvailable())
+        localStorage.setItem(this.storageKey(CONSENT_KEY), "granted");
       // Keep the acquisition captured when the SDK first loaded. A visitor can
       // move to another SPA route while the consent banner is still open.
       this.loadIdentity(true);
@@ -458,12 +535,14 @@ export class MomentoTracker {
     },
     deny: () => {
       this.consentState = "denied";
-      if (storageAvailable()) localStorage.setItem(this.storageKey(CONSENT_KEY), "denied");
+      if (storageAvailable())
+        localStorage.setItem(this.storageKey(CONSENT_KEY), "denied");
       this.clearTrackingState();
     },
     revoke: () => {
       this.consentState = "unknown";
-      if (storageAvailable()) localStorage.removeItem(this.storageKey(CONSENT_KEY));
+      if (storageAvailable())
+        localStorage.removeItem(this.storageKey(CONSENT_KEY));
       this.clearTrackingState();
       this.loadIdentity();
     },
@@ -611,6 +690,8 @@ export class MomentoTracker {
           context: this.context(),
           debug: this.debugEnabled,
           contract_version: this.options?.contractVersion || 1,
+          session_id: this.sessionId,
+          visitor_id: this.visitorId,
         });
     }
   }
@@ -767,7 +848,9 @@ export class MomentoTracker {
       }
     });
     observe("paint", (entries) => {
-      const fcp = entries.find((entry) => entry.name === "first-contentful-paint");
+      const fcp = entries.find(
+        (entry) => entry.name === "first-contentful-paint",
+      );
       if (fcp) this.trackVital("FCP", fcp.startTime);
     });
 
@@ -783,9 +866,8 @@ export class MomentoTracker {
     });
 
     const navigation = () => {
-      const entry = performance.getEntriesByType?.(
-        "navigation",
-      )[0] as PerformanceNavigationTiming | undefined;
+      const entry = performance.getEntriesByType?.("navigation")[0] as
+        PerformanceNavigationTiming | undefined;
       if (!entry) return;
       this.trackVital("TTFB", entry.responseStart, {
         navigation_type: entry.type,
@@ -806,12 +888,13 @@ export class MomentoTracker {
   private installRouteTracking() {
     if (this.routeInstalled) return;
     this.routeInstalled = true;
-    this.lastRouteAt = Date.now();
-    this.lastRoutePath = typeof location !== "undefined" ? location.pathname : "";
+    this.lastRouteAt = elapsed();
+    this.lastRoutePath =
+      typeof location !== "undefined" ? location.pathname : "";
     const fire = (kind: RouteKind) => {
       const previousAt = this.lastRouteAt;
       const previousPath = this.lastRoutePath;
-      this.lastRouteAt = Date.now();
+      this.lastRouteAt = elapsed();
       this.lastRoutePath = location.pathname;
       this.signalsThisPage = 0;
       for (const hook of this.routeHooks) {
@@ -894,7 +977,8 @@ export class MomentoTracker {
             props.url = sanitizedURL(anchor?.href || "");
             this.track("file_download", props);
           } else this.track("click", props);
-          if (this.options?.searchTracking) this.observeSearchClick(target, anchor);
+          if (this.options?.searchTracking)
+            this.observeSearchClick(target, anchor);
         }
         if (this.options?.frustrationSignals)
           this.observeClickFrustration(target || element);
@@ -945,8 +1029,7 @@ export class MomentoTracker {
           return;
         }
         const target = event.target as
-          | (HTMLElement & { src?: string; href?: string })
-          | null;
+          (HTMLElement & { src?: string; href?: string }) | null;
         if (target)
           this.track("resource_error", {
             resource: sanitizedURL(target.src || target.href || ""),
@@ -992,7 +1075,7 @@ export class MomentoTracker {
   private installFrustrationSignals() {
     this.onRoute((kind, previousAt, previousPath) => {
       if (kind !== "pop") return;
-      const dwell = Date.now() - previousAt;
+      const dwell = elapsed() - previousAt;
       if (dwell > RAPID_BACK_MS) return;
       this.signal("rapid_back", {
         dwell_ms: dwell,
@@ -1021,13 +1104,17 @@ export class MomentoTracker {
         const field = event.target as HTMLElement | null;
         const form = field?.closest?.("form") as HTMLFormElement | null;
         const key = form ? this.formKey(form) : "detached";
-        const now = Date.now();
-        if (this.lastInvalidForm.key === key && now - this.lastInvalidForm.at < 1000)
+        const now = elapsed();
+        if (
+          this.lastInvalidForm.key === key &&
+          now - this.lastInvalidForm.at < 1000
+        )
           return;
         this.lastInvalidForm = { key, at: now };
         this.signal("form_retry", {
           form_id: form?.id || form?.name || undefined,
-          field: (field as HTMLInputElement | null)?.name || field?.id || undefined,
+          field:
+            (field as HTMLInputElement | null)?.name || field?.id || undefined,
           reason: "validation",
         });
       },
@@ -1070,11 +1157,18 @@ export class MomentoTracker {
    * whether a click that looked actionable actually did anything.
    */
   private observeClickFrustration(target: HTMLElement) {
-    this.lastClick = { at: Date.now(), properties: this.elementProperties(target) };
+    this.lastClick = {
+      at: elapsed(),
+      properties: this.elementProperties(target),
+    };
     const signature = elementSignature(target);
-    const now = Date.now();
+    const now = elapsed();
     const burst = this.rageBurst;
-    if (burst && burst.signature === signature && now - burst.at <= RAGE_CLICK_WINDOW_MS) {
+    if (
+      burst &&
+      burst.signature === signature &&
+      now - burst.at <= RAGE_CLICK_WINDOW_MS
+    ) {
       burst.at = now;
       burst.count += 1;
       if (burst.count === RAGE_CLICK_THRESHOLD) {
@@ -1151,7 +1245,7 @@ export class MomentoTracker {
     if (!this.options?.frustrationSignals) return;
     const click = this.lastClick;
     if (!click) return;
-    const since = Date.now() - click.at;
+    const since = elapsed() - click.at;
     if (since > ERROR_AFTER_CLICK_MS) return;
     this.signal("error_after_click", {
       ...click.properties,
@@ -1240,11 +1334,16 @@ export class MomentoTracker {
    * means the first wording was not specific enough.
    */
   private recordSearch(rawQuery: string, extra: Properties) {
-    const normalized = rawQuery.replace(/\s+/g, " ").trim().toLowerCase().slice(0, 100);
+    const normalized = rawQuery
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()
+      .slice(0, 100);
     if (!normalized) return;
-    const now = Date.now();
+    const now = elapsed();
     const previous = this.searchState;
-    if (previous && previous.query === normalized && now - previous.at < 2000) return;
+    if (previous && previous.query === normalized && now - previous.at < 2000)
+      return;
     this.searchState = { query: normalized, at: now };
     const words = normalized.split(" ").filter(Boolean);
     const props: Properties = {
@@ -1252,23 +1351,31 @@ export class MomentoTracker {
       query_length: normalized.length,
       query_words: words.length,
     };
-    if (this.options?.collectSearchTerms) props.query = redactPII(normalized, 100);
+    if (this.options?.collectSearchTerms)
+      props.query = redactPII(normalized, 100);
     this.track("search", props);
     if (!previous || now - previous.at > REPEATED_SEARCH_WINDOW_MS) return;
     const refined =
       previous.query !== normalized &&
-      (normalized.startsWith(previous.query) || previous.query.startsWith(normalized));
+      (normalized.startsWith(previous.query) ||
+        previous.query.startsWith(normalized));
     if (previous.query === normalized)
       this.signal("repeated_search", {
         seconds_since: Math.round((now - previous.at) / 1000),
-        ...(this.options?.collectSearchTerms ? { query: redactPII(normalized, 100) } : {}),
+        ...(this.options?.collectSearchTerms
+          ? { query: redactPII(normalized, 100) }
+          : {}),
       });
     else if (refined)
       this.track("search_refine", {
         seconds_since: Math.round((now - previous.at) / 1000),
-        direction: normalized.length > previous.query.length ? "narrowed" : "widened",
+        direction:
+          normalized.length > previous.query.length ? "narrowed" : "widened",
         ...(this.options?.collectSearchTerms
-          ? { query: redactPII(normalized, 100), previous_query: redactPII(previous.query, 100) }
+          ? {
+              query: redactPII(normalized, 100),
+              previous_query: redactPII(previous.query, 100),
+            }
           : {}),
       });
   }
@@ -1278,9 +1385,14 @@ export class MomentoTracker {
    * more than the count: clicks that land far down the list say the ranking is
    * wrong even when the search looks successful.
    */
-  private observeSearchClick(target: HTMLElement, anchor: HTMLAnchorElement | null) {
+  private observeSearchClick(
+    target: HTMLElement,
+    anchor: HTMLAnchorElement | null,
+  ) {
     if (!anchor?.href) return;
-    const container = target.closest?.(`[${RESULTS_ATTRIBUTE}]`) as HTMLElement | null;
+    const container = target.closest?.(
+      `[${RESULTS_ATTRIBUTE}]`,
+    ) as HTMLElement | null;
     if (!container && !this.searchState) return;
     const marked = target.closest?.(`[${POSITION_ATTRIBUTE}]`);
     let position: number | undefined;
@@ -1288,7 +1400,9 @@ export class MomentoTracker {
       const value = Number(marked.getAttribute(POSITION_ATTRIBUTE));
       if (Number.isFinite(value)) position = Math.trunc(value);
     } else if (container) {
-      const links = Array.prototype.slice.call(container.querySelectorAll("a[href]"));
+      const links = Array.prototype.slice.call(
+        container.querySelectorAll("a[href]"),
+      );
       const index = links.indexOf(anchor);
       if (index >= 0) position = index + 1;
     }

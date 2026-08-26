@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.32.7
+
+- The SDK delivers queued events under the session they happened in. A queue entry carried no session of its own and the collector reads the session from the payload, so a batch queued while the network was down went out under whatever session was current when it reconnected. Measured end to end on the server: three events from 26 hours earlier delivered under a fresh session produced a session **26 hours long**, took its landing page from the previous visit, and raised `avg_session_duration` on the overview. A flush now sends one payload per session and visitor; the ids are stripped before sending, so the wire format is unchanged.
+- Re-sending is safe, which is what makes that fix simple: measured that delivering the same batch three times leaves raw events, session counters, visitor totals and the daily rollups at their first-delivery values. Every event carries an id and the insert ignores one it has seen.
+- The tracker measures its in-page windows with `performance.now()` instead of `Date.now()`. The wall clock is not a clock that only moves forward, and this was caught in the act: a wait of 2099ms by the monotonic clock read as **120ms** of wall time, which put two searches two seconds apart inside the 2000ms window that suppresses a repeated keystroke and dropped the `repeated_search` signal. Event timestamps and the session timeout stay on the wall clock, the first because the server needs real times and the second because it has to survive a page load.
+- That was a CI flake, failing about one run in ten before this change and none in fourteen after. Diagnosed rather than retried: the fix is the product's, not the test's.
+- The test harness stubbed `performance` without `now()`, which sent the tracker back to the wall clock and hid the monotonic path from every test. Both new guards fail against the code they replace.
+
 ## v0.32.6
 
 - The retention screen now reports the last unattended pass: when it ran, how long it took, how many rows it removed per table, and the error if it failed. Retention runs hourly with nobody watching and left no evidence anywhere — the screen showed the policy and when someone last edited it, and a failing pass produced one line on stderr. In a closed network without a log pipeline, a job that had been failing for a month looked exactly like one with nothing to do, and the operator found out when the disk filled.
