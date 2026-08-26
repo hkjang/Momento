@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.31.0
+
+- Completed the OpenAPI document. Thirty-five paths were missing from it, including the page, event and visitor reports, the raw event export, the personal API key surface, user and settings administration, the audit log and every delete and rotate operation. For an on-premise deployment that document is how a BI team or another service learns what the server offers, and nearly a third of it was undescribed.
+- Added a test that walks the real router and compares it with the document in both directions: a path the server serves but the document omits, and a path the document describes but the server does not serve. The second matters more, because a reader will build against it.
+- The test needs no database, so it runs on every push. The document drifted because it was maintained by hand next to the router with nothing comparing the two.
+
 ## v0.30.4
 
 - Verified the search report's numbers against known inputs for the first time. The fixture carried no search events, so nothing in the suite had ever checked a search figure; six searches by five people with one returning nothing and one result clicked now pin the count, the distinct user count, the zero-result rate and the click-through rate.

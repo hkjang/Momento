@@ -457,6 +457,189 @@ paths:
     post:
       summary: Re-seal stored secrets with the current primary encryption key
       responses: {'200': {description: Reseal result}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/version:
+    get:
+      summary: Server version and build information
+      responses: {'200': {description: Version}}
+  /api/v1/auth/options:
+    get:
+      summary: Which sign-in methods this deployment offers
+      responses: {'200': {description: Authentication options}}
+  /api/v1/auth/logout:
+    post:
+      summary: End the browser session
+      responses: {'204': {description: Signed out}}
+  /api/v1/auth/oidc/login:
+    get:
+      summary: Begin the OIDC authorization code flow
+      responses: {'302': {description: Redirect to the identity provider}}
+  /api/v1/auth/oidc/callback:
+    get:
+      summary: Complete the OIDC flow and establish a session
+      responses: {'302': {description: Redirect into the console}}
+  /api/v1/me:
+    get:
+      summary: The signed-in user's profile and role
+      responses: {'200': {description: Profile}}
+    patch:
+      summary: Update the signed-in user's own profile
+      responses: {'200': {description: Updated profile}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/me/keys:
+    get:
+      summary: List the signed-in user's personal API keys, without the secrets
+      responses: {'200': {description: API keys}}
+    post:
+      summary: Issue a personal API key; the secret is returned once and never again
+      responses: {'201': {description: Created key with its secret}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/me/keys/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Revoke a personal API key
+      responses: {'204': {description: Revoked}}
+  /api/v1/me/keys/{id}/rotate:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    post:
+      summary: Replace a personal API key's secret, returning the new one once
+      responses: {'200': {description: Rotated key}, '404': {$ref: '#/components/responses/Error'}}
+  /api/v1/users:
+    get:
+      summary: List console users
+      responses: {'200': {description: Users}}
+    post:
+      summary: Create a console user
+      responses: {'201': {description: Created}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/users/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    patch:
+      summary: Change a user's role, department or active state
+      responses: {'200': {description: Updated}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/settings:
+    get:
+      summary: Read every deployment setting
+      responses: {'200': {description: Settings}}
+  /api/v1/settings/{key}:
+    parameters: [{name: key, in: path, required: true, schema: {type: string}}]
+    put:
+      summary: Replace one deployment setting
+      responses: {'200': {description: Updated setting}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/audit:
+    get:
+      summary: Audit log of administrative and person-level actions
+      responses: {'200': {description: Audit entries}}
+  /api/v1/tracking-debugger:
+    get:
+      summary: Recently received events for verifying an installation
+      responses: {'200': {description: Recent events}}
+  /api/v1/event-definitions:
+    get:
+      summary: List registered event definitions
+      responses: {'200': {description: Event definitions}}
+    post:
+      summary: Register or update an event definition
+      responses: {'200': {description: Saved}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/dimensions/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Delete a custom dimension
+      responses: {'204': {description: Deleted}}
+  /api/v1/networks:
+    get:
+      summary: List internal network ranges used to classify traffic
+      responses: {'200': {description: Networks}}
+    post:
+      summary: Add an internal network range
+      responses: {'201': {description: Created}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/networks/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Remove an internal network range
+      responses: {'204': {description: Deleted}}
+  /api/v1/reports/{id}:
+    parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+    put:
+      summary: Update a saved report
+      responses: {'200': {description: Updated}, '400': {$ref: '#/components/responses/Error'}}
+    delete:
+      summary: Delete a saved report
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/pages:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Page report with views, users and sessions per page
+      responses: {'200': {description: Pages}}
+  /api/v1/sites/{siteId}/events:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Event report with counts, users and conversions per event name
+      responses: {'200': {description: Events}}
+  /api/v1/sites/{siteId}/visitors:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Per-browser visitor activity; blocked when visitor profiles are disabled
+      responses: {'200': {description: Visitors}, '403': {$ref: '#/components/responses/Error'}}
+  /api/v1/sites/{siteId}/path:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Path exploration from an entry event
+      responses: {'200': {description: Path flow}}
+  /api/v1/sites/{siteId}/export:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: Raw event export for BI, as CSV or JSON
+      responses: {'200': {description: Export stream}}
+  /api/v1/sites/{siteId}/tracking-code:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: The installation snippet and collector endpoint for one environment
+      responses: {'200': {description: Tracking code}}
+  /api/v1/sites/{siteId}/rotate-key:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    post:
+      summary: Rotate the site's tracking key, returning the new one once
+      responses: {'200': {description: Rotated}}
+  /api/v1/sites/{siteId}/rotate-server-key:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    post:
+      summary: Rotate the site's server API key, returning the new one once
+      responses: {'200': {description: Rotated}}
+  /api/v1/sites/{siteId}/adoption-targets:
+    parameters: [{$ref: '#/components/parameters/SiteId'}]
+    get:
+      summary: List declared adoption target populations
+      responses: {'200': {description: Adoption targets}}
+    post:
+      summary: Declare the eligible population for a feature, so adoption has a denominator
+      responses: {'200': {description: Saved}, '400': {$ref: '#/components/responses/Error'}}
+  /api/v1/sites/{siteId}/adoption-targets/{id}:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Remove an adoption target
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/annotations/{id}:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Delete a change annotation
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/journeys/{id}:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Delete a saved journey
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/delivery-channels/{id}:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Delete a delivery channel and its sealed credentials
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/scheduled-reports/{id}:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    delete:
+      summary: Delete a scheduled report
+      responses: {'204': {description: Deleted}}
+  /api/v1/sites/{siteId}/scheduled-reports/{id}/run:
+    parameters: [{$ref: '#/components/parameters/SiteId'}, {name: id, in: path, required: true, schema: {type: string}}]
+    post:
+      summary: Run a scheduled report now, delivering to its channel
+      responses: {'200': {description: Delivery result}, '400': {$ref: '#/components/responses/Error'}}
   /mcp:
     post:
       summary: MCP Streamable HTTP JSON-RPC endpoint
