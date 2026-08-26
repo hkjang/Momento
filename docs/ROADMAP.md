@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.30.3 — implemented
+
+- MCP `analyze_feature_adoption`이 Adoption 리포트 내용을 반환하도록 수정(화면·배달과 동일 구현)
+- 조회 기간 정책을 Funnel과 모든 MCP 도구에 적용. 개인정보 삭제만 명시적 예외
+- 나머지 MCP 도구를 화면과 비교 확인
+
 ## v0.30.2 — implemented
 
 - Adoption 배달이 Adoption 리포트 내용을 담도록 수정(이전에는 Feature Intelligence 내용)

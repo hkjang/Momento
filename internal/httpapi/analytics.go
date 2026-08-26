@@ -109,7 +109,26 @@ func (s *Server) enforceRangePolicy(ctx context.Context, siteID uuid.UUID, from,
 	return nil
 }
 
+// explicitDateRange parses a caller-supplied range and applies the site's query
+// policy. Enforcement is the default because the alternative was tried: the
+// limit was added to the range helper the reports use and these callers kept
+// their own, so the funnel and every MCP tool went on reading without one.
 func (s *Server) explicitDateRange(ctx context.Context, siteID uuid.UUID, fromValue, toValue string) (time.Time, time.Time, error) {
+	from, to, err := s.parseDateRange(ctx, siteID, fromValue, toValue)
+	if err != nil {
+		return from, to, err
+	}
+	if err := s.enforceRangePolicy(ctx, siteID, from, to); err != nil {
+		return from, to, err
+	}
+	return from, to, nil
+}
+
+// parseDateRange is the same parsing without the policy. Only privacy deletion
+// uses it: erasing a person's data has to be able to reach as far back as the
+// data goes, and a reporting limit must not stand in the way of a compliance
+// obligation.
+func (s *Server) parseDateRange(ctx context.Context, siteID uuid.UUID, fromValue, toValue string) (time.Time, time.Time, error) {
 	_, location, err := s.siteTimezone(ctx, siteID)
 	if err != nil {
 		return time.Time{}, time.Time{}, err

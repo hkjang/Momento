@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.30.3
+
+- `analyze_feature_adoption` returns the adoption report. It ran its own query and answered with feature events and users, so an agent asked about adoption received no adoption rate, no eligible population and no dormant users — the same defect fixed in the digest last release, in a third place. All three now call one implementation.
+- The site's query period limit applies to the funnel and to every MCP tool. It was added to the helper the reports use, and these callers had their own, so a limit lowered to protect the database still left an agent free to ask for five years. Enforcement is the default in both helpers now, and the one caller that must exceed it — privacy deletion, which has to reach as far back as the data goes — says so explicitly.
+- Compared the rest of the MCP surface against the screens: `query_metrics` shares the overview's implementation and matches it including session duration, `analyze_experience` agrees with the experience report's impact figures, and `analyze_frustration` carries the same per-signal impact the screen shows.
+
 ## v0.30.2
 
 - The adoption digest carries the adoption report. It ran its own query and answered with feature events and users — the feature intelligence report's content under the adoption report's name — so a schedule called Adoption 요약 delivered no adoption rate, no eligible population and no dormant users.

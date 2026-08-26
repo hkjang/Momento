@@ -323,21 +323,16 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_feature_adoption":
-		rows, err := s.DB.Query(r.Context(), `SELECT coalesce(canonical_user_properties->>'organization','(미지정)'),coalesce(canonical_user_properties->>'department','(미지정)'),properties->>'feature',count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1,2,3 ORDER BY 5 DESC LIMIT 100`, siteID, from, to, stringArgDefault(call.Arguments, "environment", "prd"))
+		// The adoption screen's own numbers. This tool used to run its own query and
+		// answer with feature events and users, so an agent asked about adoption got
+		// no adoption rate, no eligible population and no dormant users — the same
+		// defect the scheduled digest had, in a third place.
+		rows, err := insight.New(s.DB).Adoption(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to, 100)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
 		}
-		defer rows.Close()
-		out := []map[string]any{}
-		for rows.Next() {
-			var org, dept, feature string
-			var events, users int64
-			if rows.Scan(&org, &dept, &feature, &events, &users) == nil {
-				out = append(out, map[string]any{"organization": org, "department": dept, "feature": feature, "events": events, "users": users})
-			}
-		}
-		body, _ := json.MarshalIndent(out, "", "  ")
+		body, _ := json.MarshalIndent(rows, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_experience":
 		var errors, affected int64

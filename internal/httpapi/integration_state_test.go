@@ -624,6 +624,40 @@ func TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder(t *testing.T) {
 		f.get(t, site+"/"+report+"?from="+within+"&to="+today)
 	}
 
+	// The funnel and the MCP tools build their window from an explicit range
+	// rather than the report helper, and they kept reading without a limit when it
+	// was added there. Both are checked here because "the limit applies" has to
+	// mean everywhere a period is accepted.
+	funnel := fmt.Sprintf(`{"site_id":%q,"environment":"prd","from":%q,"to":%q,"mode":"closed",
+		"steps":[{"name":"진입","event":"page_view"},{"name":"구매","event":"purchase"}]}`, f.siteKey, beyond, today)
+	funnelRequest := httptest.NewRequest(http.MethodPost, "/api/v1/funnel", strings.NewReader(funnel))
+	funnelRequest.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	funnelRequest.Header.Set("Content-Type", "application/json")
+	funnelRecorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(funnelRecorder, funnelRequest)
+	if funnelRecorder.Code != http.StatusBadRequest || !strings.Contains(funnelRecorder.Body.String(), "RANGE_EXCEEDS_POLICY") {
+		t.Errorf("the funnel answered %d for a 60 day range under a 14 day policy: %s", funnelRecorder.Code, truncateBody(funnelRecorder.Body.String()))
+	}
+
+	mcp := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_metrics","arguments":{"site_id":%q,"from":%q,"to":%q}}}`, f.siteKey, beyond, today)
+	mcpRequest := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(mcp))
+	mcpRequest.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	mcpRequest.Header.Set("Content-Type", "application/json")
+	mcpRecorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(mcpRecorder, mcpRequest)
+	// MCP answers errors inside a successful envelope, so the body is what matters.
+	if !strings.Contains(mcpRecorder.Body.String(), "14") {
+		t.Errorf("the MCP tool did not refuse a 60 day range under a 14 day policy: %s", truncateBody(mcpRecorder.Body.String()))
+	}
+
+	// A deletion still reaches as far back as the data goes: a reporting limit
+	// must not block a compliance obligation.
+	deletion := f.do(t, http.MethodPost, "/api/v1/privacy/delete", fmt.Sprintf(
+		`{"site_id":%q,"mode":"period","from":%q,"to":%q,"confirm":"DELETE"}`, f.siteKey, beyond, today))
+	if deletion == nil {
+		t.Error("a period deletion wider than the reporting limit was refused")
+	}
+
 	// The limit travels to the console with the site, so the period control can
 	// offer only what will be accepted.
 	sites := f.do(t, http.MethodGet, "/api/v1/sites", "")
@@ -802,5 +836,62 @@ func TestAdoptionDigestCarriesTheAdoptionReport(t *testing.T) {
 	}
 	if len(delivered) != len(rows) && len(rows) <= 50 {
 		t.Errorf("the digest carried %d rows and the screen shows %d", len(delivered), len(rows))
+	}
+}
+
+// TestAdoptionAgreesAcrossScreenDigestAndTool covers the third place the same
+// defect lived. The adoption screen, the scheduled digest and the MCP tool each
+// ran their own query; two of them answered with feature events and users, which
+// is the feature intelligence report, so a reader and an agent asking about
+// adoption got no adoption rate at all.
+func TestAdoptionAgreesAcrossScreenDigestAndTool(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	from, today := f.siteDates(t, 30)
+
+	screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/adoption?from="+from+"&to="+today)
+	rows, _ := screen["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("the adoption screen returned no rows: %v", screen)
+	}
+	want, _ := rows[0].(map[string]any)
+
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"analyze_feature_adoption","arguments":{"site_id":%q,"from":%q,"to":%q}}}`,
+		f.siteKey, from, today)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+
+	var envelope map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode the MCP envelope: %v", err)
+	}
+	result, _ := envelope["result"].(map[string]any)
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("the tool returned no content: %s", truncateBody(recorder.Body.String()))
+	}
+	item, _ := content[0].(map[string]any)
+	var tool []map[string]any
+	if err := json.Unmarshal([]byte(fmt.Sprint(item["text"])), &tool); err != nil {
+		t.Fatalf("decode the tool payload: %v (%v)", err, item["text"])
+	}
+	if len(tool) == 0 {
+		t.Fatal("the tool returned no adoption rows")
+	}
+
+	// An agent asking about adoption has to receive the numbers that make it
+	// adoption, not a feature event list.
+	for _, key := range []string{"feature", "department", "organization", "users", "events", "eligible_users", "adoption_rate", "repeat_usage_rate", "dormant_users"} {
+		got, ok := tool[0][key]
+		if !ok || got == nil {
+			t.Errorf("the tool's adoption row has no %s: %v", key, tool[0])
+			continue
+		}
+		if fmt.Sprint(got) != fmt.Sprint(want[key]) {
+			t.Errorf("%s is %v from the tool and %v on the screen", key, got, want[key])
+		}
 	}
 }

@@ -910,7 +910,9 @@ func (s *Server) deleteAnalyticsData(w http.ResponseWriter, r *http.Request) {
 	switch in.Mode {
 	case "site", "visitor", "user_id", "property":
 	case "period":
-		deleteFrom, deleteTo, err = s.explicitDateRange(r.Context(), siteID, in.From, in.To)
+		// Deliberately not policy-limited: a deletion has to reach as far back as
+		// the data goes.
+		deleteFrom, deleteTo, err = s.parseDateRange(r.Context(), siteID, in.From, in.To)
 		if err != nil {
 			writeRangeError(w, err)
 			return

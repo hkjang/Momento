@@ -20,7 +20,7 @@ Content-Type: application/json
 - `list_semantic_metrics`: Metric Registry의 정의·Format·Version 조회
 - `query_semantic_metric`: 등록된 Semantic Metric을 Environment와 기간 기준으로 계산
 - `analyze_retention`: Event 기반 주차별 Cohort/Retention 분석
-- `analyze_feature_adoption`: 조직·부서·기능별 사용자와 Adoption 분석
+- `analyze_feature_adoption`: 조직·부서·기능별 도입률, 대상 인원, 재사용률, 미사용자(Adoption 화면과 동일한 계산)
 - `analyze_experience`: Web Vitals P75, Error와 영향 사용자 분석
 - `analyze_ai_operations`: Model·Provider·Agent·MCP Server·Tool별 호출, 지연, Token 분석
 - `inspect_data_quality`: 수집·중복·계약·PII·Cardinality 품질 분석
@@ -79,3 +79,7 @@ Identity Graph 조회 예제:
   }
 }
 ```
+
+## 조회 기간 제한
+
+MCP 도구도 사이트의 `최대 정확 조회 기간` 정책을 따릅니다. 한도를 넘는 `from`/`to`를 전달하면 현재 한도를 알려주는 오류를 반환합니다. v0.30.3 이전에는 도구가 제한 없이 조회할 수 있었습니다.
