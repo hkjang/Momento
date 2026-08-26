@@ -37,6 +37,13 @@ var automaticEvents = map[string]bool{
 	"rage_click": true, "dead_click": true, "rapid_back": true, "form_retry": true,
 	"repeated_search": true, "error_after_click": true, "slow_interaction": true,
 	"search": true, "search_click": true, "search_refine": true,
+	// session_start is queued directly rather than through track(), which is why it
+	// was missed here: under a strict contract the collector rejected the whole
+	// first batch of every session, taking the page view and the web vital with it.
+	"session_start": true,
+	// The tracker reports what its queue could not keep. Dropping this one under a
+	// strict contract would silence the only account of missing data.
+	"collection_dropped": true,
 }
 
 var knownBotPattern = regexp.MustCompile(`(?i)(bot\b|crawler|spider|slurp|bingpreview|headlesschrome)`)

@@ -83,6 +83,11 @@ Collector endpoint는 `tracker.js`를 제공한 Origin의 `/collect/v1/events`�
 | `search` | 결과 페이지 질의 문자열에서 검색 인식. `query_length`, `query_words`, `result_count` 전달 |
 | `search_click` | 검색 결과 링크 클릭. 순위를 `position`으로 전달 |
 | `search_refine` | 검색어를 좁히거나 넓혀 재검색. 방향을 `direction`으로 전달 |
+| `collection_dropped` | 오프라인 큐가 저장 한도(200건)를 넘겨 오래된 이벤트를 버렸습니다. 잃어버린 건수를 `events_dropped`로 전달 |
+
+`collection_dropped`가 보이면 **해당 구간의 수치는 실제보다 낮습니다.** 이전에는 같은 상황에서 아무 흔적도 남지 않아, 숫자가 낮은 이유를 알 수 없었습니다.
+
+브라우저가 오프라인일 때 페이지를 벗어나면 `sendBeacon`은 페이로드를 접수하지만 전달을 보장하지 않으므로, 그 배치는 전송하지 않고 큐에 남겨 다음 페이지 로드에서 보냅니다. 온라인 상태에서 브라우저가 강제 종료된 경우의 손실은 페이지가 관측할 수 없어 막지 못합니다.
 
 한 페이지에서 보고하는 신호 수는 20건으로 제한되어, 렌더 루프에 빠진 화면이 수천 건의 Event로 번지지 않습니다.
 

@@ -406,3 +406,142 @@ test("delivers queued events under the session they happened in", async () => {
     "today's events were attributed to yesterday's session",
   );
 });
+
+// A page hidden while the browser is offline still went out as a beacon.
+// sendBeacon reports whether the browser accepted the payload, never whether it
+// arrived, so the tracker dropped the batch from its queue and the events were
+// gone — and the batch at page exit is the one holding the last page view, the
+// exit page and a completed purchase.
+test("keeps the exit batch when the browser is offline", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  const accepted = [];
+  setGlobal("navigator", {
+    ...navigator,
+    onLine: false,
+    sendBeacon: (_url, blob) => {
+      accepted.push(blob);
+      return true;
+    },
+  });
+  setGlobal("fetch", async () => {
+    throw new Error("fetch must not be used for an exit flush");
+  });
+  const leaving = new MomentoTracker();
+  leaving.init({
+    siteId: "SITE_EXIT",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+  });
+  leaving.track("page_view", {});
+  leaving.track("purchase", { value: 900 });
+  await leaving.flush(true);
+
+  assert.equal(
+    accepted.length,
+    0,
+    "the payload was handed to a beacon that could not deliver it",
+  );
+  const offlineKey = [...storage.values.keys()].find((key) =>
+    key.includes("offline_queue"),
+  );
+  const held = JSON.parse(storage.getItem(offlineKey) || "[]");
+  assert.ok(
+    held.some((event) => event.name === "purchase"),
+    "the exit batch was not kept for the next page load",
+  );
+
+  // Back online on the next page load, the batch goes out.
+  setGlobal("navigator", { ...navigator, onLine: true });
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  const returning = new MomentoTracker();
+  returning.init({
+    siteId: "SITE_EXIT",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+  });
+  await returning.flush();
+  const names = deliveries.flatMap((delivery) =>
+    delivery.events.map((event) => event.name),
+  );
+  assert.ok(
+    names.includes("purchase"),
+    "the events kept at exit were never delivered",
+  );
+});
+
+// The queue keeps 200 events across a page load and drops the oldest beyond that.
+// It did so silently: 260 tracked became 200 persisted with nothing recording the
+// 60, so the numbers were simply lower than they should be and nothing said by how
+// much. A gap an operator can measure is worth more than one they cannot see.
+test("reports events the queue could not keep", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  setGlobal("navigator", { ...navigator, onLine: true });
+  setGlobal("fetch", async () => {
+    throw new Error("offline");
+  });
+  const overflowing = new MomentoTracker();
+  overflowing.init({
+    siteId: "SITE_CAP",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+    batchSize: 1000,
+  });
+  for (let index = 0; index < 260; index += 1)
+    overflowing.track("page_view", { index });
+  await overflowing.flush();
+
+  const offlineKey = [...storage.values.keys()].find((key) =>
+    key.includes("offline_queue"),
+  );
+  const kept = JSON.parse(storage.getItem(offlineKey));
+  assert.equal(kept.length, 200, "the cap is not what it claims to be");
+
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  const next = new MomentoTracker();
+  next.init({
+    siteId: "SITE_CAP",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+    batchSize: 1000,
+  });
+  await next.flush();
+  const reports = deliveries
+    .flatMap((delivery) => delivery.events)
+    .filter((event) => event.name === "collection_dropped");
+  assert.equal(reports.length, 1, "the dropped events were never reported");
+  assert.ok(
+    reports[0].properties.events_dropped >= 60,
+    `reported ${reports[0].properties.events_dropped} dropped, expected at least the 60 the cap discarded`,
+  );
+
+  // Reported once, not on every page load afterwards.
+  const after = [];
+  setGlobal("fetch", async (_url, init) => {
+    after.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  const third = new MomentoTracker();
+  third.init({
+    siteId: "SITE_CAP",
+    endpoint: "https://analytics.internal",
+    autoTrack: false,
+  });
+  await third.flush();
+  assert.equal(
+    after
+      .flatMap((delivery) => delivery.events)
+      .filter((event) => event.name === "collection_dropped").length,
+    0,
+    "the same loss is reported again on every page load",
+  );
+});

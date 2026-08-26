@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.8
+
+- **A site with a strict contract lost the first batch of every session.** `session_start` was missing from the collector's list of automatic events, so a reject-mode environment answered 422 to the batch carrying it — and one event refuses the whole batch, so the first page view and the web vital sent with it went too. The guard that exists to prevent this had been passing: it matched `track()` and `signal()` calls, and `session_start` is queued directly because `track()` starts a session and would recurse. The guard now matches both paths and fails on the omission, and the integration test sends a real first batch instead of single events.
+- A page hidden while the browser is offline no longer hands its batch to `sendBeacon`. Beacon reports whether the browser accepted the payload, never whether it arrived, and measured: after an accepted beacon nothing was left in storage, so the batch was gone — and the batch at page exit holds the last page view, the exit page and a completed purchase. Offline is the one case knowable in advance and the one the offline queue exists for, so it is treated as the failure it is and the next page load delivers it. A browser killed hard while online can still lose an accepted beacon; nothing the page can observe would say so, and this does not claim to fix it.
+- The queue's 200-event cap dropped the oldest silently — measured, 260 tracked became 200 persisted with nothing recording the 60. It now counts what it could not keep, including a quota failure, and reports it as `collection_dropped` with `events_dropped` on the next page load, once. A gap an operator can measure beats numbers that are quietly low.
+- Re-verified before relying on it: delivering the same batch three times leaves raw events, session counters, visitor totals and the daily rollups at their first-delivery values.
+
 ## v0.32.7
 
 - The SDK delivers queued events under the session they happened in. A queue entry carried no session of its own and the collector reads the session from the payload, so a batch queued while the network was down went out under whatever session was current when it reconnected. Measured end to end on the server: three events from 26 hours earlier delivered under a fresh session produced a session **26 hours long**, took its landing page from the previous visit, and raised `avg_session_duration` on the overview. A flush now sends one payload per session and visitor; the ids are stripped before sending, so the wire format is unchanged.

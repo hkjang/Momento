@@ -705,10 +705,15 @@ func TestGovernanceEndpointsRunAgainstPostgres(t *testing.T) {
 }
 
 // TestRejectModeAcceptsAutomaticEventsButNotUnregisteredOnes pins the behaviour
-// that lets a site turn on strict contracts. The tracker emits twenty-one events
-// on its own; if those counted as unregistered, enabling reject mode would drop
-// every batch that carried one, and each new automatic signal would break the
+// that lets a site turn on strict contracts. The tracker emits a couple of dozen
+// events on its own; if those counted as unregistered, enabling reject mode would
+// drop every batch that carried one, and each new automatic signal would break the
 // sites that had transcribed the previous list.
+//
+// session_start was missing from that list for every release that had one, so a
+// site with a strict contract lost the first batch of every session: the session
+// start, the first page view, and any conversion that shared the flush with them.
+// That is why this now sends a real first batch and not only single events.
 func TestRejectModeAcceptsAutomaticEventsButNotUnregisteredOnes(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
@@ -735,10 +740,42 @@ func TestRejectModeAcceptsAutomaticEventsButNotUnregisteredOnes(t *testing.T) {
 		return recorder.Code
 	}
 
-	for _, name := range []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "search", "search_click", "search_refine", "page_view", "web_vital"} {
+	for _, name := range []string{"rage_click", "dead_click", "rapid_back", "form_retry", "repeated_search", "error_after_click", "slow_interaction", "search", "search_click", "search_refine", "page_view", "web_vital", "session_start", "collection_dropped"} {
 		if code := send(t, name); code != http.StatusAccepted {
 			t.Fatalf("reject mode refused the automatic event %s with %d", name, code)
 		}
+	}
+
+	// One event refuses the whole batch, so the cost of missing one is everything
+	// sent with it. This is the tracker's real first batch: session_start, the page
+	// view that follows it, and the web vital reported for the same load. It was
+	// rejected in full for every session on a site with a strict contract.
+	first := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"visitor-first-batch","session_id":"session-first-batch",
+		"context":{"page":{"url":"https://portal.internal/start","title":"시작"},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{}},
+		"events":[{"id":"%s","name":"session_start","timestamp":%d,"contract_version":1},
+		          {"id":"%s","name":"page_view","timestamp":%d,"contract_version":1},
+		          {"id":"%s","name":"web_vital","timestamp":%d,"properties":{"metric":"LCP","value":1800},"contract_version":1}]}`,
+		f.siteKey, f.trackingKey,
+		uuid.NewString(), time.Now().UnixMilli(),
+		uuid.NewString(), time.Now().UnixMilli(),
+		uuid.NewString(), time.Now().UnixMilli())
+	firstRequest := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(first))
+	firstRequest.Header.Set("Content-Type", "application/json")
+	firstRequest.Header.Set("Origin", "https://portal.internal")
+	firstRecorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(firstRecorder, firstRequest)
+	if firstRecorder.Code != http.StatusAccepted {
+		t.Fatalf("reject mode refused a session's first batch with %d: %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	var storedFirst int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND session_id='session-first-batch'`, f.siteID).Scan(&storedFirst); err != nil {
+		t.Fatalf("count the first batch: %v", err)
+	}
+	if storedFirst != 3 {
+		t.Fatalf("%d of the 3 events in a session's first batch were stored, so a strict contract is still losing the start of every session", storedFirst)
 	}
 
 	if code := send(t, "definitely_not_registered"); code == http.StatusAccepted {

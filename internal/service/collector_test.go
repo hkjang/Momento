@@ -176,24 +176,42 @@ func TestEventRevenue(t *testing.T) {
 // that adding an automatic event without exempting it from contract
 // registration fails here instead of in a customer's reject-mode environment,
 // where one unregistered event drops the whole batch.
+//
+// This guard existed and still missed session_start for every release that had
+// one. It matched track() and signal() calls, and session_start is put on the
+// queue directly because track() starts a session and would recurse. So a site
+// that turned on a strict contract lost the first batch of every session — the
+// session start, the first page view, and any conversion that shared the batch —
+// and the check that was meant to catch it never looked at that line. It now
+// matches both ways an event reaches the queue.
 func TestAutomaticEventsCoverEverythingTheTrackerEmits(t *testing.T) {
 	source, err := os.ReadFile(filepath.Join("..", "..", "sdk", "src", "index.ts"))
 	if err != nil {
 		t.Skipf("tracker source is not available: %v", err)
 	}
-	emitted := regexp.MustCompile(`(?:track|signal)\("([a-z_]+)"`).FindAllStringSubmatch(string(source), -1)
-	if len(emitted) < 10 {
+	emitted := regexp.MustCompile(`(?:(?:track|signal)\("([a-z_]+)"|name: "([a-z_]+)")`).FindAllStringSubmatch(string(source), -1)
+	if len(emitted) < 20 {
 		t.Fatalf("found only %d emitted events, the pattern no longer matches the tracker", len(emitted))
 	}
 	seen := map[string]bool{}
 	for _, match := range emitted {
 		name := match[1]
-		if seen[name] {
+		if name == "" {
+			name = match[2]
+		}
+		if name == "" || seen[name] {
 			continue
 		}
 		seen[name] = true
 		if !automaticEvents[name] {
 			t.Errorf("the tracker emits %q but it is not in automaticEvents, so a reject-mode environment would drop the batch", name)
+		}
+	}
+	// A name here the tracker no longer sends only relaxes a contract, but it is a
+	// list that has stopped describing the product, and the next reader trusts it.
+	for name := range automaticEvents {
+		if !seen[name] {
+			t.Errorf("automaticEvents lists %q but the tracker no longer emits it", name)
 		}
 	}
 }

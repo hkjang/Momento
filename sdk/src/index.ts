@@ -103,6 +103,13 @@ const VISITOR_KEY = "momento_visitor_id";
 const SESSION_KEY = "momento_session";
 const CONSENT_KEY = "momento_consent";
 const OFFLINE_KEY = "momento_offline_queue";
+// Events the queue could not keep. The cap dropped the oldest without a trace:
+// 260 tracked became 200 persisted and nothing recorded the 60. A number an
+// operator can see beats a gap they cannot.
+const DROPPED_KEY = "momento_dropped_events";
+// How many queued events survive a page load. At the measured 472 bytes each that
+// is about 94KB, well inside a localStorage origin budget.
+const OFFLINE_LIMIT = 200;
 
 function id(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -342,6 +349,7 @@ export class MomentoTracker {
     this.consentState = this.readConsentState();
     this.loadIdentity();
     this.restoreOffline();
+    this.reportDropped();
     if (!this.initialized) this.installCSPDiagnostics();
     if (this.options.autoTrack && !this.initialized) this.installAutoTracking();
     if (this.options.autoRUM && !this.initialized) this.installRUM();
@@ -506,6 +514,19 @@ export class MomentoTracker {
       events: events.map(({ session_id, visitor_id, ...event }) => event),
     });
     if (useBeacon && navigator.sendBeacon) {
+      // sendBeacon reports whether the browser accepted the payload, never
+      // whether it arrived, and there is no callback that would say. Measured:
+      // after an accepted beacon nothing was left in storage, so a beacon that
+      // never went out took the batch with it — and the batch at page exit holds
+      // the last page view, the exit page and a completed purchase.
+      //
+      // Being offline is the one case where the outcome is known in advance, and
+      // it is the case the offline queue exists for. Treating it as the failure it
+      // is keeps the queue, and the next page load sends it. A browser killed hard
+      // while online can still lose an accepted beacon; nothing the page can
+      // observe would tell it so.
+      if (navigator.onLine === false)
+        throw new Error("offline when the page was hidden");
       const ok = navigator.sendBeacon(
         this.collectorURL(),
         new Blob([payload], { type: "text/plain;charset=UTF-8" }),
@@ -617,6 +638,7 @@ export class MomentoTracker {
     localStorage.removeItem(this.storageKey(VISITOR_KEY));
     localStorage.removeItem(this.storageKey(SESSION_KEY));
     localStorage.removeItem(this.storageKey(OFFLINE_KEY));
+    localStorage.removeItem(this.storageKey(DROPPED_KEY));
   }
 
   private clearTrackingState() {
@@ -741,12 +763,44 @@ export class MomentoTracker {
   private saveOffline() {
     if (!storageAvailable() || !this.isPersistent()) return;
     try {
-      localStorage.setItem(
-        this.storageKey(OFFLINE_KEY),
-        JSON.stringify(this.queue.slice(-200)),
-      );
+      const kept = this.queue.slice(-OFFLINE_LIMIT);
+      this.recordDropped(this.queue.length - kept.length);
+      localStorage.setItem(this.storageKey(OFFLINE_KEY), JSON.stringify(kept));
     } catch {
-      /* quota */
+      // A quota failure loses the whole queue, which is the same silent gap as
+      // the cap, so it is counted the same way.
+      this.recordDropped(this.queue.length);
+    }
+  }
+
+  /** recordDropped remembers events that were lost so a later delivery can say so. */
+  private recordDropped(count: number) {
+    if (count <= 0 || !storageAvailable() || !this.isPersistent()) return;
+    try {
+      const key = this.storageKey(DROPPED_KEY);
+      const previous = Number(localStorage.getItem(key) || 0);
+      localStorage.setItem(key, String((previous || 0) + count));
+    } catch {
+      /* nothing left to do if the counter itself cannot be stored */
+    }
+  }
+
+  /**
+   * reportDropped turns the silent gap into an event, once per page load and after
+   * the queue is restored. Without it the loss is invisible: the numbers are
+   * simply lower than they should be, and nothing says by how much or that it
+   * happened at all.
+   */
+  private reportDropped() {
+    if (!storageAvailable() || !this.isPersistent()) return;
+    try {
+      const key = this.storageKey(DROPPED_KEY);
+      const dropped = Number(localStorage.getItem(key) || 0);
+      localStorage.removeItem(key);
+      if (dropped > 0)
+        this.track("collection_dropped", { events_dropped: dropped });
+    } catch {
+      /* corrupt counter */
     }
   }
   private restoreOffline() {
@@ -755,7 +809,7 @@ export class MomentoTracker {
       const saved = JSON.parse(
         localStorage.getItem(this.storageKey(OFFLINE_KEY)) || "[]",
       );
-      if (Array.isArray(saved)) this.queue.push(...saved.slice(-200));
+      if (Array.isArray(saved)) this.queue.push(...saved.slice(-OFFLINE_LIMIT));
       localStorage.removeItem(this.storageKey(OFFLINE_KEY));
     } catch {
       /* corrupt queue */
