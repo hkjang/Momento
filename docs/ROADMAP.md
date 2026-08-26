@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.31.1 — implemented
+
+- Fixture에 `refund`·`user_engagement`·`resource_error`·`ai_model_call` 추가
+- Ecommerce 환불·순매출, 참여 시간 숫자 가드, Resource Error, AI 리포트(호출·성공률·토큰·지연·비용)를 알려진 입력으로 검증
+- 추가 이벤트를 기존 Session에 귀속시켜 Fixture 일관성 유지
+
 ## v0.31.0 — implemented
 
 - OpenAPI 문서 누락 경로 35건 추가(리포트·Export·개인 API Key·사용자·설정·감사 로그·삭제/회전 작업)

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.31.1
+
+- Four reports are verified against known inputs for the first time. The shared fixture created no refund, no engaged-time event, no resource error and no AI call, so the ecommerce refund arithmetic, the engagement path, the resource-error half of the experience report and the whole AI operations report ran, answered zero and passed. All four were correct; that could not be known before.
+- Refunds now check that net revenue is revenue minus refunds; engagement checks that an unparseable `active_seconds` is ignored rather than counted or fatal; the experience report checks the resource error count; the AI report checks calls, success rate, token totals, average latency and cost against the seeded values.
+- The added fixture events belong to the sessions that already existed for that visitor and day. Writing events without a session row is something the collector never does, and it made the event-derived and table-derived session counts disagree for a reason no deployment would produce — which an earlier test caught.
+
 ## v0.31.0
 
 - Completed the OpenAPI document. Thirty-five paths were missing from it, including the page, event and visitor reports, the raw event export, the personal API key surface, user and settings administration, the audit log and every delete and rotate operation. For an on-premise deployment that document is how a BI team or another service learns what the server offers, and nearly a third of it was undescribed.

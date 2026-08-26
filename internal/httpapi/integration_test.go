@@ -186,6 +186,37 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	run(`INSERT INTO daily_site_sessions(site_id,event_date,environment,session_id,visitor_id,user_id,first_seen,last_seen)
 		SELECT $1,(now()-make_interval(days=>d))::date,'prd','ds-'||d||'-'||v,v,NULL,now(),now() FROM generate_series(1,70) d, unnest(ARRAY['visitor-desktop','visitor-mobile']) v`, siteID)
 
+	// Events the reports read that nothing was creating, so those paths ran and
+	// returned zero and every test passed. Each is seeded with a shape the
+	// corresponding report's assertions can be written against.
+	//
+	//   refund          the ecommerce report's refund and net revenue
+	//   user_engagement the engaged-time path, including its numeric guard
+	//   resource_error  the experience report reads it alongside error
+	//   ai_*            the whole AI operations report
+	for day := 3; day >= 1; day-- {
+		// Inside the desktop visitor's existing session for that day, not a session
+		// of their own: the collector never writes an event without a session row,
+		// and inventing one here made the event-derived and table-derived session
+		// counts disagree for a reason no deployment would produce.
+		at := fmt.Sprintf("((((now() AT TIME ZONE 'Asia/Seoul')::date - %d) + time '09:00') AT TIME ZONE 'Asia/Seoul')", day)
+		session := fmt.Sprintf("s-%s-%d", desktop, day)
+		event := func(name, properties string, conversion bool, minute int) {
+			run(fmt.Sprintf(`INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,received_at,visitor_id,session_id,user_id,page_url,source,medium,device_type,browser,os,properties,is_conversion,environment,contract_version)
+				VALUES(gen_random_uuid(),$1,$2,%s+interval '%d minutes',now(),$3,$4,$5,'https://portal.internal/shop','intranet','portal','desktop','Chrome','Windows',$6,$7,'prd',1)`, at, minute),
+				siteID, name, desktop, session, person, properties, conversion)
+		}
+		// A refund of 400 against the 1000 purchases the loop above records.
+		event("refund", `{"value":"400","transaction_id":"tx-refund"}`, false, 6)
+		// Engaged time in the shape the metric parses, plus one unparseable value
+		// that has to be ignored rather than counted or crashed on.
+		event("user_engagement", `{"active_seconds":"15"}`, false, 7)
+		event("user_engagement", `{"active_seconds":"not-a-number"}`, false, 8)
+		event("resource_error", `{"resource":"https://portal.internal/app.js","resource_type":"script"}`, false, 9)
+		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"true","latency_ms":"820","input_tokens":"1200","output_tokens":"300","cost":"0.02"}`, false, 10)
+		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"false","latency_ms":"1400","input_tokens":"800","output_tokens":"0","cost":"0.01"}`, false, 11)
+	}
+
 	var segmentID uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO segments(site_id,name,description,definition,shared,owner_id)
 		VALUES($1,'모바일','', $2,true,$3) RETURNING id`, siteID,
@@ -1185,4 +1216,108 @@ func TestSessionCountsAreNamedForWhatTheyCount(t *testing.T) {
 		t.Errorf("sessions=%v and sessions_started=%v: exactly one seeded session began before the window and continued into it, so the active count has to be one higher",
 			row["sessions"], row["sessions_started"])
 	}
+}
+
+// TestReportsThatHadNoFixtureData checks four reports against known inputs for
+// the first time. Nothing in the suite created a refund, an engaged-time event, a
+// resource error or an AI call, so those code paths ran, returned zero and passed.
+// A report that answers zero because nothing was measuring is indistinguishable
+// from one that answers zero because nothing happened.
+func TestReportsThatHadNoFixtureData(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	from, today := f.siteDates(t, 7)
+	site := "/api/v1/sites/" + f.siteKey
+
+	t.Run("ecommerce refunds", func(t *testing.T) {
+		report := f.get(t, site+"/ecommerce?from="+from+"&to="+today)
+		summary, _ := report["summary"].(map[string]any)
+		if summary == nil {
+			t.Fatalf("the ecommerce report has no summary: %v", report)
+		}
+		// Three days of refunds at 400 each.
+		refunds, _ := summary["refunds"].(float64)
+		if refunds != 1200 {
+			t.Errorf("refunds = %v, want the 1200 seeded across three days", summary["refunds"])
+		}
+		revenue, _ := summary["revenue"].(float64)
+		if revenue <= 0 {
+			t.Fatalf("revenue = %v, so the net figure cannot be checked", summary["revenue"])
+		}
+		net, _ := summary["net_revenue"].(float64)
+		if net != revenue-refunds {
+			t.Errorf("net_revenue = %v, want revenue %v minus refunds %v", net, revenue, refunds)
+		}
+	})
+
+	t.Run("engaged time ignores unparseable values", func(t *testing.T) {
+		// Two engagement events a day for three days: one parseable at 15 seconds,
+		// one that is not a number. The unparseable one must be ignored rather than
+		// counted as zero-length engagement or breaking the query.
+		usage := f.get(t, site+"/usage?from="+from+"&to="+today)
+		if usage == nil {
+			t.Fatal("the usage report failed")
+		}
+		var engagementEvents, active int64
+		if err := pool.QueryRow(context.Background(), `SELECT count(*),count(*) FILTER(WHERE coalesce(properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$')
+			FROM raw_events WHERE site_id=$1 AND event_name='user_engagement'`, f.siteID).Scan(&engagementEvents, &active); err != nil {
+			t.Fatalf("count engagement events: %v", err)
+		}
+		if engagementEvents != 6 || active != 3 {
+			t.Fatalf("seeded %d engagement events of which %d are numeric, want 6 and 3", engagementEvents, active)
+		}
+		overview := f.get(t, site+"/overview?from="+from+"&to="+today)
+		current, _ := overview["current"].(map[string]any)
+		if rate, ok := current["engagement_rate"].(float64); !ok || rate < 0 || rate > 100 {
+			t.Errorf("engagement_rate = %v, want a percentage", current["engagement_rate"])
+		}
+	})
+
+	t.Run("experience counts resource errors", func(t *testing.T) {
+		report := f.get(t, site+"/experience?from="+from+"&to="+today)
+		rows, _ := report["errors"].([]any)
+		found := false
+		for _, item := range rows {
+			row, _ := item.(map[string]any)
+			if fmt.Sprint(row["event"]) == "resource_error" {
+				found = true
+				if count, _ := row["count"].(float64); count != 3 {
+					t.Errorf("resource_error count = %v, want the 3 seeded", row["count"])
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the experience report lists no resource_error although three were seeded: %v", rows)
+		}
+	})
+
+	t.Run("ai operations", func(t *testing.T) {
+		report := f.get(t, site+"/ai-analytics?from="+from+"&to="+today+"&group_by=model")
+		rows, _ := report["rows"].([]any)
+		if len(rows) == 0 {
+			t.Fatalf("the AI report returned no rows although six calls were seeded: %v", report)
+		}
+		row, _ := rows[0].(map[string]any)
+		// The grouped dimension is returned as `label`, whatever it was grouped by.
+		if fmt.Sprint(row["label"]) != "claude" {
+			t.Errorf("the AI report grouped by model returned label %v, want claude: %v", row["label"], row)
+		}
+		// Six calls over three days, half of them reporting success=false.
+		if calls, _ := row["calls"].(float64); calls != 6 {
+			t.Errorf("calls = %v, want the 6 seeded", row["calls"])
+		}
+		if rate, _ := row["success_rate"].(float64); rate < 49 || rate > 51 {
+			t.Errorf("success_rate = %v, want about 50 with three of six failing", row["success_rate"])
+		}
+		if tokens, _ := row["input_tokens"].(float64); tokens != 6000 {
+			t.Errorf("input_tokens = %v, want the 6000 seeded (1200+800 over three days)", row["input_tokens"])
+		}
+		// Latency averages the two seeded calls, and cost sums them.
+		if latency, _ := row["average_latency_ms"].(float64); latency < 1109 || latency > 1111 {
+			t.Errorf("average_latency_ms = %v, want 1110 from 820 and 1400", row["average_latency_ms"])
+		}
+		if cost, _ := row["cost"].(float64); cost < 0.089 || cost > 0.091 {
+			t.Errorf("cost = %v, want 0.09 from three days of 0.02 and 0.01", row["cost"])
+		}
+	})
 }
