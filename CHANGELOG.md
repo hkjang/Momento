@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.29.2
+
+- The overview and the insight report agree about sessions. Both answer how many sessions a period had, how many were engaged and how long the average one lasted; the overview measured the span of events inside the query window while the insight report read the sessions table, so the same period was a sixteen minute average session on one screen and twelve on the other.
+- Everything about a session now comes from the sessions table, which the collector maintains and which is the only place that knows a session's real span. Sessions are counted by when they started, so consecutive periods add up instead of both claiming a session that spanned midnight.
+- The events answer only when no session row exists for the period, which means the derived data is behind rather than that nothing happened. That replaces taking the larger of the two counts, which mixed definitions to avoid showing a zero.
+- Session conversion rate now shares that denominator, so the rate and the session count on the same card refer to the same set of sessions.
+- Bounded the insight report's first-seen scan, which was missed when the others were bounded in v0.24.2: it read the site's whole history to count new people in a period.
+- A test asserts the two screens agree on all three numbers, and fails with 960 against 720 on the previous definitions.
+
 ## v0.29.1
 
 - Revenue means the same thing on every screen. A purchase may carry its amount as `value` or `revenue`, and every report read both — except the query builder, which read only the first and answered zero for a site that sends the other. Nothing failed; one screen was simply wrong, which is harder to notice than an error.

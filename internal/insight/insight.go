@@ -969,16 +969,30 @@ func (rep Reporter) periodMetrics(ctx context.Context, siteID uuid.UUID, environ
 	err := rep.DB.QueryRow(ctx, `WITH period AS (
 		SELECT entity_id,session_id,event_name,is_conversion FROM analytics_events
 		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+	-- The first-seen scan stops at the end of the period for the same reason the
+	-- other reports' do: a row after it cannot move anybody's first event into the
+	-- window, and reading the rest made this grow with the site's whole history.
 	), first_seen AS (
-		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 GROUP BY 1
+		SELECT count(*) value FROM (
+			SELECT entity_id FROM analytics_events
+			WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3
+			GROUP BY entity_id HAVING min(event_timestamp) >= $2
+		) firsts
 	), session_summary AS (
 		SELECT count(*) sessions,count(*) FILTER(WHERE engaged) engaged,
 			coalesce(avg(extract(epoch FROM (last_event_at-started_at))),0)::double precision average_seconds
 		FROM sessions WHERE site_id=$1 AND environment=$4 AND started_at >= $2 AND started_at < $3
+	), event_sessions AS (
+		-- Only consulted when no session row exists for the period, which means
+		-- the derived data is behind rather than that nothing happened. Taking the
+		-- larger of the two would mix definitions and disagree with the overview.
+		SELECT count(DISTINCT session_id) sessions FROM period
 	)
 	SELECT count(DISTINCT p.entity_id),
-		(SELECT count(*) FROM first_seen WHERE first_at >= $2 AND first_at < $3),
-		greatest(count(DISTINCT p.session_id),(SELECT sessions FROM session_summary)),
+		(SELECT value FROM first_seen),
+		CASE WHEN (SELECT sessions FROM session_summary) > 0
+			THEN (SELECT sessions FROM session_summary)
+			ELSE (SELECT sessions FROM event_sessions) END,
 		count(*) FILTER(WHERE p.event_name='page_view'),
 		count(DISTINCT p.entity_id) FILTER(WHERE p.is_conversion),
 		(SELECT engaged FROM session_summary),

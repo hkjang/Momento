@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1066,5 +1067,64 @@ func TestRevenueAgreesBetweenTheOverviewAndTheQueryBuilder(t *testing.T) {
 	if builderRevenue != overviewRevenue {
 		t.Errorf("the query builder reports %v revenue and the overview %v for the same window: a purchase whose amount is named `revenue` has to count in both",
 			row["revenue"], current["revenue"])
+	}
+}
+
+// TestSessionMetricsAgreeBetweenTheOverviewAndTheInsightReport pins a
+// disagreement that a reader could not resolve. Both screens answer "how long
+// was the average session in this period"; the overview measured the span of
+// events inside the query window and the insight report read the sessions table,
+// so the same period was sixteen minutes on one and twelve on the other.
+func TestSessionMetricsAgreeBetweenTheOverviewAndTheInsightReport(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	from, today := f.siteDates(t, 30)
+	site := "/api/v1/sites/" + f.siteKey
+
+	overview := f.get(t, site+"/overview?from="+from+"&to="+today)
+	current, _ := overview["current"].(map[string]any)
+	insight := f.get(t, site+"/visitor-insights?from="+from+"&to="+today)
+	kpis, _ := insight["kpis"].([]any)
+	if len(kpis) == 0 {
+		t.Fatalf("the insight report has no KPIs: %v", insight)
+	}
+	byKey := map[string]float64{}
+	for _, item := range kpis {
+		kpi, _ := item.(map[string]any)
+		value, _ := kpi["current"].(float64)
+		byKey[fmt.Sprint(kpi["key"])] = value
+	}
+
+	for _, pair := range []struct {
+		overviewKey string
+		insightKey  string
+		label       string
+	}{
+		{"sessions", "sessions", "session count"},
+		{"engagement_rate", "engagement_rate", "engagement rate"},
+		{"avg_session_duration", "avg_session_duration", "average session duration"},
+	} {
+		want, ok := byKey[pair.insightKey]
+		if !ok {
+			t.Errorf("the insight report does not report %s", pair.insightKey)
+			continue
+		}
+		got, _ := current[pair.overviewKey].(float64)
+		// A tenth of a unit of slack absorbs float formatting, not a definition.
+		if math.Abs(got-want) > 0.1 {
+			t.Errorf("%s is %v on the overview and %v in the insight report: one question cannot have two answers",
+				pair.label, current[pair.overviewKey], want)
+		}
+	}
+
+	// Sessions are counted by when they started, so the count cannot exceed the
+	// number of sessions the collector recorded for the window.
+	var recorded int64
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM sessions WHERE site_id=$1 AND environment='prd' AND started_at >= $2::date AND started_at < ($3::date + 1)`,
+		f.siteID, from, today).Scan(&recorded); err != nil {
+		t.Fatalf("count recorded sessions: %v", err)
+	}
+	if sessions, _ := current["sessions"].(float64); recorded > 0 && sessions != float64(recorded) {
+		t.Errorf("the overview reports %v sessions while the collector recorded %d starting in the window", current["sessions"], recorded)
 	}
 }

@@ -180,17 +180,9 @@ func (s *Server) metrics(r *http.Request, siteID uuid.UUID, environment string, 
 func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
 	var m metricSet
 	err := s.DB.QueryRow(ctx, `WITH
-		cfg AS (SELECT engagement_threshold_seconds threshold FROM sites WHERE id=$1),
 		-- Only the columns the aggregates read. Selecting every column made the
 		-- planner carry both jsonb blobs through a two million row materialisation.
-		period AS (SELECT entity_id entity,session_id,event_name,is_conversion,event_timestamp,properties FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
-		sess AS (
-			SELECT session_id,min(event_timestamp) mn,max(event_timestamp) mx,
-				count(*) FILTER(WHERE event_name='page_view') page_views,
-				count(*) FILTER(WHERE is_conversion) conversions,
-				coalesce(sum(CASE WHEN event_name='user_engagement' AND coalesce(properties->>'active_seconds','') ~ '^[0-9]+(\.[0-9]+)?$' THEN least((properties->>'active_seconds')::numeric*1000,3600000) ELSE 0 END),0) active_ms
-			FROM period GROUP BY session_id
-		),
+		period AS (SELECT entity_id entity,event_name,is_conversion,properties FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
 		-- New people are those whose first ever event falls inside the period.
 		-- That needs history, but only history before the period ends: rows at or
 		-- after it cannot move anybody's first event into the window. Reading the
@@ -207,19 +199,29 @@ func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environme
 		SELECT
 			count(DISTINCT p.entity),
 			(SELECT value FROM new_users),
-			count(DISTINCT p.session_id),
 			count(*) FILTER(WHERE p.event_name='page_view'),
 			count(*),
 			count(*) FILTER(WHERE p.is_conversion),
 			count(DISTINCT p.entity) FILTER(WHERE p.is_conversion),
-			count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion),
-			coalesce((SELECT 100.0*count(*) FILTER(WHERE extract(epoch FROM (mx-mn)) >= cfg.threshold OR conversions>0 OR page_views>=2 OR active_ms>=cfg.threshold*1000)/nullif(count(*),0) FROM sess,cfg),0),
-			coalesce((SELECT avg(extract(epoch FROM (mx-mn))) FROM sess),0),
 			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
-			coalesce(100.0*count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.session_id),0),0),
 			`+revenueAmountSQL("p")+`
-		FROM period p`, siteID, from, to, environment).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.ConversionSessions, &m.EngagementRate, &m.AvgSessionDuration, &m.UserConversionRate, &m.SessionConversionRate, &m.Revenue)
-	return m, err
+		FROM period p`, siteID, from, to, environment).
+		Scan(&m.Users, &m.NewUsers, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.UserConversionRate, &m.Revenue)
+	if err != nil {
+		return m, err
+	}
+	// Everything about sessions comes from one place, so the overview and the
+	// insight report cannot disagree about how long a session lasted.
+	sessions, err := s.readSessionMetrics(ctx, siteID, environment, from, to)
+	if err != nil {
+		return m, err
+	}
+	m.Sessions = sessions.Sessions
+	m.ConversionSessions = sessions.Converting
+	m.EngagementRate = sessions.engagementRate()
+	m.AvgSessionDuration = sessions.AverageSeconds
+	m.SessionConversionRate = sessions.conversionRate()
+	return m, nil
 }
 func metricMap(m metricSet) map[string]any {
 	return map[string]any{"users": m.Users, "new_users": m.NewUsers, "sessions": m.Sessions, "page_views": m.PageViews, "events": m.Events, "engagement_rate": m.EngagementRate, "avg_session_duration": m.AvgSessionDuration, "conversions": m.Conversions, "conversion_users": m.ConversionUsers, "conversion_sessions": m.ConversionSessions, "conversion_rate": m.UserConversionRate, "user_conversion_rate": m.UserConversionRate, "session_conversion_rate": m.SessionConversionRate, "revenue": m.Revenue}
