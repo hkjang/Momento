@@ -414,17 +414,13 @@ function AdminOverview() {
   const privacyRequests = useQuery({
     queryKey: ["privacy-requests", site?.site_id],
     queryFn: () =>
-      get<WorkflowSummary[]>(
-        `/api/v1/sites/${site!.site_id}/privacy-requests`,
-      ),
+      get<WorkflowSummary[]>(`/api/v1/sites/${site!.site_id}/privacy-requests`),
     enabled: !!site,
   });
   const aggregateJobs = useQuery({
     queryKey: ["aggregate-jobs", site?.site_id],
     queryFn: () =>
-      get<WorkflowSummary[]>(
-        `/api/v1/sites/${site!.site_id}/aggregate-jobs`,
-      ),
+      get<WorkflowSummary[]>(`/api/v1/sites/${site!.site_id}/aggregate-jobs`),
     enabled: !!site,
     refetchInterval: 30000,
   });
@@ -475,9 +471,7 @@ function AdminOverview() {
       detail: ["mask", "reject"].includes(String(privacy.pii_detection_mode))
         ? `${String(privacy.pii_detection_mode).toUpperCase()} 정책이 적용됩니다.`
         : "PII 탐지를 Mask 또는 Reject로 강화하세요.",
-      ready: ["mask", "reject"].includes(
-        String(privacy.pii_detection_mode),
-      ),
+      ready: ["mask", "reject"].includes(String(privacy.pii_detection_mode)),
       to: "/admin?section=privacy",
     },
     {
@@ -722,8 +716,8 @@ function AdminOverview() {
               {site?.name || "Momento"} 운영 브리핑
             </Typography>
             <Typography color="rgba(255,255,255,.72)" variant="body2" mt={1}>
-              {environment.toUpperCase()} 환경의 수집 상태와 미처리 작업을 한곳에서
-              확인하고, 우선순위가 높은 조치부터 처리하세요.
+              {environment.toUpperCase()} 환경의 수집 상태와 미처리 작업을
+              한곳에서 확인하고, 우선순위가 높은 조치부터 처리하세요.
             </Typography>
           </Box>
           <Stack alignItems={{ md: "flex-end" }} gap={1}>
@@ -872,7 +866,12 @@ function AdminOverview() {
           </Stack>
         </Card>
         <Card sx={{ p: { xs: 2.2, md: 2.75 } }}>
-          <Stack direction="row" justifyContent="space-between" gap={2} mb={1.5}>
+          <Stack
+            direction="row"
+            justifyContent="space-between"
+            gap={2}
+            mb={1.5}
+          >
             <Box>
               <Typography variant="h6">조치 필요</Typography>
               <Typography variant="body2" color="text.secondary">
@@ -1003,11 +1002,7 @@ function AdminOverview() {
                 py={1.2}
               >
                 <Stack direction="row" gap={1} alignItems="center" minWidth={0}>
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    label={item.action}
-                  />
+                  <Chip size="small" variant="outlined" label={item.action} />
                   <Typography variant="body2" noWrap>
                     {item.resource_type} · {item.actor}
                   </Typography>
@@ -1218,7 +1213,8 @@ function SiteSDKGuideDialog({
               {guide.trackingKey && (
                 <Box>
                   <Typography variant="caption" color="text.secondary">
-                    Tracking Key · 직접 Collector 연동용, 기본 JS SDK는 사용하지 않음
+                    Tracking Key · 직접 Collector 연동용, 기본 JS SDK는 사용하지
+                    않음
                   </Typography>
                   <CopyField value={guide.trackingKey} />
                 </Box>
@@ -1316,11 +1312,10 @@ function SiteSDKGuideDialog({
                 />
               </Stack>
               <Typography variant="body2" color="text.secondary" mb={1.5}>
-                측정 대상 애플리케이션의 CSP가 <code>connect-src &apos;self&apos;</code>
-                {" "}
-                수준이면 수집 요청이 차단됩니다. 아래 정책을 추가하거나, 프록시
-                방식을 선택해 <code>data-endpoint</code>로 first-party 경로를
-                사용하세요.
+                측정 대상 애플리케이션의 CSP가{" "}
+                <code>connect-src &apos;self&apos;</code> 수준이면 수집 요청이
+                차단됩니다. 아래 정책을 추가하거나, 프록시 방식을 선택해{" "}
+                <code>data-endpoint</code>로 first-party 경로를 사용하세요.
               </Typography>
               {useProxy ? (
                 <Stack spacing={1.5}>
@@ -1331,7 +1326,10 @@ function SiteSDKGuideDialog({
                     onChange={(event) => setProxyPath(event.target.value)}
                     helperText="애플리케이션 도메인 아래에서 Collector로 전달할 경로"
                   />
-                  <CopyField label="Reverse Proxy 설정 (nginx)" value={csp.proxy} />
+                  <CopyField
+                    label="Reverse Proxy 설정 (nginx)"
+                    value={csp.proxy}
+                  />
                 </Stack>
               ) : (
                 <Stack spacing={1.5}>
@@ -1345,32 +1343,30 @@ function SiteSDKGuideDialog({
                 운영 배포 시 권장 속성
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                배포 영향 분석이 필요하면 script에
-                {" "}
-                <code>data-release-version</code>, <code>data-git-sha</code>,
-                {" "}
+                배포 영향 분석이 필요하면 script에{" "}
+                <code>data-release-version</code>, <code>data-git-sha</code>,{" "}
                 <code>data-deployment-id</code>를 추가하세요. 버튼 문구는
                 개인정보 위험 때문에 기본 수집하지 않으며, 필요할 때만
-                <code> data-collect-element-text=&quot;true&quot;</code>를 사용하세요.
+                <code> data-collect-element-text=&quot;true&quot;</code>를
+                사용하세요.
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={1.5}>
-                Session은 브라우저에서 구분하므로, 사이트의 Session Timeout 설정은
-                이 스니펫의 <code>data-session-timeout</code>으로 전달됩니다. 설정을
-                바꾸면 설치된 스니펫도 갱신해야 적용됩니다.
+                Session은 브라우저에서 구분하므로, 사이트의 Session Timeout
+                설정은 이 스니펫의 <code>data-session-timeout</code>으로
+                전달됩니다. 설정을 바꾸면 설치된 스니펫도 갱신해야 적용됩니다.
               </Typography>
               <Typography variant="body2" color="text.secondary" mt={1.5}>
                 Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search,
-                Error After Click, Slow Interaction과 사이트 검색은 별도 계측 없이
-                자동 감지됩니다. 끄려면
-                {" "}
-                <code>data-frustration-signals=&quot;false&quot;</code> 또는
-                {" "}
-                <code>data-search-tracking=&quot;false&quot;</code>를 사용하세요. 검색어
-                자체는 개인정보가 섞일 수 있어 기본 수집하지 않으며, 필요할 때만
-                <code> data-collect-search-terms=&quot;true&quot;</code>를 사용하세요.
-                질의 문자열 이름이 다르면
-                {" "}
-                <code>data-search-params=&quot;kw,keyword&quot;</code>로 지정합니다.
+                Error After Click, Slow Interaction과 사이트 검색은 별도 계측
+                없이 자동 감지됩니다. 끄려면{" "}
+                <code>data-frustration-signals=&quot;false&quot;</code> 또는{" "}
+                <code>data-search-tracking=&quot;false&quot;</code>를
+                사용하세요. 검색어 자체는 개인정보가 섞일 수 있어 기본 수집하지
+                않으며, 필요할 때만
+                <code> data-collect-search-terms=&quot;true&quot;</code>를
+                사용하세요. 질의 문자열 이름이 다르면{" "}
+                <code>data-search-params=&quot;kw,keyword&quot;</code>로
+                지정합니다.
               </Typography>
             </Card>
           </Stack>
@@ -1379,10 +1375,13 @@ function SiteSDKGuideDialog({
         {tab === 1 && (
           <Stack spacing={2.2}>
             <Alert severity="warning">
-              이메일·전화번호·주민번호를 user ID나 속성으로 보내지 마세요.
-              SSO의 사번을 그대로 쓰기보다 내부 비식별 ID를 권장합니다.
+              이메일·전화번호·주민번호를 user ID나 속성으로 보내지 마세요. SSO의
+              사번을 그대로 쓰기보다 내부 비식별 ID를 권장합니다.
             </Alert>
-            <CopyField label="사용자 식별과 업무 이벤트 예시" value={identifyAndEventExample} />
+            <CopyField
+              label="사용자 식별과 업무 이벤트 예시"
+              value={identifyAndEventExample}
+            />
             <Typography variant="body2" color="text.secondary">
               Event 이름과 Property는 관리자 → 이벤트 스키마의 Contract와
               맞추세요. 세션 전체에 필요한 값은 Event Property 대신
@@ -1438,12 +1437,19 @@ function SiteSDKGuideDialog({
                         : "error"
                   }
                 >
-                  최근 1시간 {String(diagnostics.data.metrics.events_last_hour ?? 0)}건,
-                  24시간 {String(diagnostics.data.metrics.events_last_24h ?? 0)}건 수신했습니다.
+                  최근 1시간{" "}
+                  {String(diagnostics.data.metrics.events_last_hour ?? 0)}건,
+                  24시간 {String(diagnostics.data.metrics.events_last_24h ?? 0)}
+                  건 수신했습니다.
                 </Alert>
                 {diagnostics.data.checks.map((check) => (
                   <Card key={check.id} variant="outlined" sx={{ p: 1.8 }}>
-                    <Stack direction="row" gap={1.2} alignItems="center" mb={0.5}>
+                    <Stack
+                      direction="row"
+                      gap={1.2}
+                      alignItems="center"
+                      mb={0.5}
+                    >
                       <Chip
                         size="small"
                         color={diagnosticColor[check.status]}
@@ -1497,7 +1503,12 @@ function SiteSDKGuideDialog({
               "Tracking Debugger에서 선택한 환경의 page_view와 업무 이벤트 확인",
               "운영 전 이벤트 스키마와 PII 정책을 등록하고 Data Quality 경고 확인",
             ].map((item, index) => (
-              <Stack key={item} direction="row" spacing={1.2} alignItems="flex-start">
+              <Stack
+                key={item}
+                direction="row"
+                spacing={1.2}
+                alignItems="flex-start"
+              >
                 <CheckCircleRounded color="success" fontSize="small" />
                 <Typography variant="body2">
                   {index + 1}. {item}
@@ -1669,9 +1680,10 @@ function SitesAdmin() {
         title: "저장된 사이트 키",
         value: lines.join("\n"),
         recoverable: Boolean(d.tracking_key || d.server_api_key),
-        note: d.tracking_key || d.server_api_key
-          ? "암호화 저장된 키를 복호화해 표시했습니다. 조회 사실은 Audit Log에 기록됩니다."
-          : "저장된 키가 없습니다. MOMENTO_ENCRYPTION_KEY를 설정한 뒤 키를 한 번 회전하세요.",
+        note:
+          d.tracking_key || d.server_api_key
+            ? "암호화 저장된 키를 복호화해 표시했습니다. 조회 사실은 Audit Log에 기록됩니다."
+            : "저장된 키가 없습니다. MOMENTO_ENCRYPTION_KEY를 설정한 뒤 키를 한 번 회전하세요.",
       });
     },
   });
@@ -1701,113 +1713,119 @@ function SitesAdmin() {
           gap: 2,
         }}
       >
-        {q.data!.length ? q.data!.map((site) => (
-          <Card key={site.id} sx={{ p: 2.5 }}>
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              justifyContent="space-between"
-              gap={1.5}
-            >
-              <Box>
-                <Stack direction="row" gap={1} alignItems="center">
-                  <Typography fontWeight={720}>{site.name}</Typography>
-                  <Chip
-                    size="small"
-                    color={site.active ? "success" : "default"}
-                    label={site.active ? "수집 중" : "중지"}
-                  />
-                </Stack>
-                <Typography
-                  className="mono"
-                  variant="caption"
-                  color="primary.main"
-                >
-                  {site.site_id}
-                </Typography>
-              </Box>
-              <Stack direction="row" flexWrap="wrap" justifyContent="flex-end">
-                <Button
-                  size="small"
-                  startIcon={<IntegrationInstructionsRounded />}
-                  onClick={() =>
-                    setSDKGuide({
-                      id: site.id,
-                      siteId: site.site_id,
-                      name: site.name,
-                      sessionTimeoutMinutes: site.session_timeout_minutes,
-                    })
-                  }
-                >
-                  SDK 설치
-                </Button>
-                <Button
-                  size="small"
-                  startIcon={<EditOutlined />}
-                  onClick={() => setEditing(site)}
-                >
-                  설정
-                </Button>
-                <Button
-                  size="small"
-                  startIcon={<KeyRounded />}
-                  onClick={() => reveal.mutate(site.id)}
-                  disabled={reveal.isPending}
-                >
-                  키 보기
-                </Button>
-                <Button size="small" onClick={() => rotate.mutate(site.id)}>
-                  Tracking 키 회전
-                </Button>
-                <Button
-                  size="small"
-                  startIcon={<KeyRounded />}
-                  onClick={() => rotateServer.mutate(site.id)}
-                >
-                  Server 키 회전
-                </Button>
-              </Stack>
-            </Stack>
-            <Divider sx={{ my: 2 }} />
-            <Stack spacing={1}>
-              <Info label="서비스" value={site.service_name || "—"} />
-              <Info
-                label="세션 만료"
-                value={`${site.session_timeout_minutes}분`}
-              />
-              <Info label="기준 시간대" value={site.timezone} />
-              <Info
-                label="참여 세션 기준"
-                value={`${site.engagement_threshold_seconds}초 또는 전환 또는 2 Page View`}
-              />
-              <Info
-                label="Tracking Key"
-                value={`${site.tracking_key_prefix}••••••`}
-              />
-              <Info
-                label="Server API Key"
-                value={`${site.server_api_key_prefix || "미발급"}••••••`}
-              />
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  허용 도메인
-                </Typography>
-                <Stack direction="row" gap={0.5} mt={0.5} flexWrap="wrap">
-                  {site.allowed_domains.length ? (
-                    site.allowed_domains.map((x) => (
-                      <Chip size="small" key={x} label={x} />
-                    ))
-                  ) : (
+        {q.data!.length ? (
+          q.data!.map((site) => (
+            <Card key={site.id} sx={{ p: 2.5 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                justifyContent="space-between"
+                gap={1.5}
+              >
+                <Box>
+                  <Stack direction="row" gap={1} alignItems="center">
+                    <Typography fontWeight={720}>{site.name}</Typography>
                     <Chip
                       size="small"
-                      color="warning"
-                      label="모든 Origin 허용"
+                      color={site.active ? "success" : "default"}
+                      label={site.active ? "수집 중" : "중지"}
                     />
-                  )}
+                  </Stack>
+                  <Typography
+                    className="mono"
+                    variant="caption"
+                    color="primary.main"
+                  >
+                    {site.site_id}
+                  </Typography>
+                </Box>
+                <Stack
+                  direction="row"
+                  flexWrap="wrap"
+                  justifyContent="flex-end"
+                >
+                  <Button
+                    size="small"
+                    startIcon={<IntegrationInstructionsRounded />}
+                    onClick={() =>
+                      setSDKGuide({
+                        id: site.id,
+                        siteId: site.site_id,
+                        name: site.name,
+                        sessionTimeoutMinutes: site.session_timeout_minutes,
+                      })
+                    }
+                  >
+                    SDK 설치
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<EditOutlined />}
+                    onClick={() => setEditing(site)}
+                  >
+                    설정
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<KeyRounded />}
+                    onClick={() => reveal.mutate(site.id)}
+                    disabled={reveal.isPending}
+                  >
+                    키 보기
+                  </Button>
+                  <Button size="small" onClick={() => rotate.mutate(site.id)}>
+                    Tracking 키 회전
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<KeyRounded />}
+                    onClick={() => rotateServer.mutate(site.id)}
+                  >
+                    Server 키 회전
+                  </Button>
                 </Stack>
-              </Box>
-            </Stack>
-          </Card>
-        )) : (
+              </Stack>
+              <Divider sx={{ my: 2 }} />
+              <Stack spacing={1}>
+                <Info label="서비스" value={site.service_name || "—"} />
+                <Info
+                  label="세션 만료"
+                  value={`${site.session_timeout_minutes}분`}
+                />
+                <Info label="기준 시간대" value={site.timezone} />
+                <Info
+                  label="참여 세션 기준"
+                  value={`${site.engagement_threshold_seconds}초 또는 전환 또는 2 Page View`}
+                />
+                <Info
+                  label="Tracking Key"
+                  value={`${site.tracking_key_prefix}••••••`}
+                />
+                <Info
+                  label="Server API Key"
+                  value={`${site.server_api_key_prefix || "미발급"}••••••`}
+                />
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    허용 도메인
+                  </Typography>
+                  <Stack direction="row" gap={0.5} mt={0.5} flexWrap="wrap">
+                    {site.allowed_domains.length ? (
+                      site.allowed_domains.map((x) => (
+                        <Chip size="small" key={x} label={x} />
+                      ))
+                    ) : (
+                      <Chip
+                        size="small"
+                        color="warning"
+                        label="모든 Origin 허용"
+                      />
+                    )}
+                  </Stack>
+                </Box>
+              </Stack>
+            </Card>
+          ))
+        ) : (
           <Card sx={{ gridColumn: "1 / -1" }}>
             <Empty
               title="등록된 분석 사이트가 없습니다"
@@ -1901,10 +1919,7 @@ function SitesAdmin() {
         />
       )}
       {sdkGuide && (
-        <SiteSDKGuideDialog
-          guide={sdkGuide}
-          close={() => setSDKGuide(null)}
-        />
+        <SiteSDKGuideDialog guide={sdkGuide} close={() => setSDKGuide(null)} />
       )}
       {editing && (
         <SiteSettingsDialog
@@ -2555,6 +2570,16 @@ function DataDeletion() {
   );
 }
 
+// The account of one unattended retention pass. Without it the screen showed what
+// the operator had asked for and never whether it was happening.
+interface RetentionRun {
+  started_at: string;
+  finished_at: string;
+  status: "success" | "failed";
+  removed: Record<string, number>;
+  error: string | null;
+}
+
 interface RetentionPolicy {
   raw_event_months: number;
   session_months: number;
@@ -2563,15 +2588,74 @@ interface RetentionPolicy {
   debug_days: number;
 }
 
+// A failing pass is the case that matters: it is silent, it is hourly, and the
+// disk fills while nothing on any screen changes. So the failure is an error alert
+// with its message, not a status word in a table.
+function RetentionRunCard({ run }: { run?: RetentionRun | null }) {
+  if (run === undefined) return null;
+  if (run === null) {
+    return (
+      <Alert severity="warning">
+        보존 작업이 아직 실행된 기록이 없습니다. 서비스 기동 후 1시간 뒤 첫
+        작업이 돌고, 그 뒤로는 매시간 실행됩니다.
+      </Alert>
+    );
+  }
+  const removed = Object.entries(run.removed).filter(([, count]) => count > 0);
+  const total = removed.reduce((sum, [, count]) => sum + count, 0);
+  const ran = new Date(run.started_at).toLocaleString("ko-KR");
+  const seconds = Math.max(
+    0,
+    (new Date(run.finished_at).getTime() - new Date(run.started_at).getTime()) /
+      1000,
+  );
+  if (run.status === "failed") {
+    return (
+      <Alert severity="error">
+        <Typography fontWeight={700} variant="body2">
+          {ran} 보존 작업이 실패했습니다
+        </Typography>
+        <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+          {run.error || "원인이 기록되지 않았습니다"}
+        </Typography>
+        <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+          실패 전까지 삭제된 행은 유지됩니다. 다음 작업이 이어서 진행하지만,
+          매시간 계속 실패하면 보존기간이 지난 데이터가 남습니다.
+        </Typography>
+      </Alert>
+    );
+  }
+  return (
+    <Alert severity="success">
+      <Typography fontWeight={700} variant="body2">
+        {ran} 보존 작업 완료 ·{" "}
+        {seconds < 1 ? "1초 미만" : `${Math.round(seconds)}초`} ·{" "}
+        {total.toLocaleString("ko-KR")}행 삭제
+      </Typography>
+      <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+        {removed.length
+          ? removed
+              .map(
+                ([table, count]) => `${table} ${count.toLocaleString("ko-KR")}`,
+              )
+              .join(" · ")
+          : "삭제 대상이 없었습니다. 보존기간이 지난 데이터가 없다는 뜻입니다."}
+      </Typography>
+    </Alert>
+  );
+}
+
 function RetentionAdmin() {
   const { site } = useSite();
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ["retention", site?.site_id],
     queryFn: () =>
-      get<{ policy: RetentionPolicy; updated_at?: string }>(
-        `/api/v1/sites/${site!.site_id}/retention`,
-      ),
+      get<{
+        policy: RetentionPolicy;
+        updated_at?: string;
+        last_run?: RetentionRun | null;
+      }>(`/api/v1/sites/${site!.site_id}/retention`),
     enabled: !!site,
   });
   const [local, setLocal] = useState<RetentionPolicy | null>(null);
@@ -2594,6 +2678,7 @@ function RetentionAdmin() {
         정책은 사이트별로 적용됩니다. Raw Event와 물리화 Session은 매시간
         독립적으로 정리되며 집계 보존기간을 비워 두면 무기한입니다.
       </Alert>
+      <RetentionRunCard run={query.data?.last_run} />
       <Card sx={{ p: 3 }}>
         <Section
           title={`${site.name} 보존 정책`}

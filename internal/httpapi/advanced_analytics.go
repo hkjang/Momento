@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -28,7 +29,34 @@ func (s *Server) getRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		value = retentionPolicy{RawEventMonths: 13, SessionMonths: 25, RealtimeHours: 24, DebugDays: 7}
 	}
-	writeJSON(w, 200, map[string]any{"policy": value, "updated_at": updated})
+	writeJSON(w, 200, map[string]any{"policy": value, "updated_at": updated, "last_run": s.lastRetentionRun(r)})
+}
+
+// retentionRun is the account of one unattended pass. The policy alone told an
+// operator what they had asked for, never whether it was happening: a job that had
+// been failing for a month looked exactly like one with nothing to do.
+type retentionRun struct {
+	StartedAt  time.Time        `json:"started_at"`
+	FinishedAt time.Time        `json:"finished_at"`
+	Status     string           `json:"status"`
+	Removed    map[string]int64 `json:"removed"`
+	Error      *string          `json:"error"`
+}
+
+// The pass is service-wide rather than per-site, because one sweep applies every
+// site's policy. It is reported on the retention screen because that is where an
+// operator goes to ask whether retention is working.
+func (s *Server) lastRetentionRun(r *http.Request) *retentionRun {
+	var run retentionRun
+	var removed []byte
+	err := s.DB.QueryRow(r.Context(), `SELECT started_at,finished_at,status,removed,error FROM retention_runs ORDER BY started_at DESC LIMIT 1`).
+		Scan(&run.StartedAt, &run.FinishedAt, &run.Status, &removed, &run.Error)
+	if err != nil {
+		return nil
+	}
+	run.Removed = map[string]int64{}
+	_ = json.Unmarshal(removed, &run.Removed)
+	return &run
 }
 
 func validateRetention(value retentionPolicy) error {

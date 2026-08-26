@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.32.6
+
+- The retention screen now reports the last unattended pass: when it ran, how long it took, how many rows it removed per table, and the error if it failed. Retention runs hourly with nobody watching and left no evidence anywhere — the screen showed the policy and when someone last edited it, and a failing pass produced one line on stderr. In a closed network without a log pipeline, a job that had been failing for a month looked exactly like one with nothing to do, and the operator found out when the disk filled.
+- The three states an operator has to tell apart are now distinguishable: never ran, ran and removed nothing, ran and failed. A pass with nothing to do is reported as a completed pass with zero rows, so a quiet screen is not the same as a stopped job.
+- The failure case is induced in the test rather than written by hand — a table the pass deletes from is renamed away — so this checks the pass records its own failure and names what broke, not merely that a failed row would display.
+- The record is bounded to the last 200 passes. The table that accounts for the trimming would otherwise be the next one nothing ever trims.
+- Migration 015 adds `retention_runs`. The upgrade test covers it from all fourteen earlier schema points.
+
 ## v0.32.5
 
 - Retention deletes in committed batches instead of one statement per table. Measured the old shape on the load harness: 2,001,497 expired events removed in a single 20.7s statement, leaving 2.9GB of table bloat, with nothing committed until it finished. That is the problem — an operator lowering a thirteen month policy to three on a large site, or a restart or statement timeout mid-pass, made no progress at all, and the hourly job then started over from the beginning forever. Batches of 20,000 rows commit as they go, so an interrupted pass keeps what it did and the next one continues. The same 2M events now take 30.9s, 49% slower for continuous progress, and 95ms at the 50,000-event scale the CI guard measures.

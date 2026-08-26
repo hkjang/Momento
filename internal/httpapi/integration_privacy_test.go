@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -511,4 +512,149 @@ func TestRetentionDeletesInBatchesAndConverges(t *testing.T) {
 	if remaining := count(`true`); remaining != 0 {
 		t.Fatalf("%d events survived the pass that resumed after a cancellation, from %d left behind", remaining, afterCancel)
 	}
+}
+
+// Retention runs unattended every hour and left no evidence anywhere. The screen
+// showed the policy and when someone last edited it; a failing pass produced one
+// line on stderr. In a closed network without a log pipeline, a job that had been
+// failing for a month looked exactly like one with nothing to do, and the operator
+// found out when the disk filled.
+//
+// So a pass now records what it did, and the screen reports it. The distinction
+// that matters is between the three states an operator has to tell apart: never
+// ran, ran and removed nothing, ran and failed.
+func TestRetentionReportsEachUnattendedPass(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	site := "/api/v1/sites/" + f.siteKey
+	worker := service.Worker{DB: pool}
+
+	// Start from no history at all, which is the state a fresh install is in.
+	if _, err := pool.Exec(ctx, `DELETE FROM retention_runs`); err != nil {
+		t.Fatalf("clear history: %v", err)
+	}
+	body := f.do(t, http.MethodGet, site+"/retention", "")
+	if run, present := body["last_run"]; !present {
+		t.Fatal("the retention screen does not report the unattended pass at all")
+	} else if run != nil {
+		t.Fatalf("with no history the screen reports a pass anyway: %v", run)
+	}
+
+	// A pass that removed something has to say what, per table, or "it ran" is
+	// indistinguishable from "it ran and quietly did nothing".
+	if _, err := pool.Exec(ctx, `INSERT INTO retention_policies(site_id,raw_event_months,session_months,realtime_hours,debug_days)
+		VALUES($1,1,1,1,1) ON CONFLICT(site_id) DO UPDATE SET raw_event_months=1,session_months=1`, f.siteID); err != nil {
+		t.Fatalf("retention policy: %v", err)
+	}
+	var expired int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND event_timestamp < now()-interval '40 days'`, f.siteID).Scan(&expired); err != nil {
+		t.Fatalf("count expired: %v", err)
+	}
+	if expired == 0 {
+		t.Fatal("the fixture has nothing to expire, so a recorded pass would prove nothing")
+	}
+	if err := worker.ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention: %v", err)
+	}
+	body = f.do(t, http.MethodGet, site+"/retention", "")
+	run, _ := body["last_run"].(map[string]any)
+	if run == nil {
+		t.Fatal("a pass ran and the screen still reports nothing")
+	}
+	if status, _ := run["status"].(string); status != "success" {
+		t.Fatalf("a pass that succeeded is reported as %q: %v", status, run)
+	}
+	removed, _ := run["removed"].(map[string]any)
+	events, _ := removed["raw_events"].(float64)
+	// The count is service-wide because one sweep applies every site's policy, so
+	// it covers this site's expired events and may cover others'.
+	if int64(events) < expired {
+		t.Fatalf("this site had %d expired events and the pass reports removing %v in total", expired, removed["raw_events"])
+	}
+	if run["error"] != nil {
+		t.Fatalf("a successful pass reports an error: %v", run["error"])
+	}
+
+	// A pass with nothing to do must be reported as a pass, not as silence: that is
+	// the whole difference between healthy and stopped.
+	if err := worker.ApplyRetention(ctx); err != nil {
+		t.Fatalf("second retention: %v", err)
+	}
+	body = f.do(t, http.MethodGet, site+"/retention", "")
+	idle, _ := body["last_run"].(map[string]any)
+	if idle == nil {
+		t.Fatal("a pass with nothing to remove is reported as no pass at all")
+	}
+	if status, _ := idle["status"].(string); status != "success" {
+		t.Fatalf("an idle pass is reported as %q", status)
+	}
+	// Nothing expired between the two passes, so the second reports no raw events
+	// at all rather than repeating the first pass's number.
+	idleRemoved, _ := idle["removed"].(map[string]any)
+	if _, claimed := idleRemoved["raw_events"]; claimed {
+		t.Fatalf("an idle pass claims to have removed %v events", idleRemoved["raw_events"])
+	}
+	if !laterThan(t, idle["started_at"], run["started_at"]) {
+		t.Fatal("the second pass did not replace the first, so the screen would show a stale time forever")
+	}
+
+	// And the case the whole record exists for. Induced rather than written by
+	// hand, so this checks the pass records its own failure and not merely that a
+	// failed row would display.
+	if _, err := pool.Exec(ctx, `ALTER TABLE data_quality_issues RENAME TO data_quality_issues_hidden`); err != nil {
+		t.Fatalf("hide a table the pass deletes from: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `ALTER TABLE data_quality_issues_hidden RENAME TO data_quality_issues`)
+	})
+	if err := worker.ApplyRetention(ctx); err == nil {
+		t.Fatal("a pass over a missing table reported success")
+	}
+	if _, err := pool.Exec(ctx, `ALTER TABLE data_quality_issues_hidden RENAME TO data_quality_issues`); err != nil {
+		t.Fatalf("restore the table: %v", err)
+	}
+	body = f.do(t, http.MethodGet, site+"/retention", "")
+	failed, _ := body["last_run"].(map[string]any)
+	if status, _ := failed["status"].(string); status != "failed" {
+		t.Fatalf("a pass that failed is reported as %q: %v", status, failed)
+	}
+	message, _ := failed["error"].(string)
+	if !strings.Contains(message, "data_quality_issues") {
+		t.Fatalf("the failure is reported without naming what broke: %q", message)
+	}
+
+	// The account of the work is itself unbounded work if nothing trims it.
+	for index := 0; index < 205; index++ {
+		if _, err := pool.Exec(ctx, `INSERT INTO retention_runs(started_at,status,removed) VALUES(now()-make_interval(mins=>$1),'success','{}')`, index+1); err != nil {
+			t.Fatalf("fill history: %v", err)
+		}
+	}
+	if err := worker.ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention with a long history: %v", err)
+	}
+	var history int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM retention_runs`).Scan(&history); err != nil {
+		t.Fatalf("count history: %v", err)
+	}
+	if history > 200 {
+		t.Fatalf("the retention history grew to %d rows: the table that records the trimming is not trimmed", history)
+	}
+	if history == 0 {
+		t.Fatal("trimming the history removed all of it, including the pass an operator needs to see")
+	}
+}
+
+// laterThan compares two JSON timestamps from the API.
+func laterThan(t *testing.T, newer, older any) bool {
+	t.Helper()
+	parse := func(value any) time.Time {
+		text, _ := value.(string)
+		parsed, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			t.Fatalf("unparsable timestamp %v: %v", value, err)
+		}
+		return parsed
+	}
+	return parse(newer).After(parse(older))
 }

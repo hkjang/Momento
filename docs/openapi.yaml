@@ -87,8 +87,11 @@ paths:
   /api/v1/sites/{siteId}/retention:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
-      summary: Read the site retention policy
-      responses: {'200': {description: Retention policy}}
+      summary: Read the site retention policy and the last unattended retention pass
+      # last_run is service-wide: one hourly sweep applies every site's policy. It is
+      # null until the first pass runs, and carries the per-table counts it removed or
+      # the error that stopped it.
+      responses: {'200': {description: Retention policy and last_run}}
     put:
       summary: Replace the site retention policy
       requestBody:

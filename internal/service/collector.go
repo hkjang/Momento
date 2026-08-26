@@ -1187,10 +1187,50 @@ func (w Worker) deleteExpired(ctx context.Context, table, predicate string, args
 	}
 }
 
+// cleanup runs one retention pass and records it. The record is the point: the
+// job is unattended and hourly, and until it existed a pass that had been failing
+// for a month looked exactly like one that had nothing to do.
 func (w Worker) cleanup(ctx context.Context) error {
+	started := time.Now()
+	removed, err := w.cleanupOnce(ctx)
+	if ctx.Err() != nil {
+		// A pass cut short by shutdown is not a failure worth reporting, and the
+		// batches it committed stand on their own.
+		return err
+	}
+	status, errorText := "success", ""
+	if err != nil {
+		status, errorText = "failed", truncateAutomationError(err.Error())
+	}
+	counts, marshalErr := json.Marshal(removed)
+	if marshalErr != nil {
+		counts = []byte(`{}`)
+	}
+	// Recorded on a context of its own so a cancelled pass still leaves its
+	// account, and best effort so bookkeeping never masks the real error.
+	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_, _ = w.DB.Exec(record, `INSERT INTO retention_runs(started_at,status,removed,error) VALUES($1,$2,$3,nullif($4,''))`, started, status, counts, errorText)
+	// The account of the work has to be bounded too, or it becomes the next table
+	// nothing ever trims.
+	_, _ = w.DB.Exec(record, `DELETE FROM retention_runs WHERE id < (SELECT min(id) FROM (SELECT id FROM retention_runs ORDER BY id DESC LIMIT 200) recent)`)
+	return err
+}
+
+func (w Worker) cleanupOnce(ctx context.Context) (map[string]int64, error) {
+	removed := map[string]int64{}
+	// drop deletes and keeps the count, so the recorded pass says what it did per
+	// table rather than only that it finished.
+	drop := func(table, predicate string, args ...any) error {
+		n, err := w.deleteExpired(ctx, table, predicate, args...)
+		if n > 0 {
+			removed[table] += n
+		}
+		return err
+	}
 	var months, debugDays int
 	if err := w.DB.QueryRow(ctx, `SELECT coalesce((value->>'raw_event_retention_months')::int,13),coalesce((value->>'debug_retention_days')::int,7) FROM settings WHERE key='privacy'`).Scan(&months, &debugDays); err != nil {
-		return err
+		return removed, err
 	}
 	if months < 1 {
 		months = 1
@@ -1204,13 +1244,13 @@ func (w Worker) cleanup(ctx context.Context) error {
 	if debugDays > 90 {
 		debugDays = 90
 	}
-	if _, err := w.deleteExpired(ctx, "raw_events",
+	if err := drop("raw_events",
 		`event_timestamp < now()-make_interval(months=>coalesce((SELECT p.raw_event_months FROM retention_policies p WHERE p.site_id=raw_events.site_id),$1))`, months); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "sessions",
+	if err := drop("sessions",
 		`last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=sessions.site_id),25))`); err != nil {
-		return err
+		return removed, err
 	}
 	// Nothing bounded the identity tables. Once retention removed a person's events
 	// and sessions, their visitor_id -> user_id mapping and per-visitor aggregate
@@ -1223,54 +1263,53 @@ func (w Worker) cleanup(ctx context.Context) error {
 	// is kept exactly as long as something it describes still exists. That needs no
 	// new setting and cannot remove anything still referenced. The index on
 	// (site_id, visitor_id) on both tables makes each check a probe.
-	if _, err := w.deleteExpired(ctx, "visitor_identities",
+	if err := drop("visitor_identities",
 		`NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=visitor_identities.site_id AND e.visitor_id=visitor_identities.visitor_id)
 			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=visitor_identities.site_id AND s.visitor_id=visitor_identities.visitor_id)`); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "visitors",
+	if err := drop("visitors",
 		`NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=visitors.site_id AND e.visitor_id=visitors.visitor_id)
 			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=visitors.site_id AND s.visitor_id=visitors.visitor_id)`); err != nil {
-		return err
+		return removed, err
 	}
 	// A user with no remaining visitor is no longer identified by anything.
-	if _, err := w.deleteExpired(ctx, "identified_users",
+	if err := drop("identified_users",
 		`NOT EXISTS(SELECT 1 FROM visitor_identities i WHERE i.site_id=identified_users.site_id AND i.user_id=identified_users.user_id)`); err != nil {
-		return err
+		return removed, err
 	}
 	// Daily aggregates were kept forever: the retention screen accepted a limit
 	// for them and nothing ever read it, so a site that asked to keep two years of
 	// rollups kept ten. A null policy still means keep them, which is why the
 	// delete only touches sites that set a number.
 	for _, table := range []string{"daily_site_metrics", "daily_site_visitors", "daily_site_sessions"} {
-		if _, err := w.deleteExpired(ctx, table, fmt.Sprintf(`EXISTS(
+		if err := drop(table, fmt.Sprintf(`EXISTS(
 			SELECT 1 FROM retention_policies p
 			WHERE p.site_id=%s.site_id AND p.aggregation_months IS NOT NULL
 				AND %s.event_date < (current_date - make_interval(months=>p.aggregation_months))::date)`, table, table)); err != nil {
-			return err
+			return removed, err
 		}
 	}
-	if _, err := w.deleteExpired(ctx, "event_inbox",
+	if err := drop("event_inbox",
 		`processed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=event_inbox.site_id),$1))`, debugDays); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "event_dead_letters",
+	if err := drop("event_dead_letters",
 		`failed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=event_dead_letters.site_id),$1))`, debugDays); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "data_quality_dimension_values",
+	if err := drop("data_quality_dimension_values",
 		`event_date < current_date-make_interval(days=>$1)`, debugDays); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "data_quality_issues",
+	if err := drop("data_quality_issues",
 		`occurred_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
-		return err
+		return removed, err
 	}
-	if _, err := w.deleteExpired(ctx, "user_sessions", `expires_at<now()`); err != nil {
-		return err
+	if err := drop("user_sessions", `expires_at<now()`); err != nil {
+		return removed, err
 	}
-	_, err := w.deleteExpired(ctx, "oidc_states", `expires_at<now()`)
-	return err
+	return removed, drop("oidc_states", `expires_at<now()`)
 }
 
 // ProcessPending is used by tests and operational drains.
