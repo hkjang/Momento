@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A push does not always get scheduled — a platform incident can drop the run
+  # while leaving the release workflow to report a startup failure — and without a
+  # manual trigger there is no way to verify a commit after the fact.
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
