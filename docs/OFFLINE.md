@@ -31,3 +31,5 @@ docker run -d --name momento --restart unless-stopped \
 최초 기동 시 DB migration과 bootstrap super admin 생성이 자동 수행됩니다. 같은 이메일이 이미 있으면 bootstrap 비밀번호로 덮어쓰지 않습니다. 이후 OIDC, 공개 URL, 개인정보, 수집 보안, 보존, 망 대역 등의 설정은 관리자 UI에서 변경합니다.
 
 백업 대상은 PostgreSQL뿐입니다. 업그레이드 전 `pg_dump`로 백업하고 새 이미지로 컨테이너를 교체하십시오. migration은 전진 적용되며 Raw Event는 삭제하지 않습니다.
+
+이 in-place 업그레이드 경로는 CI에서 검증됩니다. 과거 모든 릴리스가 남긴 스키마를 재현해 데이터를 채운 뒤 현재 migration 전체를 적용하고, 적용이 끝나는지·행이 그대로인지·`analytics_events` 뷰가 기존 행에서도 해석되는지·재기동 시 아무것도 다시 실행되지 않는지 확인합니다. 이미 저장된 행이 위반하는 제약을 추가하는 migration은 서비스 기동을 막기 때문에, 그런 변경은 폐쇄망이 아니라 CI에서 드러나야 합니다.

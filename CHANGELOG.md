@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.3
+
+- The in-place upgrade path is now verified in CI. Every release note has promised it and it had only ever been checked by hand. The test rebuilds the schema each past release shipped, fills it with data — a site, events, sessions, an API key, a delivery channel, a scheduled report, an anomaly alert — and applies the current migration set on top, then asserts the upgrade completes, no row was lost, `analytics_events` still resolves over rows written before the columns it reads existed, and a restart re-runs nothing. All thirteen historical points, in 6 seconds.
+- The failure this exists for is a migration that is fine on an empty schema and fails on a populated one: a CHECK or NOT NULL that stored rows violate. The service exits when a migration fails, so that upgrade leaves an operator with nothing running. Confirmed the guard catches all three shapes — a violated CHECK, a NOT NULL column with no default, and a migration that quietly deletes rows — by introducing each one and watching it fail.
+- `database.MigrateThrough` and `database.Versions` make a historical schema reachable; `Migrate` is unchanged for callers.
+- Verified the real upgrade first, v0.21.2 → v0.32.2 on one database: migration 014 applied, all 72 events and 12 sessions intact, the tracking key, server key and personal API key issued by v0.21.2 still authenticated, secrets encrypted by the old release decrypted, and all 43 read endpoints answered 200 over the old data.
+
 ## v0.32.2
 
 - Every release now verifies its own offline artifact before publishing. The tarball is the product for an air-gapped deployment and nothing had ever loaded one and started it: the workflow published whatever `docker save` produced. It now loads the archive it is about to publish — not the image still in the local daemon — starts it with the environment variables the release notes give, waits for `/health/ready` so the migrations are known to have run, checks the reported version matches the tag, fetches the console, and logs in as the bootstrapped administrator. A tarball that cannot start is no longer published.
