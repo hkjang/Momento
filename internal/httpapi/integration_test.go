@@ -54,6 +54,7 @@ type fixture struct {
 	otherKey    string
 	sessionCook string
 	trackingKey string
+	serverKey   string
 	visitorID   string
 	userID      string
 	segmentID   string
@@ -84,10 +85,14 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		t.Fatalf("workspace: %v", err)
 	}
 	const trackingKey = "mom_track_integration"
+	// A real hash, so the server-to-server ingestion path can actually be
+	// exercised: the column used to hold a literal string, which no request could
+	// ever present.
+	const serverKey = "mom_server_integration"
 	newSite := func(key, name string) uuid.UUID {
 		var id uuid.UUID
 		if err := pool.QueryRow(ctx, `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,timezone)
-			VALUES($1,$2,$3,$3,$4,'mom_track_x',$5,'mom_server_x',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, workspaceID, key, name, auth.HashToken(trackingKey), "server-"+key).Scan(&id); err != nil {
+			VALUES($1,$2,$3,$3,$4,'mom_track_x',$5,'mom_server_x',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, workspaceID, key, name, auth.HashToken(trackingKey), auth.HashToken(serverKey)).Scan(&id); err != nil {
 			t.Fatalf("site: %v", err)
 		}
 		run(`INSERT INTO site_environments(site_id,name,label) VALUES($1,'prd','Production') ON CONFLICT DO NOTHING`, id)
@@ -248,7 +253,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	server := New(pool, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), cipher)
 	return fixture{
 		server: server, siteKey: "SITE_MAIN", siteID: siteID, otherKey: "SITE_HR",
-		sessionCook: token, trackingKey: trackingKey, visitorID: desktop, userID: person, segmentID: segmentID.String(),
+		sessionCook: token, trackingKey: trackingKey, serverKey: serverKey, visitorID: desktop, userID: person, segmentID: segmentID.String(),
 	}
 }
 
@@ -1774,4 +1779,116 @@ func TestAPIKeyAuthentication(t *testing.T) {
 			t.Errorf("a key belonging to a deactivated user got %d, want 401", code)
 		}
 	})
+}
+
+// TestServerSideIngestionRequiresTheServerKey covers the collector rule that
+// separates a backend from a browser, which no test had reached. A request with
+// no Origin is server to server and must present the site's server API key; the
+// tracking key is not enough there, and that matters because the tracking key is
+// visible in the HTML of every page the site serves.
+func TestServerSideIngestionRequiresTheServerKey(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	send := func(t *testing.T, key, origin string) (int, string) {
+		t.Helper()
+		payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"server-visitor","session_id":"server-session",
+			"context":{"page":{"url":"https://portal.internal/api","title":"","referrer":""},"device":{},"traffic":{}},
+			"events":[{"id":"%s","name":"server_side_event","timestamp":%d,"properties":{},"contract_version":1}]}`,
+			f.siteKey, key, uuid.NewString(), time.Now().UnixMilli())
+		request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	t.Run("no origin accepts the server key", func(t *testing.T) {
+		if code, body := send(t, f.serverKey, ""); code != http.StatusAccepted {
+			t.Errorf("server-side ingestion with the server key answered %d, want 202: %s", code, truncateBody(body))
+		}
+	})
+
+	t.Run("no origin refuses the tracking key", func(t *testing.T) {
+		// The tracking key is published in every page's HTML. If it were accepted
+		// here, anyone who viewed the site could inject events attributed to it.
+		code, body := send(t, f.trackingKey, "")
+		if code == http.StatusAccepted {
+			t.Errorf("server-side ingestion accepted the public tracking key, which anyone can read from the page source")
+		}
+		if code != http.StatusForbidden {
+			t.Errorf("answered %d, want 403: %s", code, truncateBody(body))
+		}
+	})
+
+	t.Run("no origin refuses a missing key", func(t *testing.T) {
+		if code, _ := send(t, "", ""); code != http.StatusForbidden {
+			t.Errorf("server-side ingestion without a key answered %d, want 403", code)
+		}
+	})
+
+	t.Run("a browser request accepts either key from an allowed origin", func(t *testing.T) {
+		if code, body := send(t, f.trackingKey, "https://portal.internal"); code != http.StatusAccepted {
+			t.Errorf("a browser request with the tracking key answered %d, want 202: %s", code, truncateBody(body))
+		}
+		if code, body := send(t, f.serverKey, "https://portal.internal"); code != http.StatusAccepted {
+			t.Errorf("a browser request with the server key answered %d, want 202: %s", code, truncateBody(body))
+		}
+	})
+
+	t.Run("an unlisted origin is refused whichever key it carries", func(t *testing.T) {
+		for name, key := range map[string]string{"tracking": f.trackingKey, "server": f.serverKey} {
+			if code, _ := send(t, key, "https://evil.example"); code != http.StatusForbidden {
+				t.Errorf("an unlisted origin with the %s key answered %d, want 403", name, code)
+			}
+		}
+	})
+
+	// The accepted events are the ones that reached storage.
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("worker: %v", err)
+	}
+	if stored := f.countEvents(t, "server_side_event"); stored != 3 {
+		t.Errorf("%d server_side_event rows reached storage, want the 3 accepted requests", stored)
+	}
+}
+
+// TestLoginIsRateLimited covers the wiring rather than the limiter. The limiter
+// has its own unit tests; what had never been checked is that the login endpoint
+// consults it, which is the only thing standing between a reachable console and
+// an unlimited password guessing loop.
+func TestLoginIsRateLimited(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+
+	attempt := func() (int, string) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+			strings.NewReader(`{"email":"admin@test.local","password":"wrong"}`))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	limited := false
+	for i := 0; i < 40 && !limited; i++ {
+		code, body := attempt()
+		if code == http.StatusTooManyRequests {
+			limited = true
+			if !strings.Contains(body, "RATE_LIMITED") {
+				t.Errorf("the refusal does not identify itself as rate limiting: %s", truncateBody(body))
+			}
+			continue
+		}
+		if code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d answered %d, want 401 for a wrong password: %s", i+1, code, truncateBody(body))
+		}
+	}
+	if !limited {
+		t.Error("forty wrong passwords from one address were all answered, so nothing is limiting password guessing")
+	}
 }

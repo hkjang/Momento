@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.31.6 — implemented
+
+- 서버 사이드 수집 검증: Origin 없는 요청은 Server API Key만 허용, Tracking Key 거부, 미허용 Origin 거부
+- Fixture의 Server API Key 해시를 실제 해시로 교체(이전에는 문자열 리터럴이어서 검증 불가)
+- 로그인 Rate Limit 배선 검증
+- CI에 `workflow_dispatch` 추가
+
 ## v0.31.5 — implemented
 
 - 개인 API Key 인증 경로 검증(조회·Export 허용, 관리자 기능·대화형 쓰기 거부, 폐기·만료·소유자 비활성화 시 401)

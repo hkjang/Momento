@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.31.6
+
+- Server-side ingestion is tested. A request with no Origin is server to server and must present the site's server API key; the tracking key is not enough there, because it is published in the HTML of every page the site serves. No test had ever sent a request without an Origin, so that rule had never been exercised.
+- The fixture stored a literal string in place of the server key hash, so no request could present a valid server key. It now stores a real hash, which is what made the path testable.
+- Login rate limiting is tested at the wiring rather than the limiter. The limiter had unit tests; nothing had checked that the login endpoint consults it, which is the only thing between a reachable console and an unlimited password guessing loop.
+- Added a manual trigger to the CI workflow. A push to main went unscheduled during a platform incident and, with only push and pull_request triggers, that commit could not be verified afterwards. The trigger worked on its first use.
+
 ## v0.31.5
 
 - The personal API key path is tested. Every other test arrives with a session cookie, so the way a BI job or another service actually connects had never been exercised — including the refusals that stop a key being used as an administrator.

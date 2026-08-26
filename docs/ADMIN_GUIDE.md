@@ -156,6 +156,8 @@ Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter �
 - 각 Environment는 Event Contract 정책 `allow`, `warn`, `reject`와 일별 Cardinality Limit를 가집니다.
 - Event Contract는 Version마다 JSON Schema, Validation Mode, Changelog, 작성자와 활성시각을 보관합니다.
 - Draft는 수집에 사용할 수 없습니다. Active Version을 바꾸면 이전 Active는 Deprecated가 되지만 Retry 호환을 위해 계속 검증할 수 있습니다.
+- 서버 사이드 수집 규칙도 통합 테스트로 확인합니다. Origin 헤더가 없는 요청은 서버 간 호출로 보아 **Server API Key만** 허용하고 Tracking Key는 거부합니다. Tracking Key는 페이지 HTML에 노출되므로, 그것으로 서버 사이드 이벤트를 주입할 수 있어서는 안 됩니다. Origin이 있는 요청은 두 Key 모두 허용하되 허용 도메인 목록을 통과해야 합니다.
+- 로그인은 IP 기준으로 제한됩니다. 잘못된 비밀번호를 반복하면 `RATE_LIMITED`(429)를 반환하는지 통합 테스트로 확인합니다.
 - 접근 제어도 통합 테스트로 확인합니다. Analyst는 자기 Workspace의 사이트만 조회할 수 있고 다른 조직의 사이트에는 404를 받으며(사이트 존재를 확인해 주지 않기 위해 403이 아닙니다), 사이트 목록에도 나타나지 않습니다. 관리자 전용 엔드포인트는 403을 반환합니다. `user_workspace_roles`에 권한을 부여하면 같은 요청이 성공하고 회수하면 다시 거부되는 것까지 확인합니다.
 - `visitor_profiles`를 끄면 super_admin에게도 방문자 목록·식별 사용자 목록·개인 타임라인이 차단됩니다. 권한 등급이 아니라 개인정보 정책이기 때문입니다. 사람을 지목하지 않는 리포트는 계속 동작합니다.
 - Environment 격리는 통합 테스트로 확인합니다. `stg` 환경에 전용 Event 이름과 페이지를 시드한 뒤, `prd` 리포트에 그것이 나타나지 않고 `stg` 리포트에는 나타나는지, 그리고 무거운 리포트들이 두 환경에 대해 서로 다른 문서를 반환하는지 검사합니다.
