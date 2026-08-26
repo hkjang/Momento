@@ -2,13 +2,29 @@ name: Offline image release
 on:
   push:
     tags: ["v*"]
+  # A tag push can go unscheduled during a platform incident, and a release that
+  # was missed then could not be produced afterwards: the only trigger was the
+  # push itself, which does not repeat. This accepts the tag to build.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and release, for example v0.31.6
+        required: true
 permissions:
   contents: write
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      # The tag being released, from the dispatch input when there is one and from
+      # the pushed ref otherwise, so the steps below need no branching.
+      GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # A dispatched run starts from the default branch, so the tag has to be
+          # checked out explicitly or the image would be built from main.
+          ref: ${{ inputs.tag || github.ref }}
       - name: Build service image
         run: |
           docker build \
