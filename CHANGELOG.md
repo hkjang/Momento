@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.25.1
+
+- Added a scale guard that CI runs on every push. Two severe defects shipped because every test ran against a few hundred rows, where a query that scans the site per person and one that reads the table in visitor order both finish instantly. Fifty thousand events seed in two seconds and make the first class unmissable: with the aggregate that shipped before v0.24.1 restored, every segment-carrying report answers 504 and the query builder runs for nearly eight minutes on that data.
+- Measured what the guard does not catch rather than assuming it catches everything. The rebuild defect fixed in v0.25.0 was a plan choice, not a query shape: with the old statement restored the rebuild finishes in three seconds at fifty thousand events and five at a quarter of a million, because the table still fits in cache. That class needs the two million event harness, and the test file says so.
+- Guarded the other half of that fix directly: a test asserts the rebuild refreshes the statistics of the tables it fills, since a later step joins them and a latency budget cannot see the difference at any size CI can afford.
+
 ## v0.25.0
 
 - Fixed a rebuild query that did not finish. Deriving visitor identities joined raw events back to a per-visitor subquery, and the planner answered that by reading the whole table in visitor order through an index — millions of random heap fetches. On a two million event site it was still running after thirty-three minutes; three grouped scans and two hash joins produce the same rows in under two seconds. An integration test runs both forms against the same data and compares every link, timestamp included.
