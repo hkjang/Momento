@@ -426,3 +426,89 @@ func TestRetentionExpiresIdentitiesWithTheEventsTheyDescribe(t *testing.T) {
 		t.Fatalf("the identities screen still names %d people whose events were all deleted", got)
 	}
 }
+
+// Retention deleted everything expired in one statement per table. On the load
+// harness that measured 20.7s and 2.9GB of bloat for two million events, and
+// nothing is committed until such a statement finishes: on a site large enough for
+// it not to finish — a restart, a statement timeout, a dropped connection, or an
+// operator lowering a thirteen month policy to three — the pass makes no progress
+// at all, and the hourly job starts over from the beginning forever.
+//
+// The deletes are batched now. This checks the loop reaches the same end state at
+// any batch size rather than stopping early or never stopping, and that a cancelled
+// pass leaves part of the work done and the rest recoverable — which is what tells
+// the two shapes apart, because one statement per table can only ever leave every
+// row or none.
+func TestRetentionDeletesInBatchesAndConverges(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	if _, err := pool.Exec(ctx, `INSERT INTO retention_policies(site_id,raw_event_months,session_months,realtime_hours,debug_days)
+		VALUES($1,1,1,1,1) ON CONFLICT(site_id) DO UPDATE SET raw_event_months=1,session_months=1`, f.siteID); err != nil {
+		t.Fatalf("retention policy: %v", err)
+	}
+	count := func(where string) int64 {
+		t.Helper()
+		var n int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND `+where, f.siteID).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", where, err)
+		}
+		return n
+	}
+	expired := count(`event_timestamp < now()-interval '40 days'`)
+	if expired < 10 {
+		t.Fatalf("the fixture has only %d expired events, too few to cross a batch boundary", expired)
+	}
+
+	// A batch far below the work forces hundreds of iterations. The end state has
+	// to match what one large statement produced.
+	if err := (service.Worker{DB: pool, RetentionBatchSize: 3}).ApplyRetention(ctx); err != nil {
+		t.Fatalf("batched retention: %v", err)
+	}
+	if survivors := count(`event_timestamp < now()-interval '40 days'`); survivors != 0 {
+		t.Fatalf("%d expired events survived a batched pass: the loop stops before the work is done", survivors)
+	}
+	if recent := count(`event_timestamp > now()-interval '7 days'`); recent == 0 {
+		t.Fatal("the batched pass removed events inside the policy window")
+	}
+
+	// Expire the rest, then cancel a pass as soon as it has removed anything. What
+	// it removed has to still be gone, and a later pass has to finish the job:
+	// cancellation must not leave state that stops the work converging.
+	if _, err := pool.Exec(ctx, `UPDATE raw_events SET event_timestamp=event_timestamp-interval '400 days' WHERE site_id=$1`, f.siteID); err != nil {
+		t.Fatalf("age events: %v", err)
+	}
+	total := count(`true`)
+	if total < 6 {
+		t.Fatalf("only %d events left to expire, too few to interrupt a pass partway", total)
+	}
+	interruptible, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = (service.Worker{DB: pool, RetentionBatchSize: 1}).ApplyRetention(interruptible)
+	}()
+	// Cancel on observed progress rather than after a delay, so the test deadline
+	// is the failure if progress never appears.
+	for count(`true`) == total {
+	}
+	cancel()
+	<-done
+	afterCancel := count(`true`)
+	// Strictly between: a pass that stops partway is only possible if the work is
+	// split across committed statements. One statement per table either rolls all
+	// of it back on cancellation or has already finished, so it can only leave
+	// every row or none, and this is what tells the two apart.
+	if afterCancel == 0 || afterCancel >= total {
+		t.Fatalf("a cancelled pass left %d of %d events, so the deletion is not split into committed batches", afterCancel, total)
+	}
+
+	if err := (service.Worker{DB: pool, RetentionBatchSize: 3}).ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention after the cancelled pass: %v", err)
+	}
+	if remaining := count(`true`); remaining != 0 {
+		t.Fatalf("%d events survived the pass that resumed after a cancellation, from %d left behind", remaining, afterCancel)
+	}
+}

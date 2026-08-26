@@ -290,7 +290,12 @@ type privacyConfig struct {
 	PIIDetectionMode  string   `json:"pii_detection_mode"`
 }
 
-type Worker struct{ DB *pgxpool.Pool }
+type Worker struct {
+	DB *pgxpool.Pool
+	// RetentionBatchSize bounds one retention delete statement. Zero means
+	// retentionBatchSize. Tests lower it to exercise the loop across batches.
+	RetentionBatchSize int
+}
 
 func (w Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -1135,6 +1140,53 @@ func validateProperties(properties map[string]any, schemaRaw []byte) []string {
 	return warnings
 }
 
+// retentionBatchSize bounds one delete statement. Retention removed everything
+// expired in a single statement per table, which measured 20.7s and 2.9GB of
+// bloat for two million events on the load harness. Nothing is committed until
+// such a statement finishes, so on a site large enough for it not to finish —
+// a container restart, a statement timeout, a dropped connection, or an operator
+// lowering a policy from thirteen months to three — the pass makes no progress
+// at all and the hourly job starts over from the beginning, forever.
+//
+// Deleting in bounded chunks commits as it goes, so every chunk is progress that
+// survives an interruption and each statement is short enough to finish.
+const retentionBatchSize = 20_000
+
+// deleteExpired removes rows matching the predicate in batches until none are
+// left, returning how many it removed. The ctid form keeps this identical for
+// every table regardless of its key.
+func (w Worker) deleteExpired(ctx context.Context, table, predicate string, args ...any) (int64, error) {
+	batch := w.RetentionBatchSize
+	if batch < 1 {
+		batch = retentionBatchSize
+	}
+	statement := fmt.Sprintf(`DELETE FROM %s WHERE ctid = ANY(ARRAY(SELECT ctid FROM %s WHERE %s LIMIT %d))`,
+		table, table, predicate, batch)
+	var total int64
+	for {
+		tag, err := w.DB.Exec(ctx, statement, args...)
+		if err != nil {
+			// The rows removed so far are already committed, so a failure here
+			// costs the remainder of the pass and not the work behind it.
+			return total, fmt.Errorf("delete expired %s: %w", table, err)
+		}
+		removed := tag.RowsAffected()
+		total += removed
+		// Stop only on a statement that removed nothing, never on a short batch.
+		// A ctid chosen by the inner select can already be gone by the time the
+		// delete runs it — a second instance running its own hourly pass, or the
+		// event worker trimming the inbox — so a short batch does not mean the
+		// work is finished. Treating it as the end left rows behind whenever
+		// anything else was deleting at the same time.
+		if removed == 0 {
+			return total, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+	}
+}
+
 func (w Worker) cleanup(ctx context.Context) error {
 	var months, debugDays int
 	if err := w.DB.QueryRow(ctx, `SELECT coalesce((value->>'raw_event_retention_months')::int,13),coalesce((value->>'debug_retention_days')::int,7) FROM settings WHERE key='privacy'`).Scan(&months, &debugDays); err != nil {
@@ -1152,10 +1204,12 @@ func (w Worker) cleanup(ctx context.Context) error {
 	if debugDays > 90 {
 		debugDays = 90
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM raw_events e WHERE e.event_timestamp < now()-make_interval(months=>coalesce((SELECT p.raw_event_months FROM retention_policies p WHERE p.site_id=e.site_id),$1))`, months); err != nil {
+	if _, err := w.deleteExpired(ctx, "raw_events",
+		`event_timestamp < now()-make_interval(months=>coalesce((SELECT p.raw_event_months FROM retention_policies p WHERE p.site_id=raw_events.site_id),$1))`, months); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM sessions s WHERE s.last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=s.site_id),25))`); err != nil {
+	if _, err := w.deleteExpired(ctx, "sessions",
+		`last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=sessions.site_id),25))`); err != nil {
 		return err
 	}
 	// Nothing bounded the identity tables. Once retention removed a person's events
@@ -1169,19 +1223,19 @@ func (w Worker) cleanup(ctx context.Context) error {
 	// is kept exactly as long as something it describes still exists. That needs no
 	// new setting and cannot remove anything still referenced. The index on
 	// (site_id, visitor_id) on both tables makes each check a probe.
-	if _, err := w.DB.Exec(ctx, `DELETE FROM visitor_identities i
-		WHERE NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=i.site_id AND e.visitor_id=i.visitor_id)
-			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=i.site_id AND s.visitor_id=i.visitor_id)`); err != nil {
+	if _, err := w.deleteExpired(ctx, "visitor_identities",
+		`NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=visitor_identities.site_id AND e.visitor_id=visitor_identities.visitor_id)
+			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=visitor_identities.site_id AND s.visitor_id=visitor_identities.visitor_id)`); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM visitors v
-		WHERE NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=v.site_id AND e.visitor_id=v.visitor_id)
-			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=v.site_id AND s.visitor_id=v.visitor_id)`); err != nil {
+	if _, err := w.deleteExpired(ctx, "visitors",
+		`NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=visitors.site_id AND e.visitor_id=visitors.visitor_id)
+			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=visitors.site_id AND s.visitor_id=visitors.visitor_id)`); err != nil {
 		return err
 	}
 	// A user with no remaining visitor is no longer identified by anything.
-	if _, err := w.DB.Exec(ctx, `DELETE FROM identified_users u
-		WHERE NOT EXISTS(SELECT 1 FROM visitor_identities i WHERE i.site_id=u.site_id AND i.user_id=u.user_id)`); err != nil {
+	if _, err := w.deleteExpired(ctx, "identified_users",
+		`NOT EXISTS(SELECT 1 FROM visitor_identities i WHERE i.site_id=identified_users.site_id AND i.user_id=identified_users.user_id)`); err != nil {
 		return err
 	}
 	// Daily aggregates were kept forever: the retention screen accepted a limit
@@ -1189,29 +1243,33 @@ func (w Worker) cleanup(ctx context.Context) error {
 	// rollups kept ten. A null policy still means keep them, which is why the
 	// delete only touches sites that set a number.
 	for _, table := range []string{"daily_site_metrics", "daily_site_visitors", "daily_site_sessions"} {
-		if _, err := w.DB.Exec(ctx, `DELETE FROM `+table+` d WHERE EXISTS(
+		if _, err := w.deleteExpired(ctx, table, fmt.Sprintf(`EXISTS(
 			SELECT 1 FROM retention_policies p
-			WHERE p.site_id=d.site_id AND p.aggregation_months IS NOT NULL
-				AND d.event_date < (current_date - make_interval(months=>p.aggregation_months))::date)`); err != nil {
+			WHERE p.site_id=%s.site_id AND p.aggregation_months IS NOT NULL
+				AND %s.event_date < (current_date - make_interval(months=>p.aggregation_months))::date)`, table, table)); err != nil {
 			return err
 		}
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM event_inbox i WHERE i.processed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=i.site_id),$1))`, debugDays); err != nil {
+	if _, err := w.deleteExpired(ctx, "event_inbox",
+		`processed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=event_inbox.site_id),$1))`, debugDays); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM event_dead_letters d WHERE d.failed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=d.site_id),$1))`, debugDays); err != nil {
+	if _, err := w.deleteExpired(ctx, "event_dead_letters",
+		`failed_at < now()-make_interval(days=>coalesce((SELECT p.debug_days FROM retention_policies p WHERE p.site_id=event_dead_letters.site_id),$1))`, debugDays); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM data_quality_dimension_values d WHERE d.event_date < current_date-make_interval(days=>$1)`, debugDays); err != nil {
+	if _, err := w.deleteExpired(ctx, "data_quality_dimension_values",
+		`event_date < current_date-make_interval(days=>$1)`, debugDays); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM data_quality_issues d WHERE d.occurred_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
+	if _, err := w.deleteExpired(ctx, "data_quality_issues",
+		`occurred_at < now()-make_interval(days=>$1)`, debugDays); err != nil {
 		return err
 	}
-	if _, err := w.DB.Exec(ctx, `DELETE FROM user_sessions WHERE expires_at<now()`); err != nil {
+	if _, err := w.deleteExpired(ctx, "user_sessions", `expires_at<now()`); err != nil {
 		return err
 	}
-	_, err := w.DB.Exec(ctx, `DELETE FROM oidc_states WHERE expires_at<now()`)
+	_, err := w.deleteExpired(ctx, "oidc_states", `expires_at<now()`)
 	return err
 }
 
