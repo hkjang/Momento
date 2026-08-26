@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.27.0 — implemented
+
+- 분석 기간 선택을 9개 화면에 추가(경험 비교·Retention·Adoption·Frustration·검색·Feature·Workspace·AI·Ecommerce)
+- 화면 성격에 맞는 기간 목록 제공(Retention 90/180/365, Feature 30/60/90, 기본 7/30/90)
+- 로딩·오류 상태에서도 기간 선택 유지
+- Retention의 `기간` 필드를 `표시 주차`로 명확화
+
 ## v0.26.0 — implemented
 
 - 조회 실패 화면이 원인별 복구 경로를 버튼으로 제공(기간 줄이기·Segment·Fast 모드·정기 배달)

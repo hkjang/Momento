@@ -7,6 +7,8 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import RangeSelect from "../components/RangeSelect";
+import { narrowerRange } from "./../components/queryError";
 import { describeSignal, frictionHeadline, frustrationSetupHint, impactVerdictLabel, searchSetupHint, zeroResultReadiness, type FrictionImpact } from "./signalGuide";
 import AudienceList from "../components/AudienceList";
 import type { InsightAudience } from "./visitorInsights";
@@ -25,11 +27,15 @@ export default function EnterpriseAnalyticsPage({ mode }: { mode: EnterpriseAnal
 
 function WorkspaceRollup() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["workspace-rollup", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; services: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/workspace-rollup?${rangeQuery(30, site!.timezone)}`) });
+  const [days, setDays] = useState(30);
+  const q = useQuery({ queryKey: ["workspace-rollup", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; services: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/workspace-rollup?${rangeQuery(days, site!.timezone)}`) });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
+  if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   return <Stack spacing={2}>
+    {range}
     <Alert severity="info">동일 SSO User ID는 사이트를 넘어 한 사람으로 계산하고, 익명 Visitor는 사이트별로 격리합니다.</Alert>
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(4,1fr)" }, gap: 2 }}>
       <MetricCard label="등록 서비스" value={q.data?.summary.registered_services || 0} />
@@ -96,11 +102,15 @@ function WorkspaceJourneys() {
 
 function FeatureIntelligence() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["feature-intelligence", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ population: number; features: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/feature-intelligence?${rangeQuery(60, site!.timezone)}`) });
+  const [days, setDays] = useState(60);
+  const q = useQuery({ queryKey: ["feature-intelligence", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ population: number; features: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/feature-intelligence?${rangeQuery(days, site!.timezone)}`) });
+  const narrower = narrowerRange(days, [30, 60, 90]);
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  const range = <RangeSelect days={days} setDays={setDays} options={[30, 60, 90]} timezone={site.timezone} />;
+  if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
+  if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   return <Stack spacing={2}>
+    {range}
     <Alert severity="info">Feature Score = Adoption 40% + 재사용 30% + 전환 20% + 오류 없음 10%. 대상자 설정이 없으면 관측 활성 사용자를 분모로 사용합니다.</Alert>
     <DataTable rows={q.data?.features || []} columns={[{ key: "feature", label: "Feature" }, { key: "users", label: "Users", align: "right" }, { key: "adoption_rate", label: "Adoption", align: "right", format: percentCell }, { key: "repeat_rate", label: "Repeat", align: "right", format: percentCell }, { key: "conversion_rate", label: "Conversion", align: "right", format: percentCell }, { key: "trend_percent", label: "기간 추세", align: "right", format: (v) => `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(1)}%` }, { key: "feature_score", label: "Score", align: "right" }, { key: "dead_feature", label: "판정", format: (v) => <Chip size="small" color={v ? "warning" : "success"} label={v ? "Dead 후보" : "활성"} /> }]} />
   </Stack>;
@@ -110,13 +120,17 @@ const percentCell = (value: unknown) => `${Number(value).toFixed(1)}%`;
 
 function SearchAnalytics() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["search-analytics", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; queries: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(30, site!.timezone)}`) });
+  const [days, setDays] = useState(30);
+  const q = useQuery({ queryKey: ["search-analytics", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; queries: Record<string, unknown>[]; audiences: InsightAudience[] }>(`/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(days, site!.timezone)}`) });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
+  if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   const setup = searchSetupHint(q.data?.summary, q.data?.queries as { query?: unknown }[] | undefined);
   const zeroResult = zeroResultReadiness(q.data?.summary);
   return <Stack spacing={2}>
+    {range}
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr 1fr", lg: "repeat(4,1fr)" }, gap: 2 }}><MetricCard label="Searches" value={q.data?.summary.searches || 0} /><MetricCard label="Search Users" value={q.data?.summary.users || 0} /><MetricCard label="Zero Result" value={q.data?.summary.zero_result_rate || 0} type="percent" /><MetricCard label="Search CTR" value={q.data?.summary.search_ctr || 0} type="percent" /></Box>
     {setup && <Alert severity="info">{setup}</Alert>}
     {zeroResult && <Alert severity="warning">{zeroResult}</Alert>}
@@ -127,13 +141,17 @@ function SearchAnalytics() {
 
 function Frustration() {
   const { site, environment } = useSite();
-  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[]; impact: FrictionImpact[]; impact_caveat: string }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(30, site!.timezone)}`) });
+  const [days, setDays] = useState(30);
+  const q = useQuery({ queryKey: ["frustration", site?.site_id, environment, days], enabled: !!site, queryFn: () => get<{ summary: Record<string, number>; signals: Record<string, unknown>[]; audiences: InsightAudience[]; impact: FrictionImpact[]; impact_caveat: string }>(`/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(days, site!.timezone)}`) });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  if (q.isLoading) return <Stack spacing={2}>{range}<Loading /></Stack>;
+  if (q.error) return <Stack spacing={2}>{range}<ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /></Stack>;
   const setup = frustrationSetupHint(q.data?.summary);
   const headline = frictionHeadline(q.data?.impact);
   return <Stack spacing={2}>
+    {range}
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}><MetricCard label="영향 Session" value={q.data?.summary.affected_sessions || 0} /><MetricCard label="영향률" value={q.data?.summary.affected_session_rate || 0} type="percent" /><MetricCard label="평균 Frustration Score" value={q.data?.summary.average_frustration_score || 0} /></Box>
     <Alert severity="info">Session Replay 없이 행동 신호만 사용해 개인정보 노출을 줄입니다. Rage Click, Dead Click, Rapid Back, Form Retry, Repeated Search, Error After Click, Slow Interaction은 tracker가 자동 감지합니다.</Alert>
     {setup && <Alert severity="warning">{setup}</Alert>}

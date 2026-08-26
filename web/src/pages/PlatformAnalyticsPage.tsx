@@ -19,6 +19,8 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import RangeSelect from "../components/RangeSelect";
+import { narrowerRange } from "../components/queryError";
 
 export type PlatformMode =
   | "cohort"
@@ -73,6 +75,9 @@ const curveColors = ["#5B5CE2", "#12A875", "#E2A03F", "#C43E44"];
 
 function Cohort() {
   const { site, environment } = useSite();
+  // Retention is measured over months, so this screen offers longer periods than
+  // the others rather than the shared 7/30/90.
+  const [days, setDays] = useState(180);
   const [cohortEvent, setCohortEvent] = useState("");
   const [returnEvent, setReturnEvent] = useState("");
   const [periods, setPeriods] = useState(12);
@@ -83,7 +88,7 @@ function Cohort() {
     queryFn: () => get<{ id: string; name: string }[]>(`/api/v1/segments?site_id=${site!.site_id}`),
   });
   const q = useQuery({
-    queryKey: ["cohort", site?.site_id, environment, cohortEvent, returnEvent, periods, compareIds.join(",")],
+    queryKey: ["cohort", site?.site_id, environment, days, cohortEvent, returnEvent, periods, compareIds.join(",")],
     enabled: !!site,
     queryFn: () =>
       get<{
@@ -91,7 +96,7 @@ function Cohort() {
         curves?: RetentionCurve[];
         comparison?: RetentionComparison[];
       }>(
-        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(180, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
+        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(days, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
       ),
   });
   if (!site) return <NoSite />;
@@ -103,9 +108,10 @@ function Cohort() {
         <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <TextField label="Cohort Event" placeholder="비우면 최초 Event" value={cohortEvent} onChange={(e) => setCohortEvent(e.target.value)} />
           <TextField label="Return Event" placeholder="비우면 모든 활동" value={returnEvent} onChange={(e) => setReturnEvent(e.target.value)} />
-          <TextField select label="기간" value={periods} onChange={(e) => setPeriods(Number(e.target.value))}>
+          <TextField select label="표시 주차" value={periods} onChange={(e) => setPeriods(Number(e.target.value))}>
             {[8, 12, 16, 24].map((value) => <MenuItem key={value} value={value}>{value}주</MenuItem>)}
           </TextField>
+          <RangeSelect days={days} setDays={setDays} options={[90, 180, 365]} />
           <TextField
             select
             label="비교 Segment"
@@ -239,19 +245,22 @@ function Journey() {
 
 function Adoption() {
   const { site, environment } = useSite();
+  const [days, setDays] = useState(30);
   const q = useQuery({
-    queryKey: ["adoption", site?.site_id, environment], enabled: !!site,
-    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/adoption?${rangeQuery(30, site!.timezone)}`),
+    queryKey: ["adoption", site?.site_id, environment, days], enabled: !!site,
+    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/adoption?${rangeQuery(days, site!.timezone)}`),
   });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
-  return <DataTable rows={q.data?.rows || []} columns={[
+  return <Stack spacing={2}>
+    <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />
+    {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} /> : <DataTable rows={q.data?.rows || []} columns={[
     { key: "organization", label: "조직" }, { key: "department", label: "부서" }, { key: "feature", label: "기능" },
     { key: "eligible_users", label: "대상자", align: "right" }, { key: "users", label: "사용자", align: "right" },
     { key: "adoption_rate", label: "Adoption", align: "right", format: (v) => <Stack minWidth={110}><Typography variant="body2">{Number(v).toFixed(1)}%</Typography><LinearProgress variant="determinate" value={Math.min(100, Number(v))} /></Stack> },
     { key: "repeat_usage_rate", label: "재사용률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "dormant_users", label: "비활성", align: "right" },
-  ]} />;
+  ]} />}
+  </Stack>;
 }
 
 type ExperienceCohort = {
@@ -282,14 +291,21 @@ function Experience() {
     enabled: !!site,
     queryFn: () => get<{ id: string; name: string }[]>(`/api/v1/segments?site_id=${site!.site_id}`),
   });
+  const [days, setDays] = useState(30);
   const q = useQuery({
-    queryKey: ["experience", site?.site_id, environment, compareIds.join(",")], enabled: !!site,
-    queryFn: () => get<{ vitals: Record<string, unknown>[]; errors: Record<string, unknown>[]; releases: Record<string, unknown>[]; impact: Record<string, number>; cohorts?: ExperienceCohort[]; gaps?: ExperienceGap[] }>(`/api/v1/sites/${site!.site_id}/experience?${rangeQuery(30, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`),
+    queryKey: ["experience", site?.site_id, environment, days, compareIds.join(",")], enabled: !!site,
+    queryFn: () => get<{ vitals: Record<string, unknown>[]; errors: Record<string, unknown>[]; releases: Record<string, unknown>[]; impact: Record<string, number>; cohorts?: ExperienceCohort[]; gaps?: ExperienceGap[] }>(`/api/v1/sites/${site!.site_id}/experience?${rangeQuery(days, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`),
   });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
   if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  if (q.error)
+    return <Stack spacing={2}>
+      <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />
+      <ErrorState error={q.error} retry={() => q.refetch()} narrowRange={narrower === null ? undefined : () => setDays(narrower)} />
+    </Stack>;
   return <Stack spacing={2}>
+    <RangeSelect days={days} setDays={setDays} timezone={site.timezone} note="Core Web Vitals와 오류는 이 기간의 이벤트 기준" />
     <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(3,1fr)" }, gap: 2 }}>
       <MetricCard label="오류 영향 사용자" value={q.data?.impact.error_users || 0} />
       <MetricCard label="오류 사용자 전환율" value={q.data?.impact.error_user_conversion_rate || 0} type="percent" />
@@ -420,14 +436,15 @@ function Insights() {
 
 function AIAnalytics() {
   const { site, environment } = useSite();
+  const [days, setDays] = useState(30);
   const [group, setGroup] = useState("model");
   const q = useQuery({
-    queryKey: ["ai-analytics", site?.site_id, environment, group], enabled: !!site,
-    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/ai-analytics?${rangeQuery(30, site!.timezone)}&group_by=${group}`),
+    queryKey: ["ai-analytics", site?.site_id, environment, days, group], enabled: !!site,
+    queryFn: () => get<{ rows: Record<string, unknown>[] }>(`/api/v1/sites/${site!.site_id}/ai-analytics?${rangeQuery(days, site!.timezone)}&group_by=${group}`),
   });
   if (!site) return <NoSite />;
   return <Stack spacing={2}>
-    <Card sx={{ p: 2 }}><TextField select label="분석 차원" value={group} onChange={(e) => setGroup(e.target.value)} sx={{ minWidth: 220 }}>{["model", "provider", "agent", "mcp_server", "tool"].map((item) => <MenuItem value={item} key={item}>{item}</MenuItem>)}</TextField></Card>
+    <Card sx={{ p: 2 }}><Stack direction={{ xs: "column", sm: "row" }} gap={2} alignItems={{ sm: "center" }}><TextField select label="분석 차원" value={group} onChange={(e) => setGroup(e.target.value)} sx={{ minWidth: 220 }}>{["model", "provider", "agent", "mcp_server", "tool"].map((item) => <MenuItem value={item} key={item}>{item}</MenuItem>)}</TextField><RangeSelect days={days} setDays={setDays} timezone={site.timezone} /></Stack></Card>
     {q.isLoading ? <Loading /> : q.error ? <ErrorState error={q.error} /> : <DataTable rows={q.data?.rows || []} columns={[
       { key: "label", label: group }, { key: "calls", label: "호출", align: "right" }, { key: "users", label: "사용자", align: "right" }, { key: "success_rate", label: "성공률", align: "right", format: (v) => `${Number(v).toFixed(1)}%` }, { key: "average_latency_ms", label: "평균 지연(ms)", align: "right" }, { key: "input_tokens", label: "Input Token", align: "right" }, { key: "output_tokens", label: "Output Token", align: "right" }, { key: "cost", label: "Cost", align: "right" }, { key: "fallbacks", label: "Fallback", align: "right" },
     ]} />}

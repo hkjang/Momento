@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Box, Card, Chip, Stack, Typography } from "@mui/material";
 import PaymentsOutlined from "@mui/icons-material/PaymentsOutlined";
 import ReceiptLongOutlined from "@mui/icons-material/ReceiptLongOutlined";
@@ -10,6 +11,8 @@ import MetricCard from "../components/MetricCard";
 import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import RangeSelect from "../components/RangeSelect";
+import { narrowerRange } from "../components/queryError";
 
 interface EcommerceData {
   summary: {
@@ -36,20 +39,40 @@ const labels: Record<string, string> = {
 
 export default function EcommercePage() {
   const { site } = useSite();
+  const [days, setDays] = useState(30);
   const query = useQuery({
-    queryKey: ["ecommerce", site?.site_id, site?.timezone],
+    queryKey: ["ecommerce", site?.site_id, site?.timezone, days],
     queryFn: () =>
       get<EcommerceData>(
-        `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(days, site!.timezone)}`,
       ),
     enabled: !!site,
   });
+  const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  if (query.isLoading) return <Loading />;
-  if (query.error) return <ErrorState error={query.error} />;
+  const range = <RangeSelect days={days} setDays={setDays} timezone={site.timezone} />;
+  if (query.isLoading)
+    return (
+      <Stack spacing={2}>
+        {range}
+        <Loading />
+      </Stack>
+    );
+  if (query.error)
+    return (
+      <Stack spacing={2}>
+        {range}
+        <ErrorState
+          error={query.error}
+          retry={() => query.refetch()}
+          narrowRange={narrower === null ? undefined : () => setDays(narrower)}
+        />
+      </Stack>
+    );
   const data = query.data!;
   return (
     <Stack spacing={2}>
+      {range}
       <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
         <Chip label="최근 30일" variant="outlined" />
       </Box>

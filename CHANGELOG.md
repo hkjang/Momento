@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.27.0
+
+- Nine analytical screens gained a period control. The range was written into the request and could not be changed, so asking what happened this week was impossible on the frustration screen and the retention grid was fixed at six months. Experience comparison, retention, adoption, frustration, search analytics, feature intelligence, workspace roll-up, AI analytics and ecommerce now choose their own period.
+- That also completes the recovery added in v0.26.0. The advice for a query that runs out of time starts with narrowing the range, and the slowest screen in the product was one where the range could not be narrowed; the button now appears there because there is something for it to do.
+- Each screen offers the periods that suit it rather than one list everywhere: retention over 90, 180 and 365 days because cohorts are measured in months, feature intelligence over 30, 60 and 90, the rest over 7, 30 and 90. Insights and data quality stay at seven days — they report the current state rather than a period.
+- The period control stays visible while the query runs and while an error is shown, so the range can be changed without leaving the screen.
+- Renamed the retention grid's "기간" field to "표시 주차": it selects how many weeks the grid shows, which is a different thing from the period being analysed, and having both on screen made the old label ambiguous.
+
 ## v0.26.0
 
 - A failed query now offers the recovery instead of describing it. The server already answered a timeout with advice — narrow the range, use a segment, run it in Fast mode, have it delivered on a schedule — and the console printed that as text under a generic "요청을 완료하지 못했습니다", leaving the reader to find where any of those live. Each step is now a button that goes there.
