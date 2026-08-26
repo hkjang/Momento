@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.31.2
+
+- The ecommerce funnel is exercised for the first time. It measures four steps and the fixture created only the last one, so the funnel and the cart and checkout user counts had never produced a number.
+- The product table is exercised for the first time. It reads an `items` array from the purchase payload and no seeded purchase carried one, so that whole table was empty in every test run. Purchases now carry a realistic array whose price times quantity equals the purchase value, and the assertions check that relationship rather than a fixed total.
+- Search refinements, exits and successes are exercised for the first time. Those three figures were zero for want of the event names, not for want of the behaviour.
+- All of these were already correct. The point is that the suite could not have told the difference between correct and broken for any of them.
+
 ## v0.31.1
 
 - Four reports are verified against known inputs for the first time. The shared fixture created no refund, no engaged-time event, no resource error and no AI call, so the ecommerce refund arithmetic, the engagement path, the resource-error half of the experience report and the whole AI operations report ran, answered zero and passed. All four were correct; that could not be known before.

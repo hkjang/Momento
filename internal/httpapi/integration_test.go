@@ -163,7 +163,10 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 				case "feature_used":
 					properties = `{"feature":"document_search"}`
 				case "purchase":
-					properties = `{"value":"1000"}`
+					// The product table reads properties.items, so a purchase without one
+					// leaves that whole report empty. Price times quantity equals the
+					// purchase value, which is what a real payload looks like.
+					properties = `{"value":"1000","items":[{"item_id":"sku-1","item_name":"연차 신청서","category":"근태","brand":"사내","quantity":"2","price":"500"}]}`
 				}
 				run(fmt.Sprintf(`INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,received_at,visitor_id,session_id,user_id,page_url,page_title,referrer,source,medium,device_type,browser,os,network_name,properties,user_properties,is_conversion,environment,contract_version)
 					VALUES(gen_random_uuid(),$1,$2,%s+interval '%d minutes',now(),$3,$4,$5,'https://portal.internal/home','홈','',$6,$7,$8,'Chrome','Windows','본사',$9,'{"department":"디지털플랫폼"}',$10,'prd',1)`, at, eventIndex),
@@ -207,6 +210,12 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 				siteID, name, desktop, session, person, properties, conversion)
 		}
 		// A refund of 400 against the 1000 purchases the loop above records.
+		// The ecommerce funnel reads four steps and only the last one existed, so the
+		// funnel and the cart and checkout counts were never exercised. Each step
+		// loses a person, which is what a funnel is for.
+		event("view_item", `{"item_id":"sku-1","item_name":"연차 신청서"}`, false, 2)
+		event("add_to_cart", `{"item_id":"sku-1","item_name":"연차 신청서"}`, false, 3)
+		event("begin_checkout", `{"item_id":"sku-1","item_name":"연차 신청서"}`, false, 4)
 		event("refund", `{"value":"400","transaction_id":"tx-refund"}`, false, 6)
 		// Engaged time in the shape the metric parses, plus one unparseable value
 		// that has to be ignored rather than counted or crashed on.
@@ -1247,6 +1256,57 @@ func TestReportsThatHadNoFixtureData(t *testing.T) {
 		net, _ := summary["net_revenue"].(float64)
 		if net != revenue-refunds {
 			t.Errorf("net_revenue = %v, want revenue %v minus refunds %v", net, revenue, refunds)
+		}
+	})
+
+	t.Run("ecommerce funnel and products", func(t *testing.T) {
+		report := f.get(t, site+"/ecommerce?from="+from+"&to="+today)
+		summary, _ := report["summary"].(map[string]any)
+		// One person per step per day, the same person each day.
+		if carts, _ := summary["cart_users"].(float64); carts != 1 {
+			t.Errorf("cart_users = %v, want the single seeded visitor", summary["cart_users"])
+		}
+		if checkouts, _ := summary["checkout_users"].(float64); checkouts != 1 {
+			t.Errorf("checkout_users = %v, want the single seeded visitor", summary["checkout_users"])
+		}
+
+		steps, _ := report["funnel"].([]any)
+		if len(steps) != 4 {
+			t.Fatalf("the ecommerce funnel has %d steps, want view_item, add_to_cart, begin_checkout and purchase: %v", len(steps), steps)
+		}
+		byStep := map[string]float64{}
+		for _, item := range steps {
+			step, _ := item.(map[string]any)
+			users, _ := step["users"].(float64)
+			byStep[fmt.Sprint(step["event"])] = users
+		}
+		for _, name := range []string{"view_item", "add_to_cart", "begin_checkout", "purchase"} {
+			if byStep[name] == 0 {
+				t.Errorf("funnel step %s has no users although it was seeded: %v", name, byStep)
+			}
+		}
+
+		products, _ := report["products"].([]any)
+		if len(products) == 0 {
+			t.Fatalf("the product list is empty although every purchase carries an items array: %v", report["products"])
+		}
+		product, _ := products[0].(map[string]any)
+		if fmt.Sprint(product["item_id"]) != "sku-1" || fmt.Sprint(product["item_name"]) == "" {
+			t.Errorf("the product row does not carry the seeded identity: %v", product)
+		}
+		// Two of the item per purchase at 500 each, so these follow from the
+		// transaction count whatever the window contains.
+		transactions, _ := product["transactions"].(float64)
+		quantity, _ := product["quantity"].(float64)
+		revenue, _ := product["revenue"].(float64)
+		if transactions == 0 {
+			t.Fatalf("the product row counts no transactions: %v", product)
+		}
+		if quantity != transactions*2 {
+			t.Errorf("quantity = %v for %v transactions, want two per purchase", quantity, transactions)
+		}
+		if revenue != quantity*500 {
+			t.Errorf("product revenue = %v for quantity %v, want 500 each", revenue, quantity)
 		}
 	})
 

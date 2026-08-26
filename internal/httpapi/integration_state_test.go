@@ -927,6 +927,12 @@ func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 	}
 	insert("search-visitor-0", "search", `{"query":"없는말","result_count":0}`, 10)
 	insert("search-visitor-1", "search_click", `{"query":"연차","position":1}`, 11)
+	// The report also counts refinements, exits and successes, and nothing was
+	// producing those event names, so those three figures had never been anything
+	// but zero.
+	insert("search-visitor-2", "search_refine", `{"query":"연차 신청","previous_query":"연차"}`, 12)
+	insert("search-visitor-3", "search_exit", `{"query":"연차"}`, 13)
+	insert("search-visitor-4", "search_success", `{"query":"연차"}`, 14)
 
 	screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/search-analytics?from="+from+"&to="+today)
 	summary, _ := screen["summary"].(map[string]any)
@@ -946,6 +952,24 @@ func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 			t.Errorf("%s is %v, want %v from the seeded searches", expected.key, summary[expected.key], expected.value)
 		}
 	}
+	for _, expected := range []struct {
+		key   string
+		value float64
+	}{
+		{"refinements", 1},
+		{"exits", 1},
+		{"successes", 1},
+	} {
+		if got, _ := summary[expected.key].(float64); got != expected.value {
+			t.Errorf("%s is %v, want %v: this figure was zero for want of the event, not for want of the behaviour",
+				expected.key, summary[expected.key], expected.value)
+		}
+	}
+	// One success out of six searches.
+	if rate, _ := summary["success_rate"].(float64); rate < 16.6 || rate > 16.7 {
+		t.Errorf("success_rate is %v, want one success in six searches", summary["success_rate"])
+	}
+
 	// One click out of six searches, and one of the six returned nothing.
 	if rate, _ := summary["search_ctr"].(float64); rate < 16.6 || rate > 16.7 {
 		t.Errorf("search_ctr is %v, want one click in six searches", summary["search_ctr"])
@@ -959,7 +983,7 @@ func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 	if err := json.Unmarshal([]byte(tool), &toolSummary); err != nil {
 		t.Fatalf("decode the tool payload: %v (%s)", err, truncateBody(tool))
 	}
-	for _, key := range []string{"searches", "users", "zero_results", "clicks", "search_ctr", "zero_result_rate"} {
+	for _, key := range []string{"searches", "users", "zero_results", "clicks", "search_ctr", "zero_result_rate", "successes", "success_rate"} {
 		if fmt.Sprint(toolSummary[key]) != fmt.Sprint(summary[key]) {
 			t.Errorf("%s is %v from the tool and %v on the screen", key, toolSummary[key], summary[key])
 		}

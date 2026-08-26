@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.31.2 — implemented
+
+- Ecommerce 퍼널 4단계와 Cart·Checkout 사용자 수 최초 검증
+- 상품 표 최초 검증(`properties.items` 배열이 없어 전 테스트에서 빈 표였음)
+- 검색 정제·이탈·성공 지표 최초 검증
+
 ## v0.31.1 — implemented
 
 - Fixture에 `refund`·`user_engagement`·`resource_error`·`ai_model_call` 추가
