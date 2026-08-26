@@ -217,7 +217,7 @@ func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environme
 			coalesce((SELECT avg(extract(epoch FROM (mx-mn))) FROM sess),0),
 			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
 			coalesce(100.0*count(DISTINCT p.session_id) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.session_id),0),0),
-			coalesce(sum(CASE WHEN p.event_name='purchase' AND coalesce(p.properties->>'value',p.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(p.properties->>'value',p.properties->>'revenue')::numeric ELSE 0 END),0)
+			`+revenueAmountSQL("p")+`
 		FROM period p`, siteID, from, to, environment).Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.ConversionSessions, &m.EngagementRate, &m.AvgSessionDuration, &m.UserConversionRate, &m.SessionConversionRate, &m.Revenue)
 	return m, err
 }
@@ -538,7 +538,22 @@ type queryRequest struct {
 	Limit int `json:"limit"`
 }
 
-var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT e.entity_id)", "sessions": "count(DISTINCT e.session_id)", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.entity_id),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": "coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value','') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN (e.properties->>'value')::numeric ELSE 0 END),0)"}
+// revenueAmountSQL is the one definition of the money on a purchase. The tracker
+// accepts either property name, and every report read both — except the query
+// builder, which read only `value` and reported zero revenue for a site that
+// sends `revenue`. Same metric name, same screen family, different answer, and
+// no error to reveal it.
+func revenueAmountSQL(alias string) string {
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	amount := "coalesce(" + prefix + "properties->>'value'," + prefix + "properties->>'revenue')"
+	return "coalesce(sum(CASE WHEN " + prefix + "event_name='purchase' AND coalesce(" + amount +
+		",'') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN " + amount + "::numeric ELSE 0 END),0)"
+}
+
+var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT e.entity_id)", "sessions": "count(DISTINCT e.session_id)", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.entity_id),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": revenueAmountSQL("e")}
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	var in queryRequest

@@ -124,7 +124,11 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	for day := 70; day >= 1; day-- {
 		for index, visitor := range []string{desktop, mobile, anonymous} {
 			session := fmt.Sprintf("s-%s-%d", visitor, day)
-			at := fmt.Sprintf("now()-interval '%d days'+interval '%d hours'", day, 9+index)
+			// Anchored to a site-local calendar date rather than to now() minus N
+			// days: with an offset added on top, two different N could land on the
+			// same Asia/Seoul date depending on the hour the test ran, which cost the
+			// daily series a day and made the anomaly baseline short after 15:00 UTC.
+			at := fmt.Sprintf("((((now() AT TIME ZONE 'Asia/Seoul')::date - %d) + time '%02d:00') AT TIME ZONE 'Asia/Seoul')", day, 9+index)
 			owner := any(person)
 			if visitor == anonymous {
 				owner = nil
@@ -1015,5 +1019,52 @@ func TestFrictionImpactSeparatesAHarmfulSignalFromAHarmlessOne(t *testing.T) {
 	// reader where to start.
 	if order[0] != "error_after_click" {
 		t.Errorf("impact is ordered %v, want the harmful signal first", order)
+	}
+}
+
+// TestRevenueAgreesBetweenTheOverviewAndTheQueryBuilder pins the fix for a
+// silent disagreement. A purchase may carry its amount as `value` or `revenue`;
+// the query builder read only the first, so a site using the second saw revenue
+// on the overview and zero in the query builder, with nothing to indicate which
+// was wrong.
+func TestRevenueAgreesBetweenTheOverviewAndTheQueryBuilder(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 3)
+	site := "/api/v1/sites/" + f.siteKey
+
+	// Two purchases of the same amount, one under each property name.
+	base := time.Now().Add(-2 * time.Hour)
+	for index, properties := range []string{`{"value": 1500}`, `{"revenue": 1500}`} {
+		if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,page_url)
+			VALUES($1,$2,'prd',$3,$4,'purchase',$5,$5,$6::jsonb,true,'https://portal.internal/checkout')`,
+			uuid.NewString(), f.siteID, fmt.Sprintf("revenue-visitor-%d", index), fmt.Sprintf("revenue-session-%d", index),
+			base.Add(time.Duration(index)*time.Minute), properties); err != nil {
+			t.Fatalf("insert purchase %d: %v", index, err)
+		}
+	}
+
+	overview := f.get(t, site+"/overview?from="+from+"&to="+today)
+	current, _ := overview["current"].(map[string]any)
+	overviewRevenue, _ := current["revenue"].(float64)
+	if overviewRevenue < 3000 {
+		t.Fatalf("the overview reports %v revenue, want at least the 3000 just inserted", current["revenue"])
+	}
+
+	built := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+		"site_id":    f.siteKey,
+		"date_range": map[string]string{"from": from, "to": today},
+		"metrics":    []string{"revenue"},
+	}))
+	rows, _ := built["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("the query builder returned no rows: %v", built)
+	}
+	row, _ := rows[0].(map[string]any)
+	builderRevenue, _ := row["revenue"].(float64)
+	if builderRevenue != overviewRevenue {
+		t.Errorf("the query builder reports %v revenue and the overview %v for the same window: a purchase whose amount is named `revenue` has to count in both",
+			row["revenue"], current["revenue"])
 	}
 }

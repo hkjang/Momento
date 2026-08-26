@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,5 +57,53 @@ func TestNormalizePathView(t *testing.T) {
 	}
 	if _, err := normalizePathView("sessions"); err == nil {
 		t.Fatal("unsupported path view must return an error")
+	}
+}
+
+// TestEveryRevenueExpressionAcceptsBothPropertyNames guards a class of defect
+// rather than one instance. The tracker lets a purchase carry its amount as
+// either `value` or `revenue`, and the reports read both — except the query
+// builder, which read only `value` and answered zero for a site that sends the
+// other. Nothing failed; the number was simply wrong on one screen.
+//
+// Reading the source is crude, but the alternative is a per-report test that
+// would not exist for the next report someone adds.
+func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob(filepath.Join(".", "*.go"))
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	insight, err := filepath.Glob(filepath.Join("..", "insight", "*.go"))
+	if err != nil {
+		t.Fatalf("list insight sources: %v", err)
+	}
+	files = append(files, insight...)
+
+	// Each occurrence of a purchase amount is checked in the window around it,
+	// which is where the property names appear.
+	purchase := regexp.MustCompile(`event_name='purchase'[^;]{0,400}`)
+	checked := 0
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, match := range purchase.FindAllString(string(source), -1) {
+			if !strings.Contains(match, "properties->>'value'") {
+				continue
+			}
+			checked++
+			if !strings.Contains(match, "properties->>'revenue'") {
+				t.Errorf("%s reads a purchase amount from `value` without `revenue`, so a site that sends the other name gets zero here and a number elsewhere:\n%s", file, match)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no purchase amount expressions, so the pattern no longer matches the source")
 	}
 }

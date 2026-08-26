@@ -248,7 +248,8 @@ export default function ReportPage({ kind }: { kind: Kind }) {
     },
     visitors: {
       title: "사용자 활동 상세",
-      description: "Visitor와 식별 사용자의 세션·이벤트·전환 활동입니다.",
+      description:
+        "브라우저(Visitor) 단위 목록입니다. 한 사람이 데스크톱과 모바일을 쓰면 두 줄로 나타나므로, 첫 화면의 사용자 수보다 줄 수가 많을 수 있습니다. 사람 단위로 보려면 사용자 탐색기를 사용하세요.",
     },
     sessions: {
       title: "세션 상세",

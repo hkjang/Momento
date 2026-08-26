@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.29.1
+
+- Revenue means the same thing on every screen. A purchase may carry its amount as `value` or `revenue`, and every report read both — except the query builder, which read only the first and answered zero for a site that sends the other. Nothing failed; one screen was simply wrong, which is harder to notice than an error.
+- The amount now comes from one definition shared by the overview and the query builder, and a test reads the source to check that no purchase-amount expression accepts only one of the two names, so the next report cannot drift the same way.
+- The visitor list says what it counts. It is a per-browser list, so one person using a desktop and a phone appears twice and the row count exceeds the user count on the first screen; the description said neither.
+- Documented what the shared metric names mean: user is a person, Visitor is a browser, revenue reads either property, and a rate called 전환율 is user-based while the session-based one is named as such.
+- Fixed a fixture that made the biggest integration test fail depending on the hour it ran. Event timestamps were built as now() minus N days plus an hour offset, so after 15:00 UTC two offsets landed on the same Asia/Seoul date, the daily series lost a day and the anomaly baseline came up one sample short. Timestamps are anchored to site-local calendar dates now, and the test passes under UTC, Asia/Seoul and America/Los_Angeles.
+
 ## v0.29.0
 
 - Audited every administrative setting for whether anything reads it, after finding last release that the query period limit was enforced in one handler out of twenty-nine. Three settings were accepted, validated, stored, and then read by nothing.
