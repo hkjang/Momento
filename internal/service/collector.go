@@ -23,6 +23,7 @@ import (
 
 var eventNamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 var environmentPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
 // automaticEvents are the events the tracker emits on its own. They are part of
 // the product rather than a customer's schema, so a strict contract does not
 // have to redeclare them; a site that does register one keeps its own schema and
@@ -1155,6 +1156,32 @@ func (w Worker) cleanup(ctx context.Context) error {
 		return err
 	}
 	if _, err := w.DB.Exec(ctx, `DELETE FROM sessions s WHERE s.last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=s.site_id),25))`); err != nil {
+		return err
+	}
+	// Nothing bounded the identity tables. Once retention removed a person's events
+	// and sessions, their visitor_id -> user_id mapping and per-visitor aggregate
+	// stayed behind with no policy and no expiry, and the identities screen went on
+	// reporting them by name with an event count drawn from the aggregate — an
+	// operator who set a retention window to satisfy an obligation had not met it,
+	// and the console contradicted the deletion.
+	//
+	// These rows describe events and sessions, so they expire with them: a mapping
+	// is kept exactly as long as something it describes still exists. That needs no
+	// new setting and cannot remove anything still referenced. The index on
+	// (site_id, visitor_id) on both tables makes each check a probe.
+	if _, err := w.DB.Exec(ctx, `DELETE FROM visitor_identities i
+		WHERE NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=i.site_id AND e.visitor_id=i.visitor_id)
+			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=i.site_id AND s.visitor_id=i.visitor_id)`); err != nil {
+		return err
+	}
+	if _, err := w.DB.Exec(ctx, `DELETE FROM visitors v
+		WHERE NOT EXISTS(SELECT 1 FROM raw_events e WHERE e.site_id=v.site_id AND e.visitor_id=v.visitor_id)
+			AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.site_id=v.site_id AND s.visitor_id=v.visitor_id)`); err != nil {
+		return err
+	}
+	// A user with no remaining visitor is no longer identified by anything.
+	if _, err := w.DB.Exec(ctx, `DELETE FROM identified_users u
+		WHERE NOT EXISTS(SELECT 1 FROM visitor_identities i WHERE i.site_id=u.site_id AND i.user_id=u.user_id)`); err != nil {
 		return err
 	}
 	// Daily aggregates were kept forever: the retention screen accepted a limit

@@ -327,3 +327,102 @@ func TestAggregateRetentionAppliesTheConfiguredLimit(t *testing.T) {
 		_, _ = pool.Exec(context.Background(), `UPDATE retention_policies SET aggregation_months=NULL WHERE site_id=$1`, f.siteID)
 	})
 }
+
+// Retention removed a person's events and sessions and left their identity behind:
+// the visitor_id -> user_id mapping and the per-visitor aggregate had no policy and
+// no expiry, so the identities screen went on naming them with an event count taken
+// from the aggregate. An operator who set a window to satisfy a retention
+// obligation had not met it, and the console said the opposite.
+//
+// This checks both directions, because a prune that is too eager is the worse
+// failure: identities must disappear when nothing they describe is left, and must
+// survive as long as anything is.
+func TestRetentionExpiresIdentitiesWithTheEventsTheyDescribe(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	site := "/api/v1/sites/" + f.siteKey
+	worker := service.Worker{DB: pool}
+
+	count := func(label, query string) int64 {
+		t.Helper()
+		var n int64
+		if err := pool.QueryRow(ctx, query, f.siteID).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", label, err)
+		}
+		return n
+	}
+	identities := func() int64 {
+		return count("visitor_identities", `SELECT count(*) FROM visitor_identities WHERE site_id=$1`)
+	}
+	users := func() int64 {
+		return count("identified_users", `SELECT count(*) FROM identified_users WHERE site_id=$1`)
+	}
+	visitors := func() int64 { return count("visitors", `SELECT count(*) FROM visitors WHERE site_id=$1`) }
+	// The screen an operator would look at to check whether the deletion happened.
+	reported := func() int {
+		t.Helper()
+		body := f.do(t, http.MethodGet, site+"/identities?days=3650", "")
+		list, _ := body["list"].([]any)
+		return len(list)
+	}
+
+	if identities() == 0 || visitors() == 0 || reported() == 0 {
+		t.Fatal("the fixture has no identified people, so this proves nothing")
+	}
+
+	// A one month window with the fixture untouched: the recent events stay, so
+	// every identity is still describing something and none may be removed.
+	if _, err := pool.Exec(ctx, `INSERT INTO retention_policies(site_id,raw_event_months,session_months,realtime_hours,debug_days)
+		VALUES($1,1,1,1,1) ON CONFLICT(site_id) DO UPDATE SET raw_event_months=1,session_months=1`, f.siteID); err != nil {
+		t.Fatalf("retention policy: %v", err)
+	}
+	beforeIdentities, beforeUsers, beforeVisitors, beforeReported := identities(), users(), visitors(), reported()
+	if err := worker.ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention: %v", err)
+	}
+	if count("raw_events", `SELECT count(*) FROM raw_events WHERE site_id=$1 AND event_timestamp < now()-interval '40 days'`) != 0 {
+		t.Fatal("events outside the window survived, so the rest of this test is measuring the wrong state")
+	}
+	if got := identities(); got != beforeIdentities {
+		t.Fatalf("partial expiry removed identities that still have data: %d -> %d", beforeIdentities, got)
+	}
+	if got := users(); got != beforeUsers {
+		t.Fatalf("partial expiry removed identified users that still have data: %d -> %d", beforeUsers, got)
+	}
+	if got := visitors(); got != beforeVisitors {
+		t.Fatalf("partial expiry removed visitor aggregates that still have data: %d -> %d", beforeVisitors, got)
+	}
+	if got := reported(); got != beforeReported {
+		t.Fatalf("partial expiry changed the identities screen: %d -> %d rows", beforeReported, got)
+	}
+
+	// Now age everything past the window: nothing about these people is left to
+	// describe, so nothing about them may remain.
+	if _, err := pool.Exec(ctx, `UPDATE raw_events SET event_timestamp=event_timestamp-interval '400 days' WHERE site_id=$1`, f.siteID); err != nil {
+		t.Fatalf("age events: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE sessions SET started_at=started_at-interval '400 days',last_event_at=last_event_at-interval '400 days' WHERE site_id=$1`, f.siteID); err != nil {
+		t.Fatalf("age sessions: %v", err)
+	}
+	if err := worker.ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention after full expiry: %v", err)
+	}
+	if got := count("raw_events", `SELECT count(*) FROM raw_events WHERE site_id=$1`); got != 0 {
+		t.Fatalf("%d events survived full expiry", got)
+	}
+	if got := identities(); got != 0 {
+		t.Fatalf("%d visitor_id to user_id mappings outlived every event and session they describe", got)
+	}
+	if got := users(); got != 0 {
+		t.Fatalf("%d identified users outlived every event and session they describe", got)
+	}
+	if got := visitors(); got != 0 {
+		t.Fatalf("%d per-visitor aggregates outlived every event and session they describe", got)
+	}
+	// The count the screen showed came from the per-visitor aggregate, which is why
+	// it kept reporting activity for events that had been deleted.
+	if got := reported(); got != 0 {
+		t.Fatalf("the identities screen still names %d people whose events were all deleted", got)
+	}
+}

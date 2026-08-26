@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.32.4 — implemented
+
+- 보존 정책이 신원 테이블(visitor_identities·identified_users·visitors)을 이벤트와 함께 만료
+- 부분 만료 시 보존, 완전 만료 시 삭제 양방향 검증 및 결함 재현 확인
+- 규모 가드에 무인 보존 작업 시간 측정 추가(50k 이벤트 50ms)
+- Aggregation 보존 필드가 사람 단위 기록임을 명시
+
 ## v0.32.3 — implemented
 
 - 과거 모든 스키마 지점에서 데이터를 채운 뒤 head까지 migration하는 in-place 업그레이드 검증을 CI에 추가

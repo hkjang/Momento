@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.4
+
+- Retention now expires the identity tables with the events they describe. `visitor_identities`, `identified_users` and `visitors` had no policy and no expiry: once retention deleted a person's events and sessions, the visitor-to-user mapping and the per-visitor aggregate stayed behind forever. Measured it — after a site fully expired, 0 events and 0 sessions remained while 2 mappings, 1 identified user and 3 visitor aggregates survived, and the identities screen still named the employee with 100 events and both of their device ids, reading the count off the aggregate. An operator who set a window to satisfy a retention obligation had not met it, and the console said the opposite. A row is now kept exactly as long as an event or session it describes still exists, which needs no new setting and cannot remove anything still referenced.
+- The new test checks both directions, because an over-eager prune is the worse failure: identities must survive a partial expiry untouched and disappear entirely once nothing is left. Confirmed it fails without the fix — `2 visitor_id to user_id mappings outlived every event and session they describe`.
+- The scale guard now times a retention pass: it runs unattended, so a missing index would turn a nightly job into one that stops finishing with nobody watching. 50ms over 50,000 events, against a 30s budget.
+- The Aggregation retention field said it trimmed "일별 집계 테이블". Two of those tables hold one row per visitor per day carrying the visitor and user id, so leaving the field blank keeps person-level records after the raw events are gone. The field now says that.
+
 ## v0.32.3
 
 - The in-place upgrade path is now verified in CI. Every release note has promised it and it had only ever been checked by hand. The test rebuilds the schema each past release shipped, fills it with data — a site, events, sessions, an API key, a delivery channel, a scheduled report, an anomaly alert — and applies the current migration set on top, then asserts the upgrade completes, no row was lost, `analytics_events` still resolves over rows written before the columns it reads existed, and a restart re-runs nothing. All thirteen historical points, in 6 seconds.

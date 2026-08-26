@@ -2638,7 +2638,10 @@ function RetentionAdmin() {
                   event.target.value ? Number(event.target.value) : null,
                 )
               }
-              helperText="비워 두면 무기한. 설정하면 일별 집계 테이블에서 이 기간보다 오래된 날짜를 삭제합니다"
+              // Two of these tables hold one row per visitor per day, with the
+              // visitor and user id on it. Calling them "집계" reads as anonymous
+              // and left an operator believing a blank field kept only totals.
+              helperText="비워 두면 무기한. 일별 집계 중 방문자·세션 테이블은 Visitor ID와 User ID를 행마다 가지므로, 비워 두면 Raw Event가 삭제된 뒤에도 사람 단위 기록이 남습니다"
             />
             <TextField
               label="Realtime (시간)"

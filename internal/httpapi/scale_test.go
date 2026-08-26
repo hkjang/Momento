@@ -55,6 +55,11 @@ const scaleBudget = 10 * time.Second
 // several times, so it gets more room than a single report.
 const scaleRebuildBudget = 60 * time.Second
 
+// scaleRetentionBudget covers one unattended retention pass. It deletes expired
+// rows and then anti-joins the identity tables against the events and sessions
+// that remain, which is indexed and should not grow with the site.
+const scaleRetentionBudget = 30 * time.Second
+
 func seedScale(t *testing.T, f fixture) {
 	t.Helper()
 	ctx := context.Background()
@@ -184,6 +189,21 @@ func TestHeavyQueriesStayLinearAtScale(t *testing.T) {
 				p.name, took.Round(time.Millisecond), scaleEventCount, scaleBudget)
 		}
 	}
+	// Retention runs unattended on a schedule, and it now anti-joins the identity
+	// tables against every event and session. Those probes are indexed, but an
+	// unindexed one would turn a nightly job into one that never finishes and
+	// nobody would be watching when it did.
+	retentionStarted := time.Now()
+	if err := (service.Worker{DB: pool}).ApplyRetention(ctx); err != nil {
+		t.Fatalf("retention at scale: %v", err)
+	}
+	retentionTook := time.Since(retentionStarted)
+	t.Logf("applied retention over %d events in %s", scaleEventCount, retentionTook.Round(time.Millisecond))
+	if retentionTook > scaleRetentionBudget {
+		t.Errorf("retention took %s for %d events, over the %s budget: it runs unattended, so a scan here is a maintenance job that stops finishing",
+			retentionTook.Round(time.Millisecond), scaleEventCount, scaleRetentionBudget)
+	}
+
 	sort.SliceStable(timings, func(i, j int) bool { return timings[i].took > timings[j].took })
 	var report strings.Builder
 	report.WriteString(fmt.Sprintf("\nlatency over %d events (budget %s)\n", scaleEventCount, scaleBudget))

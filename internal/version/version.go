@@ -2,7 +2,7 @@ package version
 
 // Values are overridden by release builds through -ldflags.
 var (
-	Version   = "0.32.3-dev"
+	Version   = "0.32.4-dev"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )
