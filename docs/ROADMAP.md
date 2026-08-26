@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.32.0 — implemented
+
+- 봇·모니터링·사내망 트래픽이 리포트에 포함된다는 사실을 문서화하고 제외 방법 안내
+- `traffic.internal` Segment 필드 추가(기록만 되고 읽히지 않던 컬럼)
+- `max_events_per_request` 적용과 User-Agent 기반 트래픽 분류 검증
+- CI·릴리즈 워크플로에 수동 트리거 추가
+
 ## v0.31.6 — implemented
 
 - 서버 사이드 수집 검증: Origin 없는 요청은 Server API Key만 허용, Tracking Key 거부, 미허용 Origin 거부

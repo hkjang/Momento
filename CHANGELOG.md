@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.32.0
+
+- Documented that reports include bot, monitoring and internal traffic. The collector classifies every event by user agent and network and stores the result, and nothing filters on it, so an uptime monitor hitting a page every minute contributes fourteen hundred page views a day to the numbers a reader takes at face value. Nothing in the documentation said so.
+- `traffic.internal` is a segment field now. The collector has always recorded whether an event came from a network an administrator marked internal, and nothing could read it — so excluding one's own staff meant naming every internal network by hand.
+- The batch size limit and the traffic classification are tested. A batch at the configured limit is accepted, one over it is refused with the limit named, and the four user agent classes come out as expected.
+- That reports include every class is now asserted rather than merely true, so changing it later is a deliberate act with a failing test to acknowledge.
+- Two workflow fixes from after the v0.31.6 tag: CI and the release workflow both accept a manual trigger, because a platform incident dropped a push and a tag and neither could be recovered. The release trigger needed a second attempt — the first shadowed `GITHUB_REF_NAME`, which the runner overrides, so it tried to release a tag named "main".
+
 ## v0.31.6
 
 - Server-side ingestion is tested. A request with no Origin is server to server and must present the site's server API key; the tracking key is not enough there, because it is published in the HTML of every page the site serves. No test had ever sent a request without an Origin, so that rule had never been exercised.

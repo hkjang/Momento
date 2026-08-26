@@ -31,6 +31,7 @@ export const builtInSegmentFields = [
   "traffic.medium",
   "traffic.campaign",
   "traffic.class",
+  "traffic.internal",
   "network",
   "user.id",
   "visitor.id",

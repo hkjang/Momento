@@ -300,6 +300,24 @@ SDK는 세션 단위로 유입 정보를 기록하므로 방문(세션)이 Touch
 - 범위는 **조회자가 이미 접근할 수 있는 서비스**로만 확장됩니다. 권한이 없는 서비스는 포함되지 않습니다.
 - 다른 서비스의 기여가 없으면 그 사실을 명시합니다.
 
+### 3.5.0 봇과 모니터링 트래픽은 리포트에 포함됩니다
+
+Collector는 User-Agent로 모든 Event를 분류해 저장합니다.
+
+| 분류 | 판정 기준 |
+| :--- | :--- |
+| `known_bot` | `bot`, `crawler`, `spider`, `slurp`, `bingpreview`, `headlesschrome` |
+| `monitoring` | `uptime`, `pingdom`, `healthcheck`, `monitoring`, `prometheus` |
+| `suspicious` | User-Agent가 비어 있음 |
+| `internal_traffic` | 관리자가 사내망으로 등록한 네트워크에서 발생 |
+| `normal` | 위에 해당하지 않음 |
+
+**중요: 리포트는 이 분류로 걸러내지 않습니다.** 크롤러와 모니터링 요청도 사용자·세션·페이지뷰에 함께 집계됩니다. 1분마다 페이지를 확인하는 Uptime 감시는 하루 1,440건의 페이지뷰를 더합니다.
+
+제외하려면 Segment 조건 `traffic.class = normal`을 사용하세요. 사내망 트래픽만 제외하려면 `traffic.internal = false`를 사용합니다. 저장한 Segment는 Query·Funnel·Retention·경험 비교에 그대로 넣을 수 있습니다.
+
+분류 결과는 사용자 탐색기의 타임라인과 관리자 → 수집 디버거에서 Event별로 확인할 수 있습니다.
+
 ### 3.5.1 같은 이름의 숫자가 뜻하는 것
 
 - **사용자**는 사람 단위입니다. 같은 SSO User로 연결된 여러 브라우저는 한 명으로 셉니다. 첫 화면, 방문자 인사이트, Workspace Roll-Up, 쿼리 빌더의 `users`가 모두 같은 정의를 씁니다.
@@ -318,6 +336,7 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 - `entity.days_since_last_seen`, `entity.days_since_first_seen`
 - `entity.frustration_signals`, `entity.frustration_sessions` — tracker가 자동 감지한 막힘 신호(2.1.1 참고)를 겪은 횟수와 방문 수
 - `entity.searches`, `entity.zero_result_searches`, `entity.search_clicks` — 검색 횟수, 결과 0건 검색, 결과 클릭 수
+- `traffic.class`, `traffic.internal` — 봇·모니터링·사내망 트래픽 포함 여부(3.5.0 참고)
 
 이 필드들은 사람의 **전체 이력**을 한 번 집계한 뒤 대상자를 추려내는 방식으로 실행됩니다. 조회 기간이 넓거나 이벤트가 많아도 집계는 한 번만 수행됩니다.
 

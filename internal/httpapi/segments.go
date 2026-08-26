@@ -54,6 +54,10 @@ var builtinDimensionSQL = map[string]string{
 	"traffic.campaign":  "%s.campaign",
 	"traffic.class":     "%s.traffic_class",
 	"network":           "%s.network_name",
+	// Whether the event came from a network an administrator marked internal. The
+	// collector has always recorded this and nothing could read it, so "exclude
+	// our own staff" was expressible only by naming every internal network.
+	"traffic.internal":  "%s.is_internal",
 	"user.id":           "%s.canonical_user_id",
 	"visitor.id":        "%s.visitor_id",
 	"session.id":        "%s.session_id",

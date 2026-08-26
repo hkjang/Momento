@@ -1892,3 +1892,143 @@ func TestLoginIsRateLimited(t *testing.T) {
 		t.Error("forty wrong passwords from one address were all answered, so nothing is limiting password guessing")
 	}
 }
+
+// TestCollectorClassifiesAndLimitsTraffic covers the collector's security
+// settings and its traffic classification, neither of which any test had reached.
+//
+// The classification matters for a different reason than the limit: an uptime
+// monitor hitting a page every minute adds fourteen hundred page views a day, and
+// Momento records the class but does not exclude anything from the reports. The
+// assertions below state that as the behaviour it is, so a future change to it is
+// a deliberate one.
+func TestCollectorClassifiesAndLimitsTraffic(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	send := func(t *testing.T, userAgent string, events int) (int, string) {
+		t.Helper()
+		items := make([]string, 0, events)
+		for i := 0; i < events; i++ {
+			items = append(items, fmt.Sprintf(`{"id":"%s","name":"classified_event","timestamp":%d,"properties":{},"contract_version":1}`,
+				uuid.NewString(), time.Now().UnixMilli()))
+		}
+		payload := fmt.Sprintf(`{"site_id":"%s","environment":"prd","tracking_key":"%s","visitor_id":"class-visitor","session_id":"class-session",
+			"context":{"page":{"url":"https://portal.internal/home","title":"","referrer":""},"device":{},"traffic":{}},
+			"events":[%s]}`, f.siteKey, f.trackingKey, strings.Join(items, ","))
+		request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", "https://portal.internal")
+		if userAgent != "" {
+			request.Header.Set("User-Agent", userAgent)
+		}
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	t.Run("a batch over the configured limit is refused", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE settings SET value=jsonb_set(value,'{max_events_per_request}','3') WHERE key='security'`); err != nil {
+			t.Fatalf("set the batch limit: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `UPDATE settings SET value=jsonb_set(value,'{max_events_per_request}','100') WHERE key='security'`)
+		})
+		if code, _ := send(t, "Mozilla/5.0 Chrome/140.0", 3); code != http.StatusAccepted {
+			t.Errorf("a batch at the limit answered %d, want 202", code)
+		}
+		code, body := send(t, "Mozilla/5.0 Chrome/140.0", 4)
+		if code == http.StatusAccepted {
+			t.Errorf("a batch of 4 was accepted under a limit of 3")
+		}
+		if !strings.Contains(body, "3") {
+			t.Errorf("the refusal does not say what the limit is: %s", truncateBody(body))
+		}
+	})
+
+	t.Run("traffic is classified by user agent", func(t *testing.T) {
+		cases := map[string]string{
+			"Mozilla/5.0 (compatible; Googlebot/2.1)": "known_bot",
+			"Pingdom.com_bot_version_1.4":             "monitoring",
+			"Mozilla/5.0 Chrome/140.0":                "normal",
+		}
+		for agent, want := range cases {
+			if code, body := send(t, agent, 1); code != http.StatusAccepted {
+				t.Fatalf("%s answered %d: %s", agent, code, truncateBody(body))
+			}
+			if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+				t.Fatalf("worker: %v", err)
+			}
+			var class string
+			if err := pool.QueryRow(ctx, `SELECT traffic_class FROM raw_events WHERE site_id=$1 AND event_name='classified_event' AND user_agent=$2 ORDER BY received_at DESC LIMIT 1`,
+				f.siteID, agent).Scan(&class); err != nil {
+				t.Fatalf("read the stored class for %s: %v", agent, err)
+			}
+			if class != want {
+				t.Errorf("%s was classified %q, want %q", agent, class, want)
+			}
+		}
+	})
+
+	t.Run("reports include every traffic class", func(t *testing.T) {
+		// Not an endorsement, a statement: nothing filters by class, so a crawler
+		// and a monitor are counted like a person. The way to exclude them is a
+		// segment on traffic.class, which the next case shows works.
+		from, today := f.siteDates(t, 1)
+		report := f.get(t, "/api/v1/sites/"+f.siteKey+"/events?from="+from+"&to="+today)
+		body, _ := json.Marshal(report)
+		if !strings.Contains(string(body), "classified_event") {
+			t.Fatalf("the event report does not show the ingested events at all: %s", truncateBody(string(body)))
+		}
+		var stored int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND event_name='classified_event' AND traffic_class IN ('known_bot','monitoring')`, f.siteID).Scan(&stored); err != nil {
+			t.Fatalf("count classified events: %v", err)
+		}
+		if stored == 0 {
+			t.Fatal("no bot or monitoring events were stored, so this case proves nothing")
+		}
+	})
+
+	t.Run("a segment can exclude a traffic class", func(t *testing.T) {
+		from, today := f.siteDates(t, 1)
+		built := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+			"site_id":    f.siteKey,
+			"date_range": map[string]string{"from": from, "to": today},
+			"metrics":    []string{"events"},
+			"segment":    map[string]any{"field": "traffic.class", "operator": "=", "value": "normal"},
+		}))
+		rows, _ := built["rows"].([]any)
+		if len(rows) == 0 {
+			t.Fatalf("the segmented query returned no rows: %v", built)
+		}
+		row, _ := rows[0].(map[string]any)
+		normalOnly, _ := row["events"].(float64)
+
+		all := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+			"site_id":    f.siteKey,
+			"date_range": map[string]string{"from": from, "to": today},
+			"metrics":    []string{"events"},
+		}))
+		allRows, _ := all["rows"].([]any)
+		allRow, _ := allRows[0].(map[string]any)
+		everything, _ := allRow["events"].(float64)
+		if normalOnly >= everything {
+			t.Errorf("filtering to normal traffic gave %v events against %v unfiltered, so the class is not usable as a filter", normalOnly, everything)
+		}
+	})
+
+	t.Run("internal traffic is filterable", func(t *testing.T) {
+		// The collector has always recorded whether an event came from a network an
+		// administrator marked internal, and nothing could read it until now.
+		from, today := f.siteDates(t, 1)
+		built := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+			"site_id":    f.siteKey,
+			"date_range": map[string]string{"from": from, "to": today},
+			"metrics":    []string{"events"},
+			"segment":    map[string]any{"field": "traffic.internal", "operator": "=", "value": false},
+		}))
+		if built["rows"] == nil {
+			t.Fatalf("filtering on traffic.internal failed: %v", built)
+		}
+	})
+}
