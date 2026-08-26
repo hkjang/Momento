@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.31.3 — implemented
+
+- Environment 격리 검증(stg 환경 시드 후 prd 리포트 누출 여부 확인, 필터 제거 시 실패 확인)
+- Adoption의 선언된 대상 인원 분기 검증(이전에는 관측 인원 fallback만 실행)
+- Environment 필터 누락 정적 점검: 해당 없음
+
 ## v0.31.2 — implemented
 
 - Ecommerce 퍼널 4단계와 Cart·Checkout 사용자 수 최초 검증

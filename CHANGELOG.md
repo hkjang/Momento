@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.31.3
+
+- Environment isolation is tested. Every test had run against a site with only a production environment, so nothing had ever checked that staging traffic stays out of production reports. Most of these queries assemble their environment predicate by string concatenation, which is where one gets dropped; a leak would have appeared as production numbers that were quietly too high. Removing one filter to check makes the test fail, so it is doing its job.
+- Adoption's declared target population is tested. Adoption is a rate, and its denominator is an administrator's declared eligible population when one exists and the observed population when it does not. No fixture ever declared a target, so only the fallback had run — and a rate against the wrong denominator is worse than no rate.
+- A static sweep for analytical queries missing an environment filter found none; all four candidates build the predicate dynamically. Worth recording as checked rather than assumed.
+- Both behaviours were already correct.
+
 ## v0.31.2
 
 - The ecommerce funnel is exercised for the first time. It measures four steps and the fixture created only the last one, so the funnel and the cart and checkout user counts had never produced a number.

@@ -1381,3 +1381,132 @@ func TestReportsThatHadNoFixtureData(t *testing.T) {
 		}
 	})
 }
+
+// TestEnvironmentsDoNotLeakIntoEachOther covers a configuration the fixture never
+// created. Every analytical query filters by environment, and most of them build
+// that predicate by string concatenation, which is exactly where one can be
+// dropped by a later edit. With only a production environment ever seeded, a
+// missing filter would have shown up as staging traffic silently inflating the
+// production numbers, which nobody reads as a bug.
+func TestEnvironmentsDoNotLeakIntoEachOther(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 7)
+	site := "/api/v1/sites/" + f.siteKey
+
+	if _, err := pool.Exec(ctx, `INSERT INTO site_environments(site_id,name,label) VALUES($1,'stg','Staging') ON CONFLICT DO NOTHING`, f.siteID); err != nil {
+		t.Fatalf("create the staging environment: %v", err)
+	}
+	// Staging traffic named so that a leak is unmistakable in either direction.
+	base := time.Now().Add(-2 * time.Hour)
+	const stagingEvents = 5
+	for i := 0; i < stagingEvents; i++ {
+		if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,page_url)
+			VALUES($1,$2,'stg','stg-visitor','stg-session','stg_only_event',$3,$3,'{}'::jsonb,false,'https://portal.internal/stg-only')`,
+			uuid.NewString(), f.siteID, base.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatalf("seed staging events: %v", err)
+		}
+	}
+
+	production := f.get(t, site+"/overview?from="+from+"&to="+today+"&environment=prd")
+	staging := f.get(t, site+"/overview?from="+from+"&to="+today+"&environment=stg")
+	productionCurrent, _ := production["current"].(map[string]any)
+	stagingCurrent, _ := staging["current"].(map[string]any)
+
+	stagingCount, _ := stagingCurrent["events"].(float64)
+	if stagingCount != stagingEvents {
+		t.Errorf("the staging overview reports %v events, want the %d seeded there", stagingCurrent["events"], stagingEvents)
+	}
+	productionCount, _ := productionCurrent["events"].(float64)
+	if productionCount <= stagingCount {
+		t.Fatalf("production reports %v events and staging %v, so the two cannot be told apart", productionCount, stagingCount)
+	}
+
+	// A named event and a named page make a leak visible rather than arithmetic.
+	prodEvents, _ := json.Marshal(f.get(t, site+"/events?from="+from+"&to="+today+"&environment=prd"))
+	stgEvents, _ := json.Marshal(f.get(t, site+"/events?from="+from+"&to="+today+"&environment=stg"))
+	if strings.Contains(string(prodEvents), "stg_only_event") {
+		t.Errorf("the production event report lists a staging event: %s", truncateBody(string(prodEvents)))
+	}
+	if !strings.Contains(string(stgEvents), "stg_only_event") {
+		t.Errorf("the staging event report does not list its own event: %s", truncateBody(string(stgEvents)))
+	}
+	prodPages, _ := json.Marshal(f.get(t, site+"/pages?from="+from+"&to="+today+"&environment=prd"))
+	if strings.Contains(string(prodPages), "stg-only") {
+		t.Errorf("the production page report lists a staging page: %s", truncateBody(string(prodPages)))
+	}
+
+	// A spread of the heavier reports has to answer differently for the two, since
+	// they describe different traffic.
+	for _, report := range []string{"frustration", "search-analytics", "experience", "visitor-insights"} {
+		prod, _ := json.Marshal(f.get(t, site+"/"+report+"?from="+from+"&to="+today+"&environment=prd"))
+		stg, _ := json.Marshal(f.get(t, site+"/"+report+"?from="+from+"&to="+today+"&environment=stg"))
+		if string(prod) == string(stg) {
+			t.Errorf("%s returns an identical document for production and staging, so it is not filtering by environment", report)
+		}
+		if strings.Contains(string(prod), "stg_only_event") || strings.Contains(string(prod), "stg-only") {
+			t.Errorf("%s leaked staging data into production: %s", report, truncateBody(string(prod)))
+		}
+	}
+}
+
+// TestAdoptionUsesTheDeclaredTargetPopulation covers a branch that had never run.
+// Adoption is a rate, and its denominator is an administrator's declared eligible
+// population when one exists and the observed population when it does not. No
+// fixture declared a target, so only the fallback was ever exercised — and a rate
+// against the wrong denominator is worse than no rate.
+func TestAdoptionUsesTheDeclaredTargetPopulation(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 30)
+	site := "/api/v1/sites/" + f.siteKey
+
+	before := f.get(t, site+"/adoption?from="+from+"&to="+today)
+	rows, _ := before["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("the adoption report returned no rows: %v", before)
+	}
+	first, _ := rows[0].(map[string]any)
+	feature := fmt.Sprint(first["feature"])
+	observed, _ := first["eligible_users"].(float64)
+	users, _ := first["users"].(float64)
+	if observed == 0 || users == 0 {
+		t.Fatalf("the adoption row has no population to compare: %v", first)
+	}
+
+	// Declare a target ten times the observed population, so the rate has to fall.
+	target := observed * 10
+	if _, err := pool.Exec(ctx, `INSERT INTO adoption_targets(site_id,organization,department,feature,eligible_users)
+		VALUES($1,'','',$2,$3) ON CONFLICT DO NOTHING`, f.siteID, feature, int64(target)); err != nil {
+		t.Fatalf("declare the adoption target: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM adoption_targets WHERE site_id=$1`, f.siteID)
+	})
+
+	after := f.get(t, site+"/adoption?from="+from+"&to="+today)
+	rows, _ = after["rows"].([]any)
+	found := false
+	for _, item := range rows {
+		row, _ := item.(map[string]any)
+		if fmt.Sprint(row["feature"]) != feature {
+			continue
+		}
+		found = true
+		eligible, _ := row["eligible_users"].(float64)
+		if eligible != target {
+			t.Errorf("eligible_users is %v after declaring a target of %v, so the declared population is being ignored", eligible, target)
+		}
+		rate, _ := row["adoption_rate"].(float64)
+		rowUsers, _ := row["users"].(float64)
+		want := rowUsers * 100 / target
+		if rate < want-0.01 || rate > want+0.01 {
+			t.Errorf("adoption_rate is %v, want %v users against the declared %v", rate, rowUsers, target)
+		}
+	}
+	if !found {
+		t.Errorf("the feature disappeared from the adoption report once a target was declared: %v", rows)
+	}
+}
