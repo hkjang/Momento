@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.31.4
+
+- Access control is tested. Every test had signed in as a super administrator, which short-circuits the workspace membership check entirely, so neither that branch nor any administrator refusal had ever executed. On a shared internal deployment those two rules are what keep one team's analytics out of another team's console.
+- An analyst reaches sites in their own workspace and receives 404 for a site in another organisation's — not 403, which would confirm the site exists. That site is also absent from their site list.
+- Administrator endpoints refuse an analyst: users, settings, the audit log, the tracking debugger and the query policy.
+- Turning visitor profiles off blocks the visitor list, the identity list and the person timeline even for a super administrator, because it is a privacy policy rather than a permission level, while the overview still answers because it names nobody.
+- The membership rule is shown to be load-bearing rather than incidentally correct: granting the analyst a role in the other workspace makes the same refused request succeed, and revoking it refuses again.
+
 ## v0.31.3
 
 - Environment isolation is tested. Every test had run against a site with only a production environment, so nothing had ever checked that staging traffic stays out of production reports. Most of these queries assemble their environment predicate by string concatenation, which is where one gets dropped; a leak would have appeared as production numbers that were quietly too high. Removing one filter to check makes the test fail, so it is doing its job.

@@ -1510,3 +1510,164 @@ func TestAdoptionUsesTheDeclaredTargetPopulation(t *testing.T) {
 		t.Errorf("the feature disappeared from the adoption report once a target was declared: %v", rows)
 	}
 }
+
+// TestAccessControlAcrossWorkspacesAndRoles covers the last configuration the
+// fixture only created one way. Every test signs in as a super_admin, which
+// short-circuits the workspace membership check entirely, so neither that branch
+// nor any administrator refusal had ever been executed. On a shared internal
+// deployment those two rules are what keep one team's analytics out of another
+// team's console.
+func TestAccessControlAcrossWorkspacesAndRoles(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	// A second organisation with its own workspace and site, unrelated to the
+	// fixture's. Nothing links the two.
+	var otherWorkspace, outsideSite uuid.UUID
+	if err := pool.QueryRow(ctx, `WITH org AS (
+			INSERT INTO organizations(name,slug) VALUES('다른 조직','other-org')
+			ON CONFLICT(slug) DO UPDATE SET name=excluded.name RETURNING id
+		), ws AS (
+			INSERT INTO workspaces(organization_id,name) SELECT id,'다른 Workspace' FROM org RETURNING id,organization_id
+		)
+		SELECT id FROM ws`).Scan(&otherWorkspace); err != nil {
+		t.Fatalf("create the other workspace: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,timezone)
+		VALUES($1,'SITE_OUTSIDE','외부','외부','h3','mom_track_z','s3','mom_server_z',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, otherWorkspace).Scan(&outsideSite); err != nil {
+		t.Fatalf("create the outside site: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO site_environments(site_id,name,label) VALUES($1,'prd','Production') ON CONFLICT DO NOTHING`, outsideSite); err != nil {
+		t.Fatalf("create the outside environment: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM organizations WHERE slug='other-org'`)
+	})
+
+	// An analyst whose only workspace role is in the fixture's workspace.
+	var analystID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO users(email,display_name,password_hash,role,organization_name)
+		VALUES('analyst@test.local','Analyst','hash','analyst','Test')
+		ON CONFLICT(email) DO UPDATE SET role='analyst' RETURNING id`).Scan(&analystID); err != nil {
+		t.Fatalf("create the analyst: %v", err)
+	}
+	var homeWorkspace uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT workspace_id FROM sites WHERE id=$1`, f.siteID).Scan(&homeWorkspace); err != nil {
+		t.Fatalf("read the fixture workspace: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_workspace_roles(user_id,workspace_id,role) VALUES($1,$2,'analyst')
+		ON CONFLICT DO NOTHING`, analystID, homeWorkspace); err != nil {
+		t.Fatalf("grant the analyst their workspace: %v", err)
+	}
+	analystToken := "mom_sess_analyst"
+	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour')
+		ON CONFLICT DO NOTHING`, analystID, auth.HashToken(analystToken)); err != nil {
+		t.Fatalf("create the analyst session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE email='analyst@test.local'`)
+	})
+
+	as := func(t *testing.T, token, method, path string) int {
+		t.Helper()
+		request := httptest.NewRequest(method, path, nil)
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: token})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	t.Run("a workspace role reaches its own site", func(t *testing.T) {
+		if code := as(t, analystToken, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview"); code != http.StatusOK {
+			t.Errorf("the analyst got %d for a site in their own workspace, want 200", code)
+		}
+	})
+
+	t.Run("a workspace role cannot reach another workspace", func(t *testing.T) {
+		// The site exists; the analyst has no role in its workspace. Answering 404
+		// rather than 403 also avoids confirming that the site exists.
+		if code := as(t, analystToken, http.MethodGet, "/api/v1/sites/SITE_OUTSIDE/overview"); code != http.StatusNotFound {
+			t.Errorf("the analyst got %d for a site in another organisation's workspace, want 404", code)
+		}
+		// And the site list must not mention it.
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/sites", nil)
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: analystToken})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if strings.Contains(recorder.Body.String(), "SITE_OUTSIDE") {
+			t.Errorf("the analyst's site list includes another organisation's site: %s", truncateBody(recorder.Body.String()))
+		}
+	})
+
+	t.Run("administrator endpoints refuse an analyst", func(t *testing.T) {
+		for _, path := range []string{
+			"/api/v1/users",
+			"/api/v1/settings",
+			"/api/v1/audit",
+			"/api/v1/tracking-debugger",
+			"/api/v1/sites/" + f.siteKey + "/query-policy",
+		} {
+			if code := as(t, analystToken, http.MethodGet, path); code != http.StatusForbidden {
+				t.Errorf("%s answered %d for an analyst, want 403", path, code)
+			}
+		}
+	})
+
+	t.Run("the super admin still reaches everything", func(t *testing.T) {
+		if code := as(t, f.sessionCook, http.MethodGet, "/api/v1/sites/SITE_OUTSIDE/overview"); code != http.StatusOK {
+			t.Errorf("the super admin got %d for another organisation's site, want 200", code)
+		}
+		if code := as(t, f.sessionCook, http.MethodGet, "/api/v1/users"); code != http.StatusOK {
+			t.Errorf("the super admin got %d for the user list, want 200", code)
+		}
+	})
+
+	t.Run("granting a workspace role opens exactly that site", func(t *testing.T) {
+		// Proves the membership table is what governs access, rather than the
+		// request happening to fail for some other reason: the same request that
+		// was refused above succeeds once the role exists, and is refused again
+		// when it is removed.
+		if _, err := pool.Exec(ctx, `INSERT INTO user_workspace_roles(user_id,workspace_id,role) VALUES($1,$2,'analyst')
+			ON CONFLICT DO NOTHING`, analystID, otherWorkspace); err != nil {
+			t.Fatalf("grant the analyst the other workspace: %v", err)
+		}
+		if code := as(t, analystToken, http.MethodGet, "/api/v1/sites/SITE_OUTSIDE/overview"); code != http.StatusOK {
+			t.Errorf("the analyst got %d after being granted a role in that workspace, want 200", code)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM user_workspace_roles WHERE user_id=$1 AND workspace_id=$2`, analystID, otherWorkspace); err != nil {
+			t.Fatalf("revoke the analyst's other workspace: %v", err)
+		}
+		if code := as(t, analystToken, http.MethodGet, "/api/v1/sites/SITE_OUTSIDE/overview"); code != http.StatusNotFound {
+			t.Errorf("the analyst got %d after the role was revoked, want 404", code)
+		}
+	})
+
+	t.Run("visitor profiles off blocks person level views", func(t *testing.T) {
+		var previous string
+		if err := pool.QueryRow(ctx, `SELECT value::text FROM settings WHERE key='privacy'`).Scan(&previous); err != nil {
+			t.Fatalf("read the privacy setting: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE settings SET value=jsonb_set(value,'{visitor_profiles}','false') WHERE key='privacy'`); err != nil {
+			t.Fatalf("disable visitor profiles: %v", err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `UPDATE settings SET value=$1::jsonb WHERE key='privacy'`, previous)
+		})
+		for _, path := range []string{
+			"/api/v1/sites/" + f.siteKey + "/visitors",
+			"/api/v1/sites/" + f.siteKey + "/identities",
+			"/api/v1/sites/" + f.siteKey + "/visitors/" + f.visitorID + "/timeline",
+		} {
+			// Even the super admin is refused: this is a privacy policy, not a
+			// permission level.
+			if code := as(t, f.sessionCook, http.MethodGet, path); code != http.StatusForbidden {
+				t.Errorf("%s answered %d with visitor profiles disabled, want 403", path, code)
+			}
+		}
+		// A report that does not identify a person still answers.
+		if code := as(t, f.sessionCook, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview"); code != http.StatusOK {
+			t.Errorf("the overview answered %d with visitor profiles disabled, want 200: it names nobody", code)
+		}
+	})
+}

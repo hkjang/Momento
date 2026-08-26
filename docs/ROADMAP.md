@@ -177,6 +177,12 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.31.4 — implemented
+
+- 접근 제어 검증: Workspace 간 격리, 관리자 전용 엔드포인트 거부, 권한 부여·회수 왕복
+- `visitor_profiles=false`가 super_admin에게도 사람 단위 화면을 차단하는지 확인
+- Fixture가 super_admin 하나로만 실행되어 Workspace 멤버십 분기가 미실행 상태였음
+
 ## v0.31.3 — implemented
 
 - Environment 격리 검증(stg 환경 시드 후 prd 리포트 누출 여부 확인, 필터 제거 시 실패 확인)
