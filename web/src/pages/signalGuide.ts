@@ -165,3 +165,19 @@ export function frictionHeadline(impact: FrictionImpact[] | undefined): string |
   const label = describeSignal(first.signal).label;
   return `먼저 고칠 것은 ${label}입니다. 겪은 ${first.affected_people.toLocaleString("ko-KR")}명의 전환율이 ${Math.abs(first.gap_points).toFixed(1)}%p 낮아 전환 약 ${first.estimated_lost_conversions.toLocaleString("ko-KR")}건에 해당합니다.`;
 }
+
+/**
+ * metricMeaning explains the metric names that could be mistaken for each other.
+ * Two session counts answer two different questions and used to share one name,
+ * so the reader has to be told which is which.
+ */
+export const metricMeaning: Record<string, string> = {
+  users: "사람 단위. 같은 SSO User로 연결된 여러 브라우저는 한 명입니다.",
+  sessions: "이 기간에 활동이 있었던 Session. 자정을 넘긴 Session은 양쪽 기간에 모두 포함됩니다.",
+  sessions_started:
+    "이 기간에 시작된 Session. 첫 화면이 보여주는 값이며, 연속된 기간을 더했을 때 합이 맞습니다.",
+  conversions: "전환으로 등록된 Event의 건수입니다. 사람 수가 아닙니다.",
+  conversion_users: "전환한 사람의 수입니다.",
+  conversion_sessions: "전환이 일어난 Session의 수입니다.",
+  revenue: "`purchase` Event의 `value` 또는 `revenue` Property 합계입니다.",
+};

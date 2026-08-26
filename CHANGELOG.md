@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.30.0
+
+- Separated the two session counts that shared one name. A dimensional breakdown needs the sessions active in a range — the ones that saw a page or arrived from a channel — while the overview reports the ones that began in it, and the difference is every session open at the boundary. On a two day window with one session carried over from before, the overview said six and the query builder said seven.
+- `sessions` in the query builder keeps the active meaning that a breakdown requires, and `sessions_started` is the overview's number, so the same question can be asked there and get the same answer.
+- The metric picker shows what each metric counts. Two session counts, a conversion count that is events rather than people, and a revenue that reads either property name are not distinguishable from a list of identifiers.
+- Checked the report tables while looking for this: the page and event tables count users the same way as the overview, and their view, event and conversion columns sum to the overview totals.
+
 ## v0.29.2
 
 - The overview and the insight report agree about sessions. Both answer how many sessions a period had, how many were engaged and how long the average one lasted; the overview measured the span of events inside the query window while the insight report read the sessions table, so the same period was a sixteen minute average session on one screen and twelve on the other.

@@ -20,6 +20,7 @@ import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
+import { metricMeaning } from "./signalGuide";
 import DataTable from "../components/DataTable";
 import { NoSite } from "../components/States";
 const baseDimensions = [
@@ -41,7 +42,10 @@ const baseDimensions = [
 const metrics = [
   "events",
   "users",
+  // sessions counts the sessions active in the range; sessions_started counts the
+  // ones that began in it, which is the number the first screen reports.
   "sessions",
+  "sessions_started",
   "page_views",
   "conversions",
   "conversion_users",
@@ -347,7 +351,14 @@ export default function ExplorerPage() {
             >
               {metrics.map((x) => (
                 <MenuItem key={x} value={x}>
-                  {x}
+                  <Stack>
+                    <Typography variant="body2">{x}</Typography>
+                    {metricMeaning[x] && (
+                      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "normal" }}>
+                        {metricMeaning[x]}
+                      </Typography>
+                    )}
+                  </Stack>
                 </MenuItem>
               ))}
             </Select>

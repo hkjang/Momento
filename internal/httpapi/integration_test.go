@@ -1128,3 +1128,61 @@ func TestSessionMetricsAgreeBetweenTheOverviewAndTheInsightReport(t *testing.T) 
 		t.Errorf("the overview reports %v sessions while the collector recorded %d starting in the window", current["sessions"], recorded)
 	}
 }
+
+// TestSessionCountsAreNamedForWhatTheyCount covers the last of the same-name
+// disagreements. A dimensional breakdown needs the sessions that were active in
+// the range — sessions that saw a page, arrived from a channel. The overview
+// reports the sessions that began in it, which is what makes consecutive periods
+// add up. Both are useful and they differ by every session open at the boundary,
+// so each has a name that says which it is.
+func TestSessionCountsAreNamedForWhatTheyCount(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 2)
+
+	// One session that began before the window and continued into it: what happens
+	// to every session that is open at midnight.
+	started := time.Now().AddDate(0, 0, -3)
+	inside := time.Now().Add(-2 * time.Hour)
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions(site_id,session_id,environment,visitor_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,device_type)
+		VALUES($1,'boundary-session','prd','boundary-visitor',$2,$3,2,2,0,true,'desktop')`, f.siteID, started, inside); err != nil {
+		t.Fatalf("seed the boundary session: %v", err)
+	}
+	for _, at := range []time.Time{started, inside} {
+		if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,page_url)
+			VALUES($1,$2,'prd','boundary-visitor','boundary-session','page_view',$3,$3,'{}'::jsonb,false,'https://portal.internal/boundary')`,
+			uuid.NewString(), f.siteID, at); err != nil {
+			t.Fatalf("seed the boundary events: %v", err)
+		}
+	}
+
+	overview := f.get(t, "/api/v1/sites/"+f.siteKey+"/overview?from="+from+"&to="+today)
+	current, _ := overview["current"].(map[string]any)
+	overviewSessions, _ := current["sessions"].(float64)
+	if overviewSessions == 0 {
+		t.Fatalf("the overview reports no sessions: %v", current)
+	}
+
+	built := f.do(t, http.MethodPost, "/api/v1/query", mustJSON(t, map[string]any{
+		"site_id":    f.siteKey,
+		"date_range": map[string]string{"from": from, "to": today},
+		"metrics":    []string{"sessions", "sessions_started"},
+	}))
+	rows, _ := built["rows"].([]any)
+	if len(rows) == 0 {
+		t.Fatalf("the query builder returned no rows: %v", built)
+	}
+	row, _ := rows[0].(map[string]any)
+	active, _ := row["sessions"].(float64)
+	startedInRange, _ := row["sessions_started"].(float64)
+
+	if startedInRange != overviewSessions {
+		t.Errorf("sessions_started is %v and the overview reports %v: the metric named for sessions that began in the range has to be that number",
+			row["sessions_started"], current["sessions"])
+	}
+	if active != startedInRange+1 {
+		t.Errorf("sessions=%v and sessions_started=%v: exactly one seeded session began before the window and continued into it, so the active count has to be one higher",
+			row["sessions"], row["sessions_started"])
+	}
+}
