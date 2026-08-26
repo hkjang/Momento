@@ -41,6 +41,74 @@ jobs:
         run: |
           docker save "momento-${RELEASE_TAG}" | gzip -9 > "momento-${RELEASE_TAG}.tar.gz"
           sha256sum "momento-${RELEASE_TAG}.tar.gz" > "momento-${RELEASE_TAG}.tar.gz.sha256"
+      # The artifact is the product for an offline deployment, and until now
+      # nothing had ever loaded one and started it. This runs the archive that is
+      # about to be published — not the image still in the local daemon — through
+      # the install sequence the release notes give, so a tarball that cannot
+      # start is never published.
+      - name: Smoke test the offline artifact
+        run: |
+          set -euo pipefail
+          # Loading from the archive is the point: it proves what a user receives.
+          docker image rm "momento-${RELEASE_TAG}" >/dev/null 2>&1 || true
+          gzip -dc "momento-${RELEASE_TAG}.tar.gz" | docker load
+          sha256sum -c "momento-${RELEASE_TAG}.tar.gz.sha256"
+
+          docker network create momento-smoke
+          docker run -d --name smoke-pg --network momento-smoke \
+            -e POSTGRES_PASSWORD=smoke -e POSTGRES_DB=momento postgres:17-alpine
+          for _ in $(seq 1 40); do
+            docker exec smoke-pg pg_isready -U postgres >/dev/null 2>&1 && break
+            sleep 2
+          done
+
+          docker run -d --name smoke-app --network momento-smoke -p 127.0.0.1:8099:8080 \
+            -e MOMENTO_POSTGRES_DSN='postgres://postgres:smoke@smoke-pg:5432/momento?sslmode=disable' \
+            -e MOMENTO_BOOTSTRAP_ADMIN='admin@example.com' \
+            -e MOMENTO_BOOTSTRAP_ADMIN_PASSWORD='smoke-test-password-long-enough' \
+            -e MOMENTO_ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)" \
+            "momento-${RELEASE_TAG}"
+
+          # Ready means the migrations ran and the database is reachable, which is
+          # the part an operator cannot verify from the outside.
+          ready=""
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8099/health/ready | grep -q ready; then
+              ready=yes
+              break
+            fi
+            sleep 2
+          done
+          if [[ -z "$ready" ]]; then
+            echo "::error title=Offline artifact does not start::/health/ready never answered"
+            docker logs smoke-app || true
+            exit 1
+          fi
+
+          # The archive has to be the version it is named after.
+          reported=$(curl -fsS http://127.0.0.1:8099/api/v1/version)
+          echo "version endpoint: $reported"
+          if ! echo "$reported" | grep -q "\"version\":\"${RELEASE_TAG#v}\""; then
+            echo "::error title=Wrong version in artifact::expected ${RELEASE_TAG#v}, got $reported"
+            exit 1
+          fi
+
+          # The console is embedded in the binary, so a missing build would show
+          # up here rather than in any API check.
+          curl -fsS -o /dev/null http://127.0.0.1:8099/
+          # And the operator's first action has to work.
+          curl -fsS -o /dev/null -X POST http://127.0.0.1:8099/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"admin@example.com","password":"smoke-test-password-long-enough"}'
+          echo "offline artifact started, reported ${RELEASE_TAG}, served the console and accepted the bootstrap login"
+      - name: Collect smoke test logs on failure
+        if: failure()
+        run: docker logs smoke-app 2>&1 | tail -50 || true
+      - name: Remove smoke test containers
+        if: always()
+        run: |
+          docker rm -f smoke-app smoke-pg >/dev/null 2>&1 || true
+          docker network rm momento-smoke >/dev/null 2>&1 || true
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

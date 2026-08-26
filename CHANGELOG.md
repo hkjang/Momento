@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.32.2
+
+- Every release now verifies its own offline artifact before publishing. The tarball is the product for an air-gapped deployment and nothing had ever loaded one and started it: the workflow published whatever `docker save` produced. It now loads the archive it is about to publish — not the image still in the local daemon — starts it with the environment variables the release notes give, waits for `/health/ready` so the migrations are known to have run, checks the reported version matches the tag, fetches the console, and logs in as the bootstrapped administrator. A tarball that cannot start is no longer published.
+- Verified the current artifact by hand first, following the documented install exactly: checksum, load, run, ready, version, console, login. It worked, so the automation encodes a passing path rather than a fix.
+
 ## v0.32.1
 
 - A missed release now repairs itself. A tag push is a one-shot trigger and a platform incident dropped it twice, leaving a tag whose version was announced and whose offline install artifact did not exist — a state nobody notices without looking for it. An hourly job compares recent tags against their releases and dispatches the release workflow for any that is missing, or that has only half of its two assets.
