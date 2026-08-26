@@ -177,6 +177,13 @@
 - 서비스가 허용하는 값이 데이터베이스 제약을 통과하는지 확인하는 회귀 테스트 추가
 - 쓰기 경로 통합 검증: 이상 감지 알림 상태 전이, 비밀값 발급·재조회·회전·재암호화, Scheduled Report 전송(성공·skipped·실패)과 봉인된 Header 사용
 
+## v0.30.1 — implemented
+
+- 정기 배달의 조회 기간을 사이트 로컬 날짜 기준으로 변경해 화면과 동일한 기간 사용
+- payload에 조회 기간(from/to) 포함
+- Overview 배달에 Session·참여 Session 추가(v0.29.2 정의와 동일)
+- 기간 자체를 단정하는 테스트 추가(이전 구현에서 6시간 차이로 실패)
+
 ## v0.30.0 — implemented
 
 - Session 지표를 두 정의로 분리: `sessions`(기간 내 활동), `sessions_started`(기간 내 시작, 첫 화면과 동일)

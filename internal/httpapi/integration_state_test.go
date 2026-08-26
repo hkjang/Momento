@@ -643,3 +643,95 @@ func TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder(t *testing.T) {
 		t.Fatalf("the seeded site is missing from the site list: %v", sites)
 	}
 }
+
+// TestDeliveredNumbersMatchTheScreenTheyAreNamedAfter pins the period a
+// scheduled report covers. The screens read the site's calendar and end at local
+// midnight; a delivery measured from the moment the schedule happened to fire,
+// so a digest called the overview covered a different span than the overview and
+// the span moved with the send time. It also omitted sessions entirely.
+func TestDeliveredNumbersMatchTheScreenTheyAreNamedAfter(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	received := make(chan map[string]any, 2)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		received <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	if _, err := pool.Exec(ctx, `UPDATE settings SET value=$1 WHERE key='automation'`,
+		`{"enabled":true,"allowed_webhook_hosts":["127.0.0.1"],"delivery_timeout_seconds":10,"max_entity_ids":0}`); err != nil {
+		t.Fatalf("enable automation: %v", err)
+	}
+	channel := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/delivery-channels",
+		fmt.Sprintf(`{"name":"period-webhook","channel_type":"webhook","endpoint_url":"%s","active":true}`, target.URL))
+	channelID, _ := channel["id"].(string)
+	if channelID == "" {
+		t.Fatalf("channel creation failed: %v", channel)
+	}
+
+	// Thirty days is the overview's own default, so the two windows have to line up.
+	const days = 30
+	report := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/scheduled-reports",
+		fmt.Sprintf(`{"channel_id":"%s","name":"요약","report_kind":"overview","interval_minutes":1440,"definition":{"environment":"prd","days":%d},"enabled":true}`, channelID, days))
+	reportID, _ := report["id"].(string)
+	if err := (service.Automation{DB: pool, Secrets: f.server.Secrets}).RunByID(ctx, uuid.MustParse(reportID)); err != nil {
+		t.Fatalf("overview delivery: %v", err)
+	}
+
+	var delivered map[string]any
+	select {
+	case payload := <-received:
+		delivered, _ = payload["data"].(map[string]any)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the webhook never received the overview delivery")
+	}
+	if delivered == nil {
+		t.Fatal("the delivered payload carried no data")
+	}
+
+	// The overview is asked with no dates so it uses its own default window, which
+	// is the rule a thirty day digest is supposed to mirror: thirty local days
+	// ending at the coming local midnight. Passing dates here would compare the
+	// digest against a window the test invented rather than the one the screen uses.
+	overview := f.get(t, "/api/v1/sites/"+f.siteKey+"/overview")
+	current, _ := overview["current"].(map[string]any)
+
+	for _, key := range []string{"users", "sessions", "events", "conversions", "revenue"} {
+		want, ok := current[key].(float64)
+		if !ok {
+			t.Errorf("the overview does not report %s", key)
+			continue
+		}
+		got, ok := delivered[key].(float64)
+		if !ok {
+			t.Errorf("the delivered digest does not report %s: %v", key, delivered)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s is %v in the delivered digest and %v on the overview: a digest named after a screen has to cover the same period and count the same way",
+				key, got, want)
+		}
+	}
+	// The counts alone are a weak check: whether they differ depends on whether any
+	// event happens to fall in the band where the two windows disagree, which for
+	// this fixture depends on the hour the test runs. The window itself is
+	// compared directly, and it travels with the payload so a reader can tell what
+	// was measured without reconstructing it.
+	for _, key := range []string{"from", "to"} {
+		want := fmt.Sprint(overview[key])
+		got := fmt.Sprint(delivered[key])
+		if want == "" || want == "<nil>" {
+			t.Errorf("the overview does not report its %s", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("the digest covered %s=%v while the overview reports %v: a digest named after a screen has to measure the same period",
+				key, got, want)
+		}
+	}
+}

@@ -21,6 +21,22 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// reportWindow returns the period a delivery covers, in the site's calendar and
+// ending at local midnight, so it matches the window the console reads.
+func (a Automation) reportWindow(ctx context.Context, siteID uuid.UUID, days int) (time.Time, time.Time, error) {
+	var timezone string
+	if err := a.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&timezone); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("invalid site timezone %q: %w", timezone, err)
+	}
+	now := time.Now().In(location)
+	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
+	return to.AddDate(0, 0, -days).UTC(), to.UTC(), nil
+}
+
 // ErrSkipDelivery lets a report decide that there is nothing worth sending. An
 // alert channel that fires every hour with "nothing wrong" stops being read.
 var ErrSkipDelivery = errors.New("nothing to deliver")
@@ -179,8 +195,15 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 	if value, ok := definition["days"].(float64); ok && value >= 1 && value <= 365 {
 		days = int(value)
 	}
-	to := time.Now().UTC()
-	from := to.AddDate(0, 0, -days)
+	// The same period the screen shows. Reports are read in the site's calendar,
+	// so a seven day digest has to mean the last seven local days and end at local
+	// midnight; measuring from the moment the schedule happened to fire gave a
+	// number that never matched the screen it was named after, and moved with the
+	// send time.
+	from, to, err := a.reportWindow(ctx, delivery.SiteID, days)
+	if err != nil {
+		return nil, err
+	}
 	data := map[string]any{}
 	switch delivery.ReportKind {
 	case "overview", "insights":
@@ -190,7 +213,18 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 		if err != nil {
 			return nil, err
 		}
-		data = map[string]any{"users": users, "events": events, "conversions": conversions, "errors": errors, "revenue": revenue}
+		// Sessions come from the sessions table and are counted by when they
+		// started, which is the definition every screen uses. A digest that omits
+		// sessions or counts them differently is a digest of a different report.
+		var sessions, engaged int64
+		if err := a.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE engaged) FROM sessions
+			WHERE site_id=$1 AND environment=$2 AND started_at >= $3 AND started_at < $4`,
+			delivery.SiteID, environment, from, to).Scan(&sessions, &engaged); err != nil {
+			return nil, err
+		}
+		data = map[string]any{"users": users, "sessions": sessions, "engaged_sessions": engaged,
+			"events": events, "conversions": conversions, "errors": errors, "revenue": revenue,
+			"from": from, "to": to}
 	case "adoption":
 		rows, err := a.DB.Query(ctx, `SELECT coalesce(properties->>'feature','(not set)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1 ORDER BY 2 DESC LIMIT 50`, delivery.SiteID, from, to, environment)
 		if err != nil {

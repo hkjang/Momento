@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.30.1
+
+- A scheduled report now covers the period the screen it is named after covers. Every delivery measured from the moment the schedule happened to fire, while every screen reads the site's calendar and ends at local midnight, so a seven day digest and the seven day screen described different spans — and the digest's span moved every time the send time drifted. Both windows now come from the same rule.
+- The window travels with the payload, so a reader can see what was measured instead of reconstructing it from the send time.
+- The overview digest reports sessions and engaged sessions, counted from the sessions table by when they started, which is the definition the screens settled on in v0.29.2. It previously omitted sessions altogether.
+- The test asserts the window directly rather than inferring it from counts: whether the counts differ depends on whether any event falls in the band where the two windows disagree, which for the fixture depends on the hour the test runs. Restoring the previous window fails it with a six hour discrepancy.
+
 ## v0.30.0
 
 - Separated the two session counts that shared one name. A dimensional breakdown needs the sessions active in a range — the ones that saw a page or arrived from a channel — while the overview reports the ones that began in it, and the difference is every session open at the boundary. On a two day window with one session carried over from before, the overview said six and the query builder said seven.
