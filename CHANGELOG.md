@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.31.5
+
+- The personal API key path is tested. Every other test arrives with a session cookie, so the way a BI job or another service actually connects had never been exercised — including the refusals that stop a key being used as an administrator.
+- A key reads analytics and the raw export, is refused on administrator endpoints even when its owner is a super administrator, is refused on interactive writes with `SESSION_REQUIRED`, and stops working the moment it is revoked, expires, or its owner is deactivated.
+- Removed the Scope column from the API key list. Keys carry a scopes field that nothing reads, and the console never sets it, so the column was always empty while implying the key was restricted. No scope model was invented to fill it; what a key can and cannot do is documented instead.
+
 ## v0.31.4
 
 - Access control is tested. Every test had signed in as a super administrator, which short-circuits the workspace membership check entirely, so neither that branch nor any administrator refusal had ever executed. On a shared internal deployment those two rules are what keep one team's analytics out of another team's console.

@@ -474,6 +474,17 @@ dept_stats = df.groupby('department')['event_name'].value_counts()
 print(dept_stats)
 ```
 
+### 4.1 개인 API Key로 접근할 때
+
+BI 도구나 스크립트는 개인 API Key(`mom_key_`)를 `Authorization: Bearer`로 보냅니다. Key는 **소유자의 권한을 그대로 따르되, 두 가지는 항상 거부됩니다.**
+
+- **관리자 기능**: 사용자·설정·감사 로그 등은 소유자가 super_admin이어도 Key로 접근할 수 없습니다. 스크립트에 오래 남는 자격 증명이 배포 설정을 바꿀 수 있어서는 안 됩니다
+- **대화형 쓰기**: Segment 저장처럼 콘솔에서 수행하는 작업은 `SESSION_REQUIRED`로 거부됩니다
+
+Key를 폐기하거나 만료시키면, 그리고 소유자 계정을 비활성화하면 즉시 401을 받습니다.
+
+Key는 조회 범위를 따로 제한하지 않습니다. 특정 사이트만 허용하려면 소유자의 Workspace 권한을 조정하세요 — 조회 가능한 사이트는 사람과 Key가 동일합니다.
+
 ## 5. Query Mode와 비용 보호
 
 - `Exact`는 Raw Event 100%를 계산합니다. 관리자가 정한 최대 기간과 Complexity를 넘으면 실행 전에 거부됩니다.

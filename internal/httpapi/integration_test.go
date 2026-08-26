@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -1668,6 +1669,109 @@ func TestAccessControlAcrossWorkspacesAndRoles(t *testing.T) {
 		// A report that does not identify a person still answers.
 		if code := as(t, f.sessionCook, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview"); code != http.StatusOK {
 			t.Errorf("the overview answered %d with visitor profiles disabled, want 200: it names nobody", code)
+		}
+	})
+}
+
+// TestAPIKeyAuthentication covers the other way in. Every other test arrives with
+// a session cookie, so the personal API key path — the one a BI job or another
+// service actually uses — had never been exercised, including the refusals that
+// exist to stop a key being used as an administrator.
+func TestAPIKeyAuthentication(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	var owner uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT id FROM users WHERE email='admin@test.local'`).Scan(&owner); err != nil {
+		t.Fatalf("read the fixture user: %v", err)
+	}
+	issue := func(t *testing.T, name, token string, expires any, revoked bool) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO api_keys(user_id,name,key_hash,key_prefix,scopes,expires_at,revoked_at)
+			VALUES($1,$2,$3,'mom_key_','{}',$4,CASE WHEN $5 THEN now() ELSE NULL END)`,
+			owner, name, auth.HashToken(token), expires, revoked); err != nil {
+			t.Fatalf("issue key %s: %v", name, err)
+		}
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE user_id=$1`, owner)
+	})
+
+	const good = "mom_key_integration_good"
+	issue(t, "good", good, nil, false)
+	issue(t, "revoked", "mom_key_integration_revoked", nil, true)
+	issue(t, "expired", "mom_key_integration_expired", time.Now().Add(-time.Hour), false)
+
+	call := func(t *testing.T, key, method, path, body string) (int, string) {
+		t.Helper()
+		var reader io.Reader
+		if body != "" {
+			reader = strings.NewReader(body)
+		}
+		request := httptest.NewRequest(method, path, reader)
+		request.Header.Set("Authorization", "Bearer "+key)
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	t.Run("a key reads the analytics it was issued for", func(t *testing.T) {
+		if code, body := call(t, good, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview", ""); code != http.StatusOK {
+			t.Errorf("a valid key got %d for the overview, want 200: %s", code, truncateBody(body))
+		}
+		if code, _ := call(t, good, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/export?format=json", ""); code != http.StatusOK {
+			t.Errorf("a valid key got %d for the export, which is the reason keys exist", code)
+		}
+	})
+
+	t.Run("a key is never an administrator", func(t *testing.T) {
+		// The key's owner is a super administrator. Keys are refused on these
+		// endpoints regardless, because a long-lived credential in a script should
+		// not be able to change the deployment.
+		for _, path := range []string{"/api/v1/users", "/api/v1/settings", "/api/v1/audit"} {
+			code, body := call(t, good, http.MethodGet, path, "")
+			if code != http.StatusForbidden {
+				t.Errorf("%s answered %d for a key owned by a super administrator, want 403: %s", path, code, truncateBody(body))
+			}
+		}
+	})
+
+	t.Run("a key cannot perform interactive writes", func(t *testing.T) {
+		body := fmt.Sprintf(`{"site_id":%q,"name":"키로 만든 Segment","definition":{"field":"device.type","operator":"=","value":"mobile"}}`, f.siteKey)
+		code, response := call(t, good, http.MethodPost, "/api/v1/segments", body)
+		if code != http.StatusForbidden {
+			t.Errorf("creating a segment with a key answered %d, want 403", code)
+		}
+		if !strings.Contains(response, "SESSION_REQUIRED") {
+			t.Errorf("the refusal does not say an interactive session is required: %s", truncateBody(response))
+		}
+	})
+
+	t.Run("revoked and expired keys are refused", func(t *testing.T) {
+		for name, key := range map[string]string{
+			"revoked": "mom_key_integration_revoked",
+			"expired": "mom_key_integration_expired",
+			"unknown": "mom_key_never_issued",
+		} {
+			if code, _ := call(t, key, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview", ""); code != http.StatusUnauthorized {
+				t.Errorf("a %s key got %d, want 401", name, code)
+			}
+		}
+	})
+
+	t.Run("a key stops working when its owner is deactivated", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `UPDATE users SET active=false WHERE id=$1`, owner); err != nil {
+			t.Fatalf("deactivate the owner: %v", err)
+		}
+		defer func() {
+			_, _ = pool.Exec(context.Background(), `UPDATE users SET active=true WHERE id=$1`, owner)
+		}()
+		if code, _ := call(t, good, http.MethodGet, "/api/v1/sites/"+f.siteKey+"/overview", ""); code != http.StatusUnauthorized {
+			t.Errorf("a key belonging to a deactivated user got %d, want 401", code)
 		}
 	})
 }

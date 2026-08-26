@@ -236,11 +236,6 @@ function Keys() {
             ),
           },
           {
-            key: "scopes",
-            label: "Scope",
-            format: (v) => (v as string[]).join(", "),
-          },
-          {
             key: "last_used_at",
             label: "마지막 사용",
             format: (v) =>
