@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.1
+
+- A missed release now repairs itself. A tag push is a one-shot trigger and a platform incident dropped it twice, leaving a tag whose version was announced and whose offline install artifact did not exist — a state nobody notices without looking for it. An hourly job compares recent tags against their releases and dispatches the release workflow for any that is missing, or that has only half of its two assets.
+- Only tags from the last seven days are considered: an older tag without a release was a decision by then, and rebuilding it would be surprising.
+- The repair path was executed rather than assumed. A reconciler that has only ever reported "nothing to do" has not demonstrated that it can act, so the dispatch was forced once against a cheap target to prove the token, the permission and the call, then reverted.
+- No product code changed in this release.
+
 ## v0.32.0
 
 - Documented that reports include bot, monitoring and internal traffic. The collector classifies every event by user agent and network and stores the result, and nothing filters on it, so an uptime monitor hitting a page every minute contributes fourteen hundred page views a day to the numbers a reader takes at face value. Nothing in the documentation said so.
