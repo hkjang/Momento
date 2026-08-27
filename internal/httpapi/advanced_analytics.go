@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/hkjang/Momento/internal/auth"
+	"github.com/hkjang/Momento/internal/insight"
 )
 
 type retentionPolicy struct {
@@ -143,39 +145,57 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
+	// The summary, the product table and the funnel are three reads of the same
+	// period with nothing to say to each other, and the screen used to wait for
+	// their sum.
+	environment := requestEnvironment(r)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
 	var users, buyers, transactions, carts, checkouts int64
 	var revenue, refunds float64
-	err = s.DB.QueryRow(r.Context(), `WITH base AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),count(DISTINCT entity) FILTER(WHERE event_name='add_to_cart'),count(DISTINCT entity) FILTER(WHERE event_name='begin_checkout'),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to, requestEnvironment(r)).Scan(&users, &buyers, &transactions, &carts, &checkouts, &revenue, &refunds)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	productRows, err := s.DB.Query(r.Context(), `SELECT coalesce(item->>'item_id','(not set)'),coalesce(max(item->>'item_name'),''),coalesce(max(item->>'category'),''),coalesce(max(item->>'brand'),''),sum(CASE WHEN coalesce(item->>'quantity','1') ~ '^[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'quantity','1')::numeric ELSE 1 END)::double precision,sum((CASE WHEN coalesce(item->>'price','0') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'price','0')::numeric ELSE 0 END)*(CASE WHEN coalesce(item->>'quantity','1') ~ '^[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'quantity','1')::numeric ELSE 1 END))::double precision,count(DISTINCT coalesce(e.properties->>'transaction_id',e.properties->>'order_id',e.event_id::text)) FROM raw_events e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.properties->'items')='array' THEN e.properties->'items' ELSE '[]'::jsonb END) item WHERE e.site_id=$1 AND e.environment=$4 AND e.event_timestamp >= $2 AND e.event_timestamp < $3 AND e.event_name='purchase' GROUP BY 1 ORDER BY 6 DESC LIMIT 200`, siteID, from, to, requestEnvironment(r))
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	products := rowsToList(productRows, func() (map[string]any, error) {
-		var itemID, name, category, brand string
-		var quantity, itemRevenue float64
-		var purchases int64
-		err := productRows.Scan(&itemID, &name, &category, &brand, &quantity, &itemRevenue, &purchases)
-		return map[string]any{"item_id": itemID, "item_name": name, "category": category, "brand": brand, "quantity": quantity, "revenue": itemRevenue, "transactions": purchases}, err
-	})
+	products := []map[string]any{}
 	steps := []map[string]any{}
-	stepRows, _ := s.DB.Query(r.Context(), `SELECT event_name,count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$5 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($4) GROUP BY event_name`, siteID, from, to, []string{"view_item", "add_to_cart", "begin_checkout", "purchase"}, requestEnvironment(r))
-	if stepRows != nil {
-		defer stepRows.Close()
-		counts := map[string]int64{}
-		for stepRows.Next() {
-			var name string
-			var count int64
-			_ = stepRows.Scan(&name, &count)
-			counts[name] = count
-		}
-		for _, name := range []string{"view_item", "add_to_cart", "begin_checkout", "purchase"} {
-			steps = append(steps, map[string]any{"event": name, "users": counts[name]})
-		}
+	err = insight.RunParallel(ctx, insight.QueryConcurrency,
+		func(stepCtx context.Context) error {
+			return s.DB.QueryRow(stepCtx, `WITH base AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),count(DISTINCT entity) FILTER(WHERE event_name='add_to_cart'),count(DISTINCT entity) FILTER(WHERE event_name='begin_checkout'),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to, environment).
+				Scan(&users, &buyers, &transactions, &carts, &checkouts, &revenue, &refunds)
+		},
+		func(stepCtx context.Context) error {
+			rows, err := s.DB.Query(stepCtx, `SELECT coalesce(item->>'item_id','(not set)'),coalesce(max(item->>'item_name'),''),coalesce(max(item->>'category'),''),coalesce(max(item->>'brand'),''),sum(CASE WHEN coalesce(item->>'quantity','1') ~ '^[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'quantity','1')::numeric ELSE 1 END)::double precision,sum((CASE WHEN coalesce(item->>'price','0') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'price','0')::numeric ELSE 0 END)*(CASE WHEN coalesce(item->>'quantity','1') ~ '^[0-9]+(\.[0-9]+)?$' THEN coalesce(item->>'quantity','1')::numeric ELSE 1 END))::double precision,count(DISTINCT coalesce(e.properties->>'transaction_id',e.properties->>'order_id',e.event_id::text)) FROM raw_events e CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(e.properties->'items')='array' THEN e.properties->'items' ELSE '[]'::jsonb END) item WHERE e.site_id=$1 AND e.environment=$4 AND e.event_timestamp >= $2 AND e.event_timestamp < $3 AND e.event_name='purchase' GROUP BY 1 ORDER BY 6 DESC LIMIT 200`, siteID, from, to, environment)
+			if err != nil {
+				return err
+			}
+			products = rowsToList(rows, func() (map[string]any, error) {
+				var itemID, name, category, brand string
+				var quantity, itemRevenue float64
+				var purchases int64
+				err := rows.Scan(&itemID, &name, &category, &brand, &quantity, &itemRevenue, &purchases)
+				return map[string]any{"item_id": itemID, "item_name": name, "category": category, "brand": brand, "quantity": quantity, "revenue": itemRevenue, "transactions": purchases}, err
+			})
+			return rows.Err()
+		},
+		func(stepCtx context.Context) error {
+			rows, err := s.DB.Query(stepCtx, `SELECT event_name,count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$5 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($4) GROUP BY event_name`, siteID, from, to, []string{"view_item", "add_to_cart", "begin_checkout", "purchase"}, environment)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			counts := map[string]int64{}
+			for rows.Next() {
+				var name string
+				var count int64
+				if rows.Scan(&name, &count) == nil {
+					counts[name] = count
+				}
+			}
+			for _, name := range []string{"view_item", "add_to_cart", "begin_checkout", "purchase"} {
+				steps = append(steps, map[string]any{"event": name, "users": counts[name]})
+			}
+			return rows.Err()
+		})
+	if err != nil {
+		writeQueryError(w, err)
+		return
 	}
 	aov := float64(0)
 	if transactions > 0 {

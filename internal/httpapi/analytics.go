@@ -374,46 +374,59 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
+	// Four reads of the same half hour, and the screen refreshes on a timer, so
+	// running them one after another cost that wait on every tick.
 	environment := requestEnvironment(r)
+	ctx, cancel := s.analyticalContext(r)
+	defer cancel()
 	var u1, u5, u30, e30, p30 int64
-	err = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '1 minute'),count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '5 minutes'),count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE event_name='page_view') FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes'`, siteID, environment).Scan(&u1, &u5, &u30, &e30, &p30)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+	var topEvents, topPages, timeline []map[string]any
+	if err := insight.RunParallel(ctx, insight.QueryConcurrency,
+		func(stepCtx context.Context) error {
+			return s.DB.QueryRow(stepCtx, `SELECT count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '1 minute'),count(DISTINCT entity_id) FILTER(WHERE event_timestamp>=now()-interval '5 minutes'),count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE event_name='page_view') FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes'`, siteID, environment).Scan(&u1, &u5, &u30, &e30, &p30)
+		},
+		func(stepCtx context.Context) error {
+			rows, err := s.DB.Query(stepCtx, `SELECT event_name,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
+			if err != nil {
+				return err
+			}
+			topEvents = rowsToList(rows, func() (map[string]any, error) {
+				var n string
+				var c, u int64
+				err := rows.Scan(&n, &c, &u)
+				return map[string]any{"name": n, "count": c, "users": u}, err
+			})
+			return rows.Err()
+		},
+		func(stepCtx context.Context) error {
+			rows, err := s.DB.Query(stepCtx, `SELECT coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_name='page_view' AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
+			if err != nil {
+				return err
+			}
+			topPages = rowsToList(rows, func() (map[string]any, error) {
+				var n string
+				var c, u int64
+				err := rows.Scan(&n, &c, &u)
+				return map[string]any{"name": n, "count": c, "users": u}, err
+			})
+			return rows.Err()
+		},
+		func(stepCtx context.Context) error {
+			rows, err := s.DB.Query(stepCtx, `SELECT date_trunc('minute',event_timestamp),count(*),count(*) FILTER(WHERE event_name='page_view') FROM raw_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 1`, siteID, environment)
+			if err != nil {
+				return err
+			}
+			timeline = rowsToList(rows, func() (map[string]any, error) {
+				var t time.Time
+				var e, p int64
+				err := rows.Scan(&t, &e, &p)
+				return map[string]any{"time": t, "events": e, "page_views": p}, err
+			})
+			return rows.Err()
+		}); err != nil {
+		writeQueryError(w, err)
 		return
 	}
-	topEventsRows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	topEvents := rowsToList(topEventsRows, func() (map[string]any, error) {
-		var n string
-		var c, u int64
-		err := topEventsRows.Scan(&n, &c, &u)
-		return map[string]any{"name": n, "count": c, "users": u}, err
-	})
-	topPagesRows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_name='page_view' AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, siteID, environment)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	topPages := rowsToList(topPagesRows, func() (map[string]any, error) {
-		var n string
-		var c, u int64
-		err := topPagesRows.Scan(&n, &c, &u)
-		return map[string]any{"name": n, "count": c, "users": u}, err
-	})
-	timelineRows, err := s.DB.Query(r.Context(), `SELECT date_trunc('minute',event_timestamp),count(*),count(*) FILTER(WHERE event_name='page_view') FROM raw_events WHERE site_id=$1 AND environment=$2 AND event_timestamp>=now()-interval '30 minutes' GROUP BY 1 ORDER BY 1`, siteID, environment)
-	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
-	}
-	timeline := rowsToList(timelineRows, func() (map[string]any, error) {
-		var t time.Time
-		var e, p int64
-		err := timelineRows.Scan(&t, &e, &p)
-		return map[string]any{"time": t, "events": e, "page_views": p}, err
-	})
 	writeJSON(w, 200, map[string]any{"environment": environment, "active_users_1m": u1, "active_users_5m": u5, "active_users_30m": u30, "events_30m": e30, "page_views_30m": p30, "events_per_second": float64(e30) / 1800, "page_views_per_second": float64(p30) / 1800, "top_events": topEvents, "top_pages": topPages, "timeline": timeline})
 }
 
