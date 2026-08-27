@@ -124,6 +124,50 @@ func TestProtectPIIBeforeDurableQueue(t *testing.T) {
 	}
 }
 
+// The user id reaches the durable write through a field no detector looked at.
+// Every other string in a request goes through them; this one did not, so a
+// phone number sent as an identifier was stored as one — indexed, shown on the
+// identities screen, included in every export. The tracker refuses such an
+// identifier in the browser, and server-to-server ingestion does not go through
+// the tracker.
+func TestAnIdentifierThatIsAPersonIsNotStoredAsOne(t *testing.T) {
+	for _, mode := range []string{"mask", "reject"} {
+		req := model.CollectRequest{UserID: "010-1234-5678"}
+		count, kinds := protectPII(&req, mode)
+		if count == 0 {
+			t.Errorf("%s: a phone number as the user id was not detected at all", mode)
+		}
+		if len(kinds) == 0 || kinds[0] != "phone" {
+			t.Errorf("%s: detected %v, want the phone detector to have named it", mode, kinds)
+		}
+		// Not masked to a constant: that would merge everybody whose identifier
+		// was refused into one person and corrupt every per-user number for them.
+		if req.UserID != "" {
+			t.Errorf("%s: the user id is %q; under a policy that says do not keep this, the event has to become anonymous", mode, req.UserID)
+		}
+	}
+
+	// Detect and warn record it without changing what was sent, which is what
+	// those modes mean everywhere else.
+	req := model.CollectRequest{UserID: "person@example.com"}
+	if count, _ := protectPII(&req, "detect"); count == 0 {
+		t.Error("detect mode did not notice an email address used as an identifier")
+	}
+	if req.UserID != "person@example.com" {
+		t.Errorf("detect mode changed the request: %q", req.UserID)
+	}
+
+	// And an internal identifier is left alone, or this would be refusing every
+	// identifier and passing for the wrong reason.
+	ordinary := model.CollectRequest{UserID: "EMP-4821"}
+	if count, _ := protectPII(&ordinary, "mask"); count != 0 {
+		t.Errorf("an internal identifier was treated as PII: %d detections", count)
+	}
+	if ordinary.UserID != "EMP-4821" {
+		t.Errorf("an internal identifier was altered: %q", ordinary.UserID)
+	}
+}
+
 func TestActiveEngagementMilliseconds(t *testing.T) {
 	tests := []struct {
 		event model.IncomingEvent

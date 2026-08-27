@@ -931,6 +931,29 @@ func protectPII(req *model.CollectRequest, configuredMode string) (int, []string
 			*target = masked
 		}
 	}
+	// The user id was inspected by nothing. Every other string a request carries
+	// passes through the detectors above — user properties, session properties,
+	// event properties, items, the page URL, title and referrer — and this one
+	// did not, so a phone number sent as an identifier was stored as one, indexed,
+	// shown on the identities screen and included in every export. The tracker
+	// refuses such an identifier in the browser, but server-to-server ingestion
+	// does not go through the tracker.
+	//
+	// It is not masked like the rest. Replacing it with a constant would merge
+	// everybody whose identifier was refused into one person and quietly corrupt
+	// every per-user number for them. Under a policy that says do not keep this,
+	// the honest record is that we do not know who this was, so the event becomes
+	// anonymous — which is also what the browser produces when identify() refuses.
+	if _, found := maskPIIString(req.UserID); len(found) > 0 {
+		for _, kind := range found {
+			count++
+			kinds[kind] = true
+		}
+		if mode == "mask" || mode == "reject" {
+			req.UserID = ""
+		}
+	}
+
 	labels := make([]string, 0, len(kinds))
 	for _, kind := range []string{"email", "phone", "resident_number", "payment_card", "credential"} {
 		if kinds[kind] {
