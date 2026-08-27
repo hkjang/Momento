@@ -29,6 +29,7 @@ import {
   impactVerdictLabel,
   searchSetupHint,
   zeroResultReadiness,
+  featureSetupHint,
   type FrictionImpact,
 } from "./signalGuide";
 import AudienceList from "../components/AudienceList";
@@ -390,9 +391,17 @@ function FeatureIntelligence() {
         />
       </Stack>
     );
+  // An empty table is the same picture whether nobody used a feature or no
+  // event says which feature it was.
+  const setup = featureSetupHint(q.data);
   return (
     <Stack spacing={2}>
       {range}
+      {setup && (
+        <Alert severity="warning" role="status">
+          {setup}
+        </Alert>
+      )}
       <Alert severity="info">
         Feature Score = Adoption 40% + 재사용 30% + 전환 20% + 오류 없음 10%.
         대상자 설정이 없으면 관측 활성 사용자를 분모로 사용합니다.

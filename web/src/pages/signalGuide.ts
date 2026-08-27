@@ -236,3 +236,40 @@ export function ecommerceSetupHint(
     return "구매는 수집되지만 상품 정보가 없습니다. 상품별 표는 `purchase` 이벤트의 `items` 배열을 읽으므로, 각 항목에 `item_id`·`price`·`quantity`를 담아 보내세요.";
   return null;
 }
+
+/**
+ * featureSetupHint separates "nobody used a feature" from "no event says which
+ * feature it was".
+ *
+ * The feature screen groups by a `feature` property that any event may carry.
+ * A site collecting traffic normally, but tagging nothing, gets an empty table
+ * that looks exactly like a product nobody uses.
+ */
+export function featureSetupHint(
+  data: { population?: number; features?: unknown[] } | undefined,
+): string | null {
+  if (!data) return null;
+  if (!data.population)
+    return "이 기간에 이벤트가 없습니다. 먼저 추적 스니펫이 설치되어 이벤트가 수집되는지 확인하세요.";
+  if ((data.features || []).length === 0)
+    return '이벤트는 수집되지만 어떤 이벤트에도 `feature` 속성이 없습니다. 기능 사용을 구분하려면 `analytics.track("feature_used", { feature: "이름" })`처럼 어떤 기능인지 함께 보내야 합니다.';
+  return null;
+}
+
+/**
+ * aiSetupHint does the same for the AI operations screen, which reads events a
+ * site sends itself and groups them by a property those events carry. An empty
+ * table and a table where every label is "(not set)" are different problems
+ * with the same appearance.
+ */
+export function aiSetupHint(
+  rows: { label?: unknown }[] | undefined,
+  groupBy: string,
+): string | null {
+  const list = rows || [];
+  if (list.length === 0)
+    return "이 기간에 AI 이벤트가 없습니다. `ai_prompt`·`ai_response`·`ai_tool_call`·`ai_agent_run`·`ai_mcp_call`·`ai_model_call`은 자동으로 수집되지 않으므로 애플리케이션이 직접 보내야 합니다.";
+  if (list.every((row) => !row.label || row.label === "(not set)"))
+    return `AI 이벤트는 수집되지만 \`${groupBy}\` 속성이 비어 있어 구분할 수 없습니다. 이벤트 속성에 \`${groupBy}\`를 담아 보내면 이 기준으로 나눠 볼 수 있습니다.`;
+  return null;
+}

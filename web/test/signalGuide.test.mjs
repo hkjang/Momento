@@ -6,6 +6,8 @@ import {
   searchSetupHint,
   zeroResultReadiness,
   ecommerceSetupHint,
+  featureSetupHint,
+  aiSetupHint,
 } from "../src/pages/signalGuide.ts";
 
 test("every automatic signal explains what it means and what to do", () => {
@@ -126,4 +128,26 @@ test("이커머스 빈 화면은 안 팔린 것과 계측되지 않은 것을 �
     ecommerceSetupHint({ transactions: 0, revenue: 0 }, [{ event: "view_item", users: 40 }], []),
     null,
   );
+});
+
+// The feature and AI screens read data a site has to send itself, so an empty
+// table is two different situations wearing the same face.
+test("기능 화면은 사용이 없는 것과 태깅되지 않은 것을 구분한다", () => {
+  assert.match(String(featureSetupHint({ population: 0, features: [] })), /이벤트가 없습니다/);
+  assert.match(
+    String(featureSetupHint({ population: 400, features: [] })),
+    /`feature` 속성이 없습니다/,
+  );
+  assert.equal(featureSetupHint({ population: 400, features: [{}] }), null);
+});
+
+test("AI 화면은 이벤트가 없는 것과 구분 속성이 빈 것을 나눈다", () => {
+  assert.match(String(aiSetupHint([], "model")), /AI 이벤트가 없습니다/);
+  assert.match(
+    String(aiSetupHint([{ label: "(not set)" }, { label: "(not set)" }], "model")),
+    /`model` 속성이 비어 있어/,
+  );
+  assert.equal(aiSetupHint([{ label: "claude" }], "model"), null);
+  // The advisory names the dimension the reader actually chose.
+  assert.match(String(aiSetupHint([{ label: "(not set)" }], "provider")), /provider/);
 });

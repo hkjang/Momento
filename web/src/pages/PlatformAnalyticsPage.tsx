@@ -16,6 +16,7 @@ import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { get, post, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
+import { aiSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
@@ -951,29 +952,45 @@ function AIAnalytics() {
       ) : q.error ? (
         <ErrorState error={q.error} />
       ) : (
-        <DataTable
-          rows={q.data?.rows || []}
-          columns={[
-            { key: "label", label: group },
-            { key: "calls", label: "호출", align: "right" },
-            { key: "users", label: "사용자", align: "right" },
-            {
-              key: "success_rate",
-              label: "성공률",
-              align: "right",
-              format: (v) => `${Number(v).toFixed(1)}%`,
-            },
-            {
-              key: "average_latency_ms",
-              label: "평균 지연(ms)",
-              align: "right",
-            },
-            { key: "input_tokens", label: "Input Token", align: "right" },
-            { key: "output_tokens", label: "Output Token", align: "right" },
-            { key: "cost", label: "Cost", align: "right" },
-            { key: "fallbacks", label: "Fallback", align: "right" },
-          ]}
-        />
+        <Stack spacing={2}>
+          {/* Every one of these events is sent by the application; an empty
+              table and a table of "(not set)" are different problems that look
+              the same. */}
+          {aiSetupHint(
+            (q.data?.rows || []) as { label?: unknown }[],
+            group,
+          ) && (
+            <Alert severity="warning" role="status">
+              {aiSetupHint(
+                (q.data?.rows || []) as { label?: unknown }[],
+                group,
+              )}
+            </Alert>
+          )}
+          <DataTable
+            rows={q.data?.rows || []}
+            columns={[
+              { key: "label", label: group },
+              { key: "calls", label: "호출", align: "right" },
+              { key: "users", label: "사용자", align: "right" },
+              {
+                key: "success_rate",
+                label: "성공률",
+                align: "right",
+                format: (v) => `${Number(v).toFixed(1)}%`,
+              },
+              {
+                key: "average_latency_ms",
+                label: "평균 지연(ms)",
+                align: "right",
+              },
+              { key: "input_tokens", label: "Input Token", align: "right" },
+              { key: "output_tokens", label: "Output Token", align: "right" },
+              { key: "cost", label: "Cost", align: "right" },
+              { key: "fallbacks", label: "Fallback", align: "right" },
+            ]}
+          />
+        </Stack>
       )}
     </Stack>
   );
