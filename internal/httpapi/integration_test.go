@@ -2180,3 +2180,158 @@ func TestSiteAdministrationIsConfinedToTheOwningWorkspace(t *testing.T) {
 		}
 	}
 }
+
+// Instance administration — the settings that apply to every site, the network
+// ranges that decide what counts as internal traffic, and the user accounts —
+// sat behind the admin middleware, which means "at least workspace_admin". The
+// lowest administrative role could therefore reach all of it, and nothing bounded
+// the role it handed out.
+//
+// Measured before the fix, as a workspace_admin of one workspace: PATCH on
+// another user set their role to super_admin, PATCH on itself set its own role to
+// super_admin, and a network range that classifies every site's traffic was
+// deleted. super_admin satisfies every workspace check in the service, so one
+// request turned the smallest administrative role into the largest.
+//
+// Both halves are checked: that the escalation is refused, and that each role can
+// still do the administration that belongs to it. A permission fix that stops the
+// product working is not a fix.
+func TestRoleGrantsCannotExceedTheCallersOwnAuthority(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	user := func(email, role string) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx, `INSERT INTO users(email,display_name,password_hash,role,organization_name)
+			VALUES($1,$1,'hash',$2,'Test') ON CONFLICT(email) DO UPDATE SET role=excluded.role RETURNING id`, email, role).Scan(&id); err != nil {
+			t.Fatalf("create %s: %v", email, err)
+		}
+		t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE email=$1`, email) })
+		return id
+	}
+	session := func(id uuid.UUID, token string) string {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour') ON CONFLICT DO NOTHING`, id, auth.HashToken(token)); err != nil {
+			t.Fatalf("create a session: %v", err)
+		}
+		return token
+	}
+	call := func(token, method, path, body string) (int, string) {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: token})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+	roleOf := func(id uuid.UUID) string {
+		t.Helper()
+		var role string
+		if err := pool.QueryRow(ctx, `SELECT role FROM users WHERE id=$1`, id).Scan(&role); err != nil {
+			t.Fatalf("read a role: %v", err)
+		}
+		return role
+	}
+
+	// The instance settings are shared by every test in this package, so this
+	// writes back exactly what is already there: the point is who may write, not
+	// what is written.
+	var privacy []byte
+	if err := pool.QueryRow(ctx, `SELECT value FROM settings WHERE key='privacy'`).Scan(&privacy); err != nil {
+		t.Fatalf("read the privacy setting: %v", err)
+	}
+	privacyBody := fmt.Sprintf(`{"value":%s}`, privacy)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `UPDATE settings SET value=$1 WHERE key='privacy'`, privacy)
+	})
+
+	wsAdmin := user("grant-ws@test.local", "workspace_admin")
+	orgAdmin := user("grant-org@test.local", "organization_admin")
+	target := user("grant-target@test.local", "analyst")
+	wsToken := session(wsAdmin, "mom_sess_grant_ws")
+	orgToken := session(orgAdmin, "mom_sess_grant_org")
+	var homeWorkspace uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT workspace_id FROM sites WHERE id=$1`, f.siteID).Scan(&homeWorkspace); err != nil {
+		t.Fatalf("read the fixture workspace: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_workspace_roles(user_id,workspace_id,role) VALUES($1,$2,'workspace_admin') ON CONFLICT DO NOTHING`, wsAdmin, homeWorkspace); err != nil {
+		t.Fatalf("grant the workspace admin their workspace: %v", err)
+	}
+
+	promote := func(id uuid.UUID, role string) string {
+		return fmt.Sprintf(`{"display_name":"x","department":"","organization_name":"Test","role":%q}`, role)
+	}
+
+	t.Run("a workspace admin cannot reach instance administration", func(t *testing.T) {
+		for _, attempt := range []struct{ label, method, path, body string }{
+			{"promote another user", http.MethodPatch, "/api/v1/users/" + target.String(), promote(target, "super_admin")},
+			{"promote itself", http.MethodPatch, "/api/v1/users/" + wsAdmin.String(), promote(wsAdmin, "super_admin")},
+			{"create a super administrator", http.MethodPost, "/api/v1/users", `{"email":"smuggled@test.local","display_name":"x","role":"super_admin","password":"a-long-enough-password"}`},
+			{"change an instance setting", http.MethodPut, "/api/v1/settings/privacy", privacyBody},
+			{"add a network range", http.MethodPost, "/api/v1/networks", `{"name":"probe","cidr":"10.98.0.0/16"}`},
+		} {
+			if code, body := call(wsToken, attempt.method, attempt.path, attempt.body); code != http.StatusForbidden {
+				t.Errorf("a workspace_admin could %s: %d %s", attempt.label, code, truncateBody(body))
+			}
+		}
+		if role := roleOf(target); role != "analyst" {
+			t.Errorf("the refused requests changed a role anyway: %s is now %q", "grant-target", role)
+		}
+		if role := roleOf(wsAdmin); role != "workspace_admin" {
+			t.Errorf("a workspace_admin promoted itself to %q", role)
+		}
+		var smuggled int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE email='smuggled@test.local'`).Scan(&smuggled); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if smuggled > 0 {
+			t.Error("a refused request created the account anyway")
+			_, _ = pool.Exec(ctx, `DELETE FROM users WHERE email='smuggled@test.local'`)
+		}
+	})
+
+	t.Run("an organization admin administers up to its own authority", func(t *testing.T) {
+		if code, body := call(orgToken, http.MethodPatch, "/api/v1/users/"+target.String(), promote(target, "workspace_admin")); code != http.StatusOK {
+			t.Fatalf("an organization_admin cannot grant a role below its own: %d %s", code, truncateBody(body))
+		}
+		if role := roleOf(target); role != "workspace_admin" {
+			t.Fatalf("the grant answered 200 and the role is %q", role)
+		}
+		if code, _ := call(orgToken, http.MethodPatch, "/api/v1/users/"+target.String(), promote(target, "super_admin")); code != http.StatusForbidden {
+			t.Errorf("an organization_admin granted super_admin, which is above its own authority: %d", code)
+		}
+		if code, _ := call(orgToken, http.MethodPatch, "/api/v1/users/"+orgAdmin.String(), promote(orgAdmin, "super_admin")); code == http.StatusOK {
+			t.Error("an organization_admin raised its own role")
+		}
+		if role := roleOf(orgAdmin); role != "organization_admin" {
+			t.Errorf("the organization_admin is now %q", role)
+		}
+		// The administration that does belong to it still works.
+		if code, body := call(orgToken, http.MethodPut, "/api/v1/settings/privacy", privacyBody); code != http.StatusOK {
+			t.Errorf("an organization_admin cannot change an instance setting: %d %s", code, truncateBody(body))
+		}
+	})
+
+	t.Run("a super administrator keeps every grant but its own role", func(t *testing.T) {
+		if code, body := call(f.sessionCook, http.MethodPatch, "/api/v1/users/"+target.String(), promote(target, "super_admin")); code != http.StatusOK {
+			t.Errorf("a super_admin cannot grant super_admin: %d %s", code, truncateBody(body))
+		}
+		if role := roleOf(target); role != "super_admin" {
+			t.Errorf("the grant answered 200 and the role is %q", role)
+		}
+		var self uuid.UUID
+		if err := pool.QueryRow(ctx, `SELECT u.id FROM users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=$1`, auth.HashToken(f.sessionCook)).Scan(&self); err != nil {
+			t.Fatalf("find the fixture user: %v", err)
+		}
+		if code, _ := call(f.sessionCook, http.MethodPatch, "/api/v1/users/"+self.String(), promote(self, "viewer")); code == http.StatusOK {
+			t.Error("a super_admin demoted itself, which can leave a deployment with no administrator")
+		}
+		if role := roleOf(self); role != "super_admin" {
+			t.Errorf("the fixture administrator is now %q", role)
+		}
+	})
+}

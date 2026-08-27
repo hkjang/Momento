@@ -168,7 +168,16 @@ func ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: "momento_session", Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }
 
+var roleRank = map[string]int{"viewer": 1, "analyst": 2, "workspace_admin": 3, "organization_admin": 4, "super_admin": 5}
+
 func RoleAtLeast(actual, required string) bool {
-	rank := map[string]int{"viewer": 1, "analyst": 2, "workspace_admin": 3, "organization_admin": 4, "super_admin": 5}
-	return rank[actual] >= rank[required]
+	return roleRank[actual] >= roleRank[required]
+}
+
+// RoleAbove reports whether granting `role` would hand out more authority than
+// the caller holds. Nothing checked this: a workspace_admin, the lowest
+// administrative role, could set any user's role to super_admin — including their
+// own — and super_admin passes every workspace check there is.
+func RoleAbove(role, callerRole string) bool {
+	return roleRank[role] > roleRank[callerRole]
 }

@@ -784,6 +784,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_USER", "valid role and password of at least 12 characters are required")
 		return
 	}
+	// Creating an account is a way to grant a role, so it is bounded the same way
+	// as changing one.
+	if auth.RoleAbove(in.Role, p.Role) {
+		writeError(w, 403, "ROLE_ABOVE_CALLER", "you cannot create an account with more authority than your own")
+		return
+	}
 	hash, _ := auth.HashPassword(in.Password)
 	var id uuid.UUID
 	err := s.DB.QueryRow(r.Context(), `INSERT INTO users(email,display_name,department,organization_name,role,password_hash) VALUES(lower($1),$2,$3,$4,$5,$6) RETURNING id`, in.Email, in.DisplayName, in.Department, in.OrganizationName, in.Role, hash).Scan(&id)
@@ -822,6 +828,20 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	if id == p.ID && in.Active != nil && !*in.Active {
 		writeError(w, 400, "SELF_DISABLE", "you cannot disable your own account")
 		return
+	}
+	// Nothing bounded the role being granted. Measured: a workspace_admin set its
+	// own role to super_admin and the next request passed every workspace check in
+	// the service.
+	if auth.RoleAbove(in.Role, p.Role) {
+		writeError(w, 403, "ROLE_ABOVE_CALLER", "you cannot grant more authority than your own")
+		return
+	}
+	if id == p.ID {
+		var current string
+		if s.DB.QueryRow(r.Context(), `SELECT role FROM users WHERE id=$1`, id).Scan(&current) == nil && current != in.Role {
+			writeError(w, 400, "SELF_ROLE", "you cannot change your own role")
+			return
+		}
 	}
 	_, err = s.DB.Exec(r.Context(), `UPDATE users SET display_name=$2,department=$3,organization_name=$4,role=$5,active=coalesce($6,active),updated_at=now() WHERE id=$1`, id, in.DisplayName, in.Department, in.OrganizationName, in.Role, in.Active)
 	if err != nil {

@@ -93,13 +93,13 @@ func (s *Server) Handler() http.Handler {
 		api.Get("/api/v1/sites/{id}/tracking-code", s.trackingCode)
 		api.Get("/api/v1/sites/{siteID}/install-diagnostics", s.installDiagnostics)
 		api.Get("/api/v1/settings", s.admin(s.listSettings))
-		api.Put("/api/v1/settings/{key}", s.admin(s.putSetting))
+		api.Put("/api/v1/settings/{key}", s.orgAdmin(s.putSetting))
 		api.Get("/api/v1/networks", s.admin(s.listNetworks))
-		api.Post("/api/v1/networks", s.admin(s.createNetwork))
-		api.Delete("/api/v1/networks/{id}", s.admin(s.deleteNetwork))
+		api.Post("/api/v1/networks", s.orgAdmin(s.createNetwork))
+		api.Delete("/api/v1/networks/{id}", s.orgAdmin(s.deleteNetwork))
 		api.Get("/api/v1/users", s.admin(s.listUsers))
-		api.Post("/api/v1/users", s.admin(s.createUser))
-		api.Patch("/api/v1/users/{id}", s.admin(s.updateUser))
+		api.Post("/api/v1/users", s.orgAdmin(s.createUser))
+		api.Patch("/api/v1/users/{id}", s.orgAdmin(s.updateUser))
 		api.Get("/api/v1/audit", s.admin(s.listAudit))
 		api.Get("/api/v1/tracking-debugger", s.admin(s.trackingDebugger))
 		api.Post("/api/v1/privacy/delete", s.admin(s.deleteAnalyticsData))
@@ -225,6 +225,24 @@ func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r)
 	}
 }
+
+// orgAdmin guards the settings that belong to the whole deployment rather than to
+// one workspace: instance settings, the network ranges that decide what counts as
+// internal traffic, and the user accounts themselves. They sat behind admin, which
+// means "at least workspace_admin", so the lowest administrative role could change
+// the PII policy for every site, delete a network range that classifies every
+// site's traffic, and create or promote a user — including itself — to super_admin.
+func (s *Server) orgAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _ := auth.FromContext(r.Context())
+		if p.AuthType == "api_key" || !auth.RoleAtLeast(p.Role, "organization_admin") {
+			writeError(w, 403, "FORBIDDEN", "organization administrator permission required")
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *Server) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())

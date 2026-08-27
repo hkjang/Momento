@@ -90,6 +90,10 @@ const adminSections = [
   },
   {
     id: "settings",
+    // Instance-wide: it applies to every workspace, so it belongs to an
+    // organisation administrator. A workspace_admin used to see these and have
+    // its writes refused by the server.
+    orgOnly: true,
     label: "SSO · 일반",
     description: "Keycloak과 공통 보안 설정",
     group: "서비스 설정",
@@ -97,6 +101,10 @@ const adminSections = [
   },
   {
     id: "privacy",
+    // Instance-wide: it applies to every workspace, so it belongs to an
+    // organisation administrator. A workspace_admin used to see these and have
+    // its writes refused by the server.
+    orgOnly: true,
     label: "개인정보",
     description: "PII와 최소 수집 정책",
     group: "보안 · 데이터",
@@ -111,6 +119,10 @@ const adminSections = [
   },
   {
     id: "networks",
+    // Instance-wide: it applies to every workspace, so it belongs to an
+    // organisation administrator. A workspace_admin used to see these and have
+    // its writes refused by the server.
+    orgOnly: true,
     label: "네트워크 망",
     description: "CIDR 기반 사내망 분류",
     group: "보안 · 데이터",
@@ -118,6 +130,10 @@ const adminSections = [
   },
   {
     id: "users",
+    // Instance-wide: it applies to every workspace, so it belongs to an
+    // organisation administrator. A workspace_admin used to see these and have
+    // its writes refused by the server.
+    orgOnly: true,
     label: "사용자 · 권한",
     description: "RBAC와 Workspace 권한",
     group: "접근 제어",
@@ -157,12 +173,28 @@ export default function AdminPage() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const requested = params.get("section") || "overview";
-  const section = adminSections.some((item) => item.id === requested)
+  const orgAdmin =
+    user?.role === "organization_admin" || user?.role === "super_admin";
+  const visibleSections = adminSections.filter(
+    (item) => orgAdmin || !("orgOnly" in item && item.orgOnly),
+  );
+  const section = visibleSections.some((item) => item.id === requested)
     ? requested
     : "overview";
-  const active = adminSections.find((item) => item.id === section)!;
+  const active = visibleSections.find((item) => item.id === section)!;
   if (user?.role === "analyst" || user?.role === "viewer")
     return <Alert severity="warning">관리자 권한이 필요합니다.</Alert>;
+  // Reached by a link or a bookmark rather than the navigation.
+  if (
+    requested !== section &&
+    adminSections.some((item) => item.id === requested)
+  )
+    return (
+      <Alert severity="warning">
+        이 설정은 배포 전체에 적용되므로 조직 관리자(organization_admin) 이상만
+        변경할 수 있습니다. Workspace 관리자는 사이트와 보존 정책을 관리합니다.
+      </Alert>
+    );
   const selectSection = (id: string) => {
     if (id === "overview") setParams({});
     else setParams({ section: id });
@@ -201,7 +233,7 @@ export default function AdminPage() {
         onChange={(event) => selectSection(event.target.value)}
         sx={{ display: { xs: "flex", md: "none" } }}
       >
-        {adminSections.map((item) => (
+        {visibleSections.map((item) => (
           <MenuItem key={item.id} value={item.id}>
             {item.label} · {item.description}
           </MenuItem>
@@ -229,7 +261,7 @@ export default function AdminPage() {
             overflowY: "auto",
           }}
         >
-          {[...new Set(adminSections.map((item) => item.group))].map(
+          {[...new Set(visibleSections.map((item) => item.group))].map(
             (group) => (
               <Box key={group} sx={{ mb: 1.2 }}>
                 <Typography
@@ -245,7 +277,7 @@ export default function AdminPage() {
                   {group}
                 </Typography>
                 <List disablePadding>
-                  {adminSections
+                  {visibleSections
                     .filter((item) => item.group === group)
                     .map((item) => (
                       <ListItemButton
