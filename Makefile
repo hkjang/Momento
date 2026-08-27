@@ -1,6 +1,9 @@
 .PHONY: test build dev docker release-image
 
-VERSION ?= dev
+# internal/version holds the one declaration of what this tree is; a build that
+# names no version reports that rather than a placeholder.
+DECLARED_VERSION := $(shell sed -n 's/^[[:space:]]*Version[[:space:]]*=[[:space:]]*"\(.*\)"$$/\1/p' internal/version/version.go)
+VERSION ?= $(DECLARED_VERSION)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 RELEASE_VERSION := $(patsubst v%,%,$(VERSION))

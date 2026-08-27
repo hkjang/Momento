@@ -57,7 +57,12 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
-import { consoleVersion, shortCommit, useRuntimeVersion } from "../version";
+import {
+  buildStamp,
+  consoleVersion,
+  shortCommit,
+  useRuntimeVersion,
+} from "../version";
 
 const drawerWidth = 272;
 
@@ -100,7 +105,8 @@ const navGroups: NavGroup[] = [
         label: "방문자 인사이트",
         description: "전기간 대비 요약과 다음 행동",
         icon: <InsightsOutlined />,
-        keywords: "visitor insight audience channel landing bounce 방문자 인사이트 채널 이탈",
+        keywords:
+          "visitor insight audience channel landing bounce 방문자 인사이트 채널 이탈",
       },
       {
         to: "/workspace",
@@ -1106,53 +1112,56 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </MenuItem>
               )}
               <Divider />
-              <Tooltip
-                placement="left"
-                title={
-                  <Stack spacing={0.25}>
-                    <span>
-                      서버 {deployedVersion ? `v${deployedVersion}` : runtimeVersion.isError ? "확인 실패" : "확인 중"}
-                    </span>
-                    <span>콘솔 v{consoleVersion}</span>
-                    {runtimeVersion.data && (
-                      <span>커밋 {shortCommit(runtimeVersion.data.commit)}</span>
-                    )}
-                  </Stack>
-                }
-              >
+              {/* The service version is what an operator reports when asking for
+                  help, so it is stated outright rather than hidden in a tooltip:
+                  the running version, the build behind it, and — only when they
+                  actually differ — the console's own version. */}
+              <Box sx={{ px: 2, py: 1.2 }}>
                 <Stack
                   direction="row"
                   justifyContent="space-between"
                   alignItems="center"
-                  sx={{ px: 2, py: 1 }}
+                  gap={1}
                 >
-                  <Box>
-                    <Typography variant="caption" color="text.secondary">
-                      Momento {deployedVersion ? "서버" : "콘솔"}
-                    </Typography>
-                    {versionMismatch && (
-                      <Typography
-                        display="block"
-                        variant="caption"
-                        color="warning.main"
-                        fontSize={10}
-                      >
-                        콘솔 v{consoleVersion}와 버전이 다릅니다
-                      </Typography>
-                    )}
-                  </Box>
+                  <Typography variant="caption" color="text.secondary">
+                    서비스 버전
+                  </Typography>
                   <Chip
                     size="small"
                     color={versionMismatch ? "warning" : "default"}
                     label={
                       deployedVersion
                         ? `v${deployedVersion}`
-                        : `Console v${consoleVersion}`
+                        : runtimeVersion.isError
+                          ? "확인 실패"
+                          : "확인 중"
                     }
                     sx={{ height: 22, fontSize: 10 }}
                   />
                 </Stack>
-              </Tooltip>
+                <Typography
+                  display="block"
+                  variant="caption"
+                  color="text.secondary"
+                  fontSize={10}
+                  mt={0.3}
+                >
+                  빌드 {shortCommit(runtimeVersion.data?.commit)}
+                  {buildStamp(runtimeVersion.data)
+                    ? ` · ${buildStamp(runtimeVersion.data)}`
+                    : ""}
+                </Typography>
+                {versionMismatch && (
+                  <Typography
+                    display="block"
+                    variant="caption"
+                    color="warning.main"
+                    fontSize={10}
+                  >
+                    콘솔 v{consoleVersion} · 새로고침이 필요합니다
+                  </Typography>
+                )}
+              </Box>
               <MenuItem
                 sx={{ color: "error.main" }}
                 onClick={() => void logout()}

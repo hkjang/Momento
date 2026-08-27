@@ -17,8 +17,10 @@ services:
   momento:
     build:
       context: .
+      # No VERSION argument: the image reports the version declared in the source
+      # tree it was built from, which is what the console shows the operator.
       args:
-        VERSION: dev
+        COMMIT: ${MOMENTO_COMMIT:-unknown}
     image: momento:dev
     depends_on:
       postgres:

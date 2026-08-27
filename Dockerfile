@@ -20,10 +20,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-ARG VERSION=dev
+# An empty VERSION leaves the version declared in internal/version alone, so an
+# image built straight from the source tree still reports the version it was built
+# from. It used to default to "dev", and the profile menu showed that to the
+# operator as the service version.
+ARG VERSION=
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X github.com/hkjang/Momento/internal/version.Version=${VERSION} -X github.com/hkjang/Momento/internal/version.Commit=${COMMIT} -X github.com/hkjang/Momento/internal/version.BuildTime=${BUILD_TIME}" -o /out/momento ./cmd/momento
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w ${VERSION:+-X github.com/hkjang/Momento/internal/version.Version=${VERSION}} -X github.com/hkjang/Momento/internal/version.Commit=${COMMIT} -X github.com/hkjang/Momento/internal/version.BuildTime=${BUILD_TIME}" -o /out/momento ./cmd/momento
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/* && groupadd --system momento && useradd --system --gid momento --home-dir /app momento
