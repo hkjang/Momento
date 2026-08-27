@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hkjang/Momento/internal/service"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Deletion is a compliance promise, so it has to be checked rather than trusted:
@@ -657,4 +658,160 @@ func laterThan(t *testing.T, newer, older any) bool {
 		return parsed
 	}
 	return parse(newer).After(parse(older))
+}
+
+// Deleting a site is one DELETE FROM sites and a cascade, and it cannot be undone.
+// Nothing checked what the cascade reaches. A table added later without the
+// foreign key would keep that site's rows after the site is gone, and because
+// every read path resolves a site first, nobody could ever see them: the operator
+// would be told the data was deleted, and it would still be there.
+//
+// The schema is the exact answer to what cascades, so it is what this asks.
+func TestEverySiteScopedTableCascadesFromSites(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, `
+		SELECT c.table_name,
+		       coalesce((SELECT rc.delete_rule
+		                 FROM information_schema.referential_constraints rc
+		                 JOIN information_schema.key_column_usage k ON k.constraint_name=rc.constraint_name
+		                 WHERE k.table_name=c.table_name AND k.column_name='site_id'
+		                 LIMIT 1), 'NO FOREIGN KEY')
+		FROM information_schema.columns c
+		JOIN information_schema.tables t ON t.table_name=c.table_name AND t.table_schema=c.table_schema
+		WHERE c.table_schema='public' AND c.column_name='site_id' AND t.table_type='BASE TABLE'
+		ORDER BY c.table_name`)
+	if err != nil {
+		t.Fatalf("read the schema: %v", err)
+	}
+	defer rows.Close()
+	checked := 0
+	for rows.Next() {
+		var table, rule string
+		if err := rows.Scan(&table, &rule); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		checked++
+		if rule != "CASCADE" {
+			t.Errorf("%s holds a site_id with delete rule %q: deleting a site would leave its rows behind, and no read path can reach a row whose site no longer exists",
+				table, rule)
+		}
+	}
+	if checked < 30 {
+		t.Fatalf("found only %d site-scoped tables, so this is no longer looking at the schema it thinks it is", checked)
+	}
+	t.Logf("%d site-scoped tables all cascade from sites", checked)
+}
+
+// And the deletion itself: that it refuses without exact confirmation, removes
+// every trace of the site it names, leaves other sites alone, and still records
+// that it happened. The audit entry is the only thing left afterwards, which is
+// what makes it worth pinning.
+func TestDeletingASiteRemovesItsDataAndNothingElse(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	var otherID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM sites WHERE site_key=$1`, f.otherKey).Scan(&otherID); err != nil {
+		t.Fatalf("find the other site: %v", err)
+	}
+	// A marker in the other site, so "nothing else was removed" is measured rather
+	// than assumed from a table that happened to be empty.
+	if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,visitor_id,session_id,environment)
+		VALUES(gen_random_uuid(),$1,'page_view',now(),'neighbour-visitor','neighbour-session','prd')`, otherID); err != nil {
+		t.Fatalf("seed the other site: %v", err)
+	}
+
+	tables := siteScopedTables(t, pool)
+	populated := 0
+	for _, table := range tables {
+		var n int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE site_id=$1`, f.siteID).Scan(&n); err == nil && n > 0 {
+			populated++
+		}
+	}
+	if populated < 10 {
+		t.Fatalf("the fixture fills only %d site-scoped tables, too few for this to mean anything", populated)
+	}
+
+	// Irreversible, so it has to refuse anything but an exact confirmation.
+	for _, confirm := range []string{"", "wrong", f.siteKey + "x"} {
+		request := httptest.NewRequest(http.MethodDelete, "/api/v1/sites/"+f.siteID.String()+"?confirm="+confirm, nil)
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("a delete confirmed with %q answered %d, so an irreversible operation runs on an inexact confirmation", confirm, recorder.Code)
+		}
+	}
+	var stillThere int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sites WHERE id=$1`, f.siteID).Scan(&stillThere); err != nil {
+		t.Fatalf("count sites: %v", err)
+	}
+	if stillThere != 1 {
+		t.Fatal("a refused delete removed the site anyway")
+	}
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/sites/"+f.siteID.String()+"?confirm="+f.siteKey, nil)
+	request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete answered %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	survivors := []string{}
+	for _, table := range tables {
+		var n int64
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+table+` WHERE site_id=$1`, f.siteID).Scan(&n); err != nil {
+			continue
+		}
+		if n > 0 {
+			survivors = append(survivors, fmt.Sprintf("%s=%d", table, n))
+		}
+	}
+	if len(survivors) > 0 {
+		t.Errorf("the site is gone but its data is not, and no read path can reach it: %s", strings.Join(survivors, ", "))
+	}
+
+	var neighbour int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND visitor_id='neighbour-visitor'`, otherID).Scan(&neighbour); err != nil {
+		t.Fatalf("count the other site: %v", err)
+	}
+	if neighbour != 1 {
+		t.Fatalf("deleting one site took %d of the other site's events with it", 1-neighbour)
+	}
+
+	// The audit entry outlives the site on purpose: after an irreversible deletion
+	// it is the only record that it happened, and who did it.
+	var audited int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM audit_logs WHERE action='site.delete' AND resource_id=$1`, f.siteID.String()).Scan(&audited); err != nil {
+		t.Fatalf("read the audit log: %v", err)
+	}
+	if audited == 0 {
+		t.Error("the site was deleted and nothing recorded that it happened")
+	}
+}
+
+func siteScopedTables(t *testing.T, pool *pgxpool.Pool) []string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT c.table_name FROM information_schema.columns c
+		JOIN information_schema.tables t ON t.table_name=c.table_name AND t.table_schema=c.table_schema
+		WHERE c.table_schema='public' AND c.column_name='site_id' AND t.table_type='BASE TABLE'
+		ORDER BY c.table_name`)
+	if err != nil {
+		t.Fatalf("list site-scoped tables: %v", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, name)
+	}
+	return out
 }

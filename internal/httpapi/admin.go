@@ -291,9 +291,13 @@ func normalizeDomains(in []string) []string {
 }
 func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
+		return
+	}
+	if err != nil {
+		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	var in struct {
@@ -355,9 +359,13 @@ func (s *Server) updateSite(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
+		return
+	}
+	if err != nil {
+		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	var key string
@@ -378,9 +386,13 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) rotateSiteKey(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
+		return
+	}
+	if err != nil {
+		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_track_", 24)
@@ -394,9 +406,13 @@ func (s *Server) rotateSiteKey(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) rotateServerKey(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
+		return
+	}
+	if err != nil {
+		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
 	plain, hash, prefix, _ := auth.NewToken("mom_server_", 32)
@@ -409,14 +425,13 @@ func (s *Server) rotateServerKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"server_api_key": plain, "recoverable": s.Secrets.Enabled(), "message": "The previous server key is invalid. " + keyStorageMessage(s.Secrets.Enabled())})
 }
 func (s *Server) trackingCode(w http.ResponseWriter, r *http.Request) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
 		return
 	}
 	var siteID string
-	p, _ := auth.FromContext(r.Context())
-	if err := s.DB.QueryRow(r.Context(), `SELECT s.site_key FROM sites s WHERE s.id=$1 AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, id, p.Role, p.ID).Scan(&siteID); err != nil {
+	if err != nil || s.DB.QueryRow(r.Context(), `SELECT site_key FROM sites WHERE id=$1`, id).Scan(&siteID) != nil {
 		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}

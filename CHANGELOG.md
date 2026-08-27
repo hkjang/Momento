@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.33.0
+
+- **A workspace_admin could rename, rotate the keys of, and delete a site in another workspace.** The administrative routes on `/api/v1/sites/{id}` take the site's uuid from the path; their middleware checks the caller is at least a workspace_admin and never checks which workspace, and four of the six handlers parsed the uuid and acted on it without checking either. Measured as an admin whose only membership was one workspace: PATCH renamed a neighbouring site, both key rotations succeeded, and DELETE returned 204 and took every event, session and aggregate with it. Rotating a key stops that site collecting until someone redeploys its tracker; the deletion cannot be undone. All six now resolve the site through one helper that applies the same workspace rule the report paths use, and the owner keeps full control of their own site — checked in both directions, because a fix that locks the owner out is not a fix.
+- Two of the six handlers had the membership predicate written inline and were correct, which is how this survived: the routes looked guarded because some of them were. There is one place to call now, so it is no longer a per-handler decision.
+- Every table with a `site_id` is checked to cascade from `sites`. Deleting a site is one statement and a cascade, and nothing verified what it reaches — a table added later without the foreign key would keep that site's rows forever, and since every read path resolves a site first, nobody could ever see them. All 37 cascade today; the guard names the table when one does not.
+- Site deletion is now covered end to end: it refuses anything but an exact confirmation and does not delete on a refusal, removes every trace across the 13 tables the fixture fills, leaves a neighbouring site's data untouched, and still records the deletion in the audit log — the only thing left afterwards.
+
 ## v0.32.9
 
 - Applied last release's lesson to the other guards that read the source: each one was measured for what it actually inspects, not what it appears to. All three were covering a fraction of their subject.

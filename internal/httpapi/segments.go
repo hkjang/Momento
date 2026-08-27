@@ -43,17 +43,17 @@ type dimensionResolver struct {
 var propertyKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
 
 var builtinDimensionSQL = map[string]string{
-	"event.name":        "%s.event_name",
-	"page.url":          "%s.page_url",
-	"device.type":       "%s.device_type",
-	"browser":           "%s.browser",
-	"os":                "%s.os",
-	"country":           "%s.country",
-	"traffic.source":    "%s.source",
-	"traffic.medium":    "%s.medium",
-	"traffic.campaign":  "%s.campaign",
-	"traffic.class":     "%s.traffic_class",
-	"network":           "%s.network_name",
+	"event.name":       "%s.event_name",
+	"page.url":         "%s.page_url",
+	"device.type":      "%s.device_type",
+	"browser":          "%s.browser",
+	"os":               "%s.os",
+	"country":          "%s.country",
+	"traffic.source":   "%s.source",
+	"traffic.medium":   "%s.medium",
+	"traffic.campaign": "%s.campaign",
+	"traffic.class":    "%s.traffic_class",
+	"network":          "%s.network_name",
 	// Whether the event came from a network an administrator marked internal. The
 	// collector has always recorded this and nothing could read it, so "exclude
 	// our own staff" was expressible only by naming every internal network.

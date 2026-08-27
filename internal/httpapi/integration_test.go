@@ -2069,3 +2069,114 @@ func TestCollectorClassifiesAndLimitsTraffic(t *testing.T) {
 		}
 	})
 }
+
+// The administrative routes on /api/v1/sites/{id} take the site's uuid from the
+// path. Their middleware checks that the caller is at least a workspace_admin; it
+// does not check which workspace, and four of the six handlers never checked
+// either — they parsed the uuid and acted on it.
+//
+// Measured before the fix, as a workspace_admin whose only membership was one
+// workspace: renaming, rotating the tracking key, rotating the server key and
+// deleting a site in another workspace all succeeded. Rotating a key stops that
+// site collecting anything until someone redeploys its tracker; the delete takes
+// every event, session and aggregate with it and cannot be undone. On a shared
+// internal deployment, keeping one team out of another team's site is the whole
+// point of workspaces.
+//
+// Two handlers had the membership predicate written inline and were correct,
+// which is how this survived: the routes looked guarded because some of them
+// were. Both directions are checked here, because a fix that locks the owner out
+// of their own site is not a fix.
+func TestSiteAdministrationIsConfinedToTheOwningWorkspace(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	var otherWorkspace, outsideSite uuid.UUID
+	if err := pool.QueryRow(ctx, `WITH org AS (
+			INSERT INTO organizations(name,slug) VALUES('이웃 조직','neighbour-org')
+			ON CONFLICT(slug) DO UPDATE SET name=excluded.name RETURNING id
+		), ws AS (INSERT INTO workspaces(organization_id,name) SELECT id,'이웃 Workspace' FROM org RETURNING id)
+		SELECT id FROM ws`).Scan(&otherWorkspace); err != nil {
+		t.Fatalf("create the neighbouring workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM organizations WHERE slug='neighbour-org'`)
+	})
+	if err := pool.QueryRow(ctx, `INSERT INTO sites(workspace_id,site_key,name,service_name,tracking_key_hash,tracking_key_prefix,server_api_key_hash,server_api_key_prefix,allowed_domains,timezone)
+		VALUES($1,'SITE_NEIGHBOUR','이웃','이웃','h9','mom_track_q','s9','mom_server_q',ARRAY['portal.internal'],'Asia/Seoul') RETURNING id`, otherWorkspace).Scan(&outsideSite); err != nil {
+		t.Fatalf("create the neighbouring site: %v", err)
+	}
+
+	var adminID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO users(email,display_name,password_hash,role,organization_name)
+		VALUES('wsadmin@test.local','WS Admin','hash','workspace_admin','Test')
+		ON CONFLICT(email) DO UPDATE SET role='workspace_admin' RETURNING id`).Scan(&adminID); err != nil {
+		t.Fatalf("create the workspace admin: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE email='wsadmin@test.local'`)
+	})
+	var homeWorkspace uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT workspace_id FROM sites WHERE id=$1`, f.siteID).Scan(&homeWorkspace); err != nil {
+		t.Fatalf("read the fixture workspace: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_workspace_roles(user_id,workspace_id,role) VALUES($1,$2,'workspace_admin') ON CONFLICT DO NOTHING`, adminID, homeWorkspace); err != nil {
+		t.Fatalf("grant the admin their workspace: %v", err)
+	}
+	token := "mom_sess_wsadmin"
+	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour') ON CONFLICT DO NOTHING`, adminID, auth.HashToken(token)); err != nil {
+		t.Fatalf("create the admin session: %v", err)
+	}
+
+	call := func(method, path, body string) (int, string) {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		request.AddCookie(&http.Cookie{Name: "momento_session", Value: token})
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	neighbour := outsideSite.String()
+	valid := `{"timezone":"UTC","session_timeout_minutes":45,"engagement_threshold_seconds":15,"name":"hijacked"}`
+	for _, attempt := range []struct{ label, method, path, body string }{
+		{"read the reports", http.MethodGet, "/api/v1/sites/SITE_NEIGHBOUR/overview", ""},
+		{"read the tracking code", http.MethodGet, "/api/v1/sites/" + neighbour + "/tracking-code", ""},
+		{"reveal the collection keys", http.MethodPost, "/api/v1/sites/" + neighbour + "/reveal-keys", ""},
+		{"change the settings", http.MethodPatch, "/api/v1/sites/" + neighbour, valid},
+		{"rotate the tracking key", http.MethodPost, "/api/v1/sites/" + neighbour + "/rotate-key", ""},
+		{"rotate the server key", http.MethodPost, "/api/v1/sites/" + neighbour + "/rotate-server-key", ""},
+		{"delete the site", http.MethodDelete, "/api/v1/sites/" + neighbour + "?confirm=SITE_NEIGHBOUR", ""},
+	} {
+		code, body := call(attempt.method, attempt.path, attempt.body)
+		if code < 400 {
+			t.Errorf("a workspace_admin of another workspace could %s: %d %s", attempt.label, code, truncateBody(body))
+		}
+	}
+	// Refusing is not enough if the work happened anyway.
+	var name, prefix string
+	if err := pool.QueryRow(ctx, `SELECT name,tracking_key_prefix FROM sites WHERE id=$1`, outsideSite).Scan(&name, &prefix); err != nil {
+		t.Fatalf("the neighbouring site is gone after refused requests: %v", err)
+	}
+	if name != "이웃" || prefix != "mom_track_q" {
+		t.Errorf("the refused requests changed the neighbouring site anyway: name=%q tracking_key_prefix=%q", name, prefix)
+	}
+
+	// And the same admin keeps full control of their own site.
+	own := f.siteID.String()
+	for _, allowed := range []struct{ label, method, path, body string }{
+		{"read the reports", http.MethodGet, "/api/v1/sites/" + f.siteKey + "/overview", ""},
+		{"read the tracking code", http.MethodGet, "/api/v1/sites/" + own + "/tracking-code", ""},
+		{"reveal the collection keys", http.MethodPost, "/api/v1/sites/" + own + "/reveal-keys", ""},
+		{"change the settings", http.MethodPatch, "/api/v1/sites/" + own, `{"timezone":"Asia/Seoul","session_timeout_minutes":30,"engagement_threshold_seconds":10,"name":"포털"}`},
+		{"rotate the tracking key", http.MethodPost, "/api/v1/sites/" + own + "/rotate-key", ""},
+		{"rotate the server key", http.MethodPost, "/api/v1/sites/" + own + "/rotate-server-key", ""},
+	} {
+		if code, body := call(allowed.method, allowed.path, allowed.body); code >= 400 {
+			t.Errorf("a workspace_admin cannot %s on their own site: %d %s", allowed.label, code, truncateBody(body))
+		}
+	}
+}

@@ -178,6 +178,33 @@ func (s *Server) resolveSite(r *http.Request, param string) (uuid.UUID, error) {
 	err := s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.site_key=$1 AND s.active AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, key, p.Role, p.ID).Scan(&id)
 	return id, err
 }
+
+// resolveSiteByID resolves a site addressed by its uuid and applies the same
+// workspace membership rule as resolveSite.
+//
+// The administrative routes on /api/v1/sites/{id} parsed the uuid straight from
+// the path and never applied it. Their middleware checks that the caller is at
+// least a workspace_admin; it does not check which workspace. Measured: a
+// workspace_admin whose only membership was one workspace could rename, rotate
+// the tracking key of, rotate the server key of, and delete a site in another —
+// rotating a key stops that site collecting anything until someone redeploys its
+// tracker, and the delete cannot be undone. Two handlers had the predicate
+// inline and were right; four did not. Having one place to call is what stops
+// that from being a per-handler decision.
+//
+// Unlike resolveSite this does not require the site to be active, because an
+// inactive site still has to be manageable by the people who own it.
+func (s *Server) resolveSiteByID(r *http.Request, param string) (uuid.UUID, bool, error) {
+	id, err := uuid.Parse(chi.URLParam(r, param))
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	p, _ := auth.FromContext(r.Context())
+	var out uuid.UUID
+	err = s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.id=$1 AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, id, p.Role, p.ID).Scan(&out)
+	return out, true, err
+}
+
 func (s *Server) resolveSiteKey(ctx context.Context, key string) (uuid.UUID, error) {
 	p, _ := auth.FromContext(ctx)
 	var id uuid.UUID

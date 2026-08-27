@@ -131,14 +131,14 @@ func (s *Server) revealMyKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) revealSiteKeys(w http.ResponseWriter, r *http.Request) {
 	preventCaching(w)
 	p, _ := auth.FromContext(r.Context())
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
+	id, parsed, err := s.resolveSiteByID(r, "id")
+	if !parsed {
 		writeError(w, 400, "INVALID_ID", "invalid site id")
 		return
 	}
 	var siteKey string
 	var tracking, server *string
-	if s.DB.QueryRow(r.Context(), `SELECT s.site_key,s.tracking_key_secret,s.server_api_key_secret FROM sites s WHERE s.id=$1 AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, id, p.Role, p.ID).Scan(&siteKey, &tracking, &server) != nil {
+	if err != nil || s.DB.QueryRow(r.Context(), `SELECT site_key,tracking_key_secret,server_api_key_secret FROM sites WHERE id=$1`, id).Scan(&siteKey, &tracking, &server) != nil {
 		writeError(w, 404, "NOT_FOUND", "site not found")
 		return
 	}
