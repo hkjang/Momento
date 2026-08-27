@@ -68,7 +68,20 @@ func seedScale(t *testing.T, f fixture) {
 	if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,event_name,event_timestamp,received_at,visitor_id,session_id,user_id,page_url,device_type,browser,os,properties,is_conversion)
 		SELECT gen_random_uuid(),$1,'prd',
 			name.value,
-			now() - ((i % 5184000) * interval '1 second'),
+			-- One event per second from now backwards put every one of these fifty
+			-- thousand events inside the last fourteen hours, so the thirty and
+			-- sixty day ranges the probes below ask for excluded nothing, the
+			-- weekly cohort had one bucket instead of six, and every
+			-- previous-period comparison read an empty period. i never reaches the
+			-- modulus, so the expression that was meant to spread them over sixty
+			-- days did nothing at all.
+			--
+			-- The day comes from the session, and 12000 sessions divide evenly by
+			-- 60 days, so a session's events all land on one day; the minute comes
+			-- from how far through its session the event is, so a session runs for
+			-- about as many minutes as it has events. Visitors recur across days
+			-- because 4000 does not divide 60 evenly.
+			now() - ((i % 60) * interval '1 day') - (((i / 12000) % 1440) * interval '1 minute'),
 			now(),
 			'scale-v-' || (i % 4000),
 			'scale-s-' || (i % 12000),
