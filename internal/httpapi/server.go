@@ -22,6 +22,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
@@ -60,6 +61,14 @@ func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger, secrets *secret.Ciphe
 
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
+	// Nothing was compressed. The console is about 1.5MB of JavaScript and the
+	// analytical answers are JSON of a few hundred kilobytes, all of it sent whole
+	// down a corporate network to a browser that had been asking for gzip since
+	// the first request. Level 5 is the balance point: the reports gzip to about a
+	// tenth of their size, and the CPU cost is far below the time saved on the
+	// wire. Only compressible types are touched, and a client that does not ask
+	// for an encoding still gets the response uncompressed.
+	r.Use(middleware.Compress(5))
 	r.Use(s.recoverer, s.requestLog, s.securityHeaders)
 	r.Get("/health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/health/ready", s.ready)

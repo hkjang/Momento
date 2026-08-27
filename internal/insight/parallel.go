@@ -10,9 +10,12 @@ import (
 // would let a couple of concurrent readers exhaust the connection pool. The steps
 // therefore run concurrently with a small fixed ceiling.
 
-// QueryConcurrency is how many reads of one report may be in flight at once. The
-// pool holds twenty connections, so this leaves room for other requests.
-const QueryConcurrency = 4
+// QueryConcurrency is how many reads of one report may be in flight at once. It
+// is bounded by the connection pool, not by the database's capacity to answer:
+// the pool holds database.PoolSize connections, and this leaves room for other
+// readers while letting a report finish in about the time of its slowest read
+// rather than a quarter of the sum of all of them.
+const QueryConcurrency = 8
 
 // RunParallel executes every step with at most limit running concurrently. It
 // returns the first error and cancels the remaining steps, because a partial report

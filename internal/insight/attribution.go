@@ -194,63 +194,81 @@ func (rep Reporter) Attribution(ctx context.Context, query AttributionQuery) (At
 		report.HalfLifeDays = query.HalfLifeDays
 	}
 	args := []any{query.SiteID, query.Environment, query.From, query.To, query.LookbackDays, query.TouchSites}
-	if err := rep.DB.QueryRow(ctx, `SELECT count(*) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4 AND is_conversion`,
-		query.SiteID, query.Environment, query.From, query.To).Scan(&report.TotalConversions); err != nil {
+
+	// Three reads of the same period, and they used to run one after another: the
+	// conversion total, the credited channels, and the path summary — the last two
+	// each building the whole touchpoint path from scratch. The total was read
+	// first only so a site with no conversions could skip the rest, which every
+	// site that anyone opens this screen for pays for. They now run together and
+	// the early return is decided from the results; an empty site answers no
+	// slower than before, and a real one waits for the longest read instead of the
+	// sum of all three.
+	type creditRow struct {
+		source, medium                              string
+		touchSite                                   uuid.UUID
+		creditedConversions                         float64
+		creditedEvents, creditedUsers, touchedConvs int64
+	}
+	credited := map[string]*AttributionChannel{}
+	sites := map[uuid.UUID]*AttributionSite{}
+	var creditRows []creditRow
+	var attributedConversions int64
+	var averageTouches *float64
+	err := RunParallel(ctx, 3,
+		func(stepCtx context.Context) error {
+			return rep.DB.QueryRow(stepCtx, `SELECT count(*) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4 AND is_conversion`,
+				query.SiteID, query.Environment, query.From, query.To).Scan(&report.TotalConversions)
+		},
+		func(stepCtx context.Context) error {
+			rows, err := rep.DB.Query(stepCtx, attributionPathCTE+`
+				SELECT source,medium,touch_site,sum(weight),count(DISTINCT event_id) FILTER(WHERE weight>0),count(DISTINCT entity_id) FILTER(WHERE weight>0),count(DISTINCT event_id)
+				FROM (SELECT p.event_id,p.entity_id,p.source,p.medium,p.touch_site,coalesce(`+weight+`,0) weight FROM path p) weighted
+				GROUP BY 1,2,3`, args...)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var row creditRow
+				if rows.Scan(&row.source, &row.medium, &row.touchSite, &row.creditedConversions, &row.creditedEvents, &row.creditedUsers, &row.touchedConvs) != nil {
+					continue
+				}
+				creditRows = append(creditRows, row)
+			}
+			return rows.Err()
+		},
+		func(stepCtx context.Context) error {
+			return rep.DB.QueryRow(stepCtx, attributionPathCTE+`
+				SELECT count(DISTINCT event_id),avg(touches) FROM (SELECT DISTINCT event_id,touches FROM path) distinct_paths`,
+				args...).Scan(&attributedConversions, &averageTouches)
+		})
+	if err != nil {
 		return report, err
 	}
 	if report.TotalConversions == 0 {
 		return report, nil
 	}
-
-	credited := map[string]*AttributionChannel{}
-	sites := map[uuid.UUID]*AttributionSite{}
-	rows, err := rep.DB.Query(ctx, attributionPathCTE+`
-		SELECT source,medium,touch_site,sum(weight),count(DISTINCT event_id) FILTER(WHERE weight>0),count(DISTINCT entity_id) FILTER(WHERE weight>0),count(DISTINCT event_id)
-		FROM (SELECT p.event_id,p.entity_id,p.source,p.medium,p.touch_site,coalesce(`+weight+`,0) weight FROM path p) weighted
-		GROUP BY 1,2,3`, args...)
-	if err != nil {
-		return report, err
-	}
-	for rows.Next() {
-		var source, medium string
-		var touchSite uuid.UUID
-		var creditedConversions float64
-		var creditedEvents, creditedUsers, touchedConversions int64
-		if rows.Scan(&source, &medium, &touchSite, &creditedConversions, &creditedEvents, &creditedUsers, &touchedConversions) != nil {
-			continue
-		}
-		channel := ClassifyChannel(source, medium, false, false)
+	for _, row := range creditRows {
+		channel := ClassifyChannel(row.source, row.medium, false, false)
 		target, ok := credited[channel]
 		if !ok {
 			target = &AttributionChannel{Channel: channel}
 			credited[channel] = target
 		}
-		target.CreditedConversions += creditedConversions
-		target.CreditedUsers += creditedUsers
-		target.TouchedConversions += touchedConversions
-		target.AssistedConversions += touchedConversions
-		report.Attributed += creditedConversions
-		site, ok := sites[touchSite]
+		target.CreditedConversions += row.creditedConversions
+		target.CreditedUsers += row.creditedUsers
+		target.TouchedConversions += row.touchedConvs
+		target.AssistedConversions += row.touchedConvs
+		report.Attributed += row.creditedConversions
+		site, ok := sites[row.touchSite]
 		if !ok {
-			site = &AttributionSite{IsConversionSite: touchSite == query.SiteID}
-			sites[touchSite] = site
+			site = &AttributionSite{IsConversionSite: row.touchSite == query.SiteID}
+			sites[row.touchSite] = site
 		}
-		site.CreditedConversions += creditedConversions
-		if touchSite != query.SiteID {
-			report.CrossSiteCredit += creditedConversions
+		site.CreditedConversions += row.creditedConversions
+		if row.touchSite != query.SiteID {
+			report.CrossSiteCredit += row.creditedConversions
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return report, err
-	}
-
-	var attributedConversions int64
-	var averageTouches *float64
-	if err := rep.DB.QueryRow(ctx, attributionPathCTE+`
-		SELECT count(DISTINCT event_id),avg(touches) FROM (SELECT DISTINCT event_id,touches FROM path) distinct_paths`,
-		args...).Scan(&attributedConversions, &averageTouches); err != nil {
-		return report, err
 	}
 	if averageTouches != nil {
 		report.AveragePathTouch = *averageTouches

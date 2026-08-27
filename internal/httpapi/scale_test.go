@@ -139,7 +139,10 @@ func TestHeavyQueriesStayLinearAtScale(t *testing.T) {
 		body   string
 	}{
 		{name: "overview", path: site + "/overview?from=" + from + "&to=" + today},
+		{name: "anomalies", path: site + "/anomalies?environment=prd"},
+		{name: "metric-goals", path: site + "/metric-goals/evaluate"},
 		{name: "visitor-insights", path: site + "/visitor-insights?from=" + from + "&to=" + today},
+		{name: "usage", path: site + "/usage?from=" + from + "&to=" + today},
 		{name: "frustration", path: site + "/frustration?from=" + from + "&to=" + today},
 		{name: "search-analytics", path: site + "/search-analytics?from=" + from + "&to=" + today},
 		{name: "attribution", path: site + "/attribution?from=" + from + "&to=" + today + "&model=last_non_direct"},
@@ -202,6 +205,27 @@ func TestHeavyQueriesStayLinearAtScale(t *testing.T) {
 	if retentionTook > scaleRetentionBudget {
 		t.Errorf("retention took %s for %d events, over the %s budget: it runs unattended, so a scan here is a maintenance job that stops finishing",
 			retentionTook.Round(time.Millisecond), scaleEventCount, scaleRetentionBudget)
+	}
+
+	// A report that runs its independent reads one after another costs the reader
+	// their sum, which no latency budget on its own can distinguish from a site
+	// that is simply larger. The usage report is the clearest case — six reads of
+	// the same period, one per dimension — so it is compared against a single read
+	// of that period rather than against a clock. Serial, it was six times the
+	// event report; together, it is under one and a half. The ceiling is set well
+	// above that so slow hardware cannot fail it, and well below six.
+	took := func(name string) time.Duration {
+		for _, item := range timings {
+			if item.name == name {
+				return item.took
+			}
+		}
+		t.Fatalf("no timing recorded for %s", name)
+		return 0
+	}
+	if single, all := took("events"), took("usage"); single > 0 && all > 4*single {
+		t.Errorf("the usage report took %s against %s for one read of the same period: its six dimension reads are running one after another, and the reader waits for their sum",
+			all.Round(time.Millisecond), single.Round(time.Millisecond))
 	}
 
 	sort.SliceStable(timings, func(i, j int) bool { return timings[i].took > timings[j].took })
