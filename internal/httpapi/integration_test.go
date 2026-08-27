@@ -189,9 +189,6 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 			otherID, fmt.Sprintf("hr-%d", day), person)
 	}
 
-	// Daily rollups feed the anomaly baseline.
-	run(`INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
-		SELECT $1,(now()-make_interval(days=>d))::date,'prd',60,12,3,1000 FROM generate_series(1,70) d`, siteID)
 	// first_seen and last_seen used to be written as now() on every one of these
 	// rows, which said every visitor was first seen today on a day seventy days
 	// ago. Nothing read them, so nothing objected; the reports that decide who is
@@ -245,6 +242,24 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"true","latency_ms":"820","input_tokens":"1200","output_tokens":"300","cost":"0.02"}`, false, 10)
 		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"false","latency_ms":"1400","input_tokens":"800","output_tokens":"0","cost":"0.01"}`, false, 11)
 	}
+
+	// Daily rollups feed the anomaly baseline, and the landing screen draws its
+	// chart from them while counting the total above it from the events. They used
+	// to be written as a flat 60/12/3 a day regardless of what the events said, so
+	// the two disagreed on this site by construction and no test could compare
+	// them here. Derived from the events instead: the fixture inserts the same
+	// activity every day, so the baseline is just as flat and now describes
+	// something that happened.
+	//
+	// It runs after the last event is inserted, not next to the other rollups: a
+	// rollup derived halfway through the seeding describes half of it, and the
+	// difference is exactly the sort of quiet disagreement this is here to remove.
+	run(`INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+		SELECT site_id,(event_timestamp AT TIME ZONE 'Asia/Seoul')::date,environment,
+			count(*),count(*) FILTER(WHERE event_name='page_view'),count(*) FILTER(WHERE is_conversion),
+			coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value','') ~ '^[0-9]+(\.[0-9]+)?$'
+				THEN (properties->>'value')::numeric ELSE 0 END),0)
+		FROM raw_events WHERE site_id=$1 GROUP BY 1,2,3`, siteID)
 
 	var segmentID uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO segments(site_id,name,description,definition,shared,owner_id)
