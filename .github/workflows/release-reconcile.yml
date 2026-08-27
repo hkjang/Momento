@@ -40,6 +40,17 @@ jobs:
             if (( age_days > 7 )); then
               break
             fi
+            # A tag pushed in the last half hour is probably being released right
+            # now: its own run builds an image and smoke tests the archive before
+            # publishing, so for a few minutes the release genuinely does not
+            # exist yet. Dispatching then produced a duplicate run that raced the
+            # real one, and one of the two ended red on a release that was fine.
+            # Nothing is lost by waiting — this runs every hour.
+            age_minutes=$(( (now - created) / 60 ))
+            if (( age_minutes < 30 )); then
+              echo "$tag was pushed ${age_minutes}m ago; its own release run has not had time to finish."
+              continue
+            fi
             assets=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null || echo "missing")
             if [[ "$assets" == "2" ]]; then
               continue

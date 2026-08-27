@@ -109,19 +109,44 @@ jobs:
         run: |
           docker rm -f smoke-app smoke-pg >/dev/null 2>&1 || true
           docker network rm momento-smoke >/dev/null 2>&1 || true
+      # Publishing has to be repeatable, because the reconciliation workflow exists
+      # to repeat it. It dispatches this workflow for a tag whose release is
+      # missing or has only one of its two assets — and `gh release create` fails
+      # outright when a release already exists, so the half-published case it was
+      # written to repair could never be repaired: every dispatch died on "a
+      # release with the same tag name already exists" and left the release as it
+      # found it. The same error turned a healthy release red whenever
+      # reconciliation happened to look while the tag's own run was still
+      # building.
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           if [[ -f ".github/release-notes/${RELEASE_TAG}.md" ]]; then
             NOTES=(--notes-file ".github/release-notes/${RELEASE_TAG}.md")
           else
             NOTES=(--generate-notes)
           fi
-          gh release create "$RELEASE_TAG" \
-            "momento-${RELEASE_TAG}.tar.gz" \
-            "momento-${RELEASE_TAG}.tar.gz.sha256" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Momento ${RELEASE_TAG}" \
-            "${NOTES[@]}" \
-            --verify-tag
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice title=Release exists::$RELEASE_TAG is already published; uploading the artifacts in place."
+            gh release upload "$RELEASE_TAG" \
+              "momento-${RELEASE_TAG}.tar.gz" \
+              "momento-${RELEASE_TAG}.tar.gz.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "momento-${RELEASE_TAG}.tar.gz" \
+              "momento-${RELEASE_TAG}.tar.gz.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Momento ${RELEASE_TAG}" \
+              "${NOTES[@]}" \
+              --verify-tag
+          fi
+          # Whichever path ran, the release has to end up with both artifacts.
+          published=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')
+          if [[ "$published" != "2" ]]; then
+            echo "::error title=Release incomplete::$RELEASE_TAG has $published assets, expected the archive and its checksum"
+            exit 1
+          fi
