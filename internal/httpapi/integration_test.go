@@ -192,10 +192,22 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	// Daily rollups feed the anomaly baseline.
 	run(`INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
 		SELECT $1,(now()-make_interval(days=>d))::date,'prd',60,12,3,1000 FROM generate_series(1,70) d`, siteID)
+	// first_seen and last_seen used to be written as now() on every one of these
+	// rows, which said every visitor was first seen today on a day seventy days
+	// ago. Nothing read them, so nothing objected; the reports that decide who is
+	// new read them now, and a fixture that contradicts its own events cannot show
+	// whether those reports are right. They are anchored to the same site-local
+	// hour the events for that day are.
 	run(`INSERT INTO daily_site_visitors(site_id,event_date,environment,visitor_id,first_seen,last_seen,event_count,conversion_count)
-		SELECT $1,(now()-make_interval(days=>d))::date,'prd',v,now(),now(),20,1 FROM generate_series(1,70) d, unnest(ARRAY['visitor-desktop','visitor-mobile','visitor-anon']) v`, siteID)
+		SELECT $1,(now()-make_interval(days=>d))::date,'prd',v,
+			((((now() AT TIME ZONE 'Asia/Seoul')::date - d) + time '09:00') AT TIME ZONE 'Asia/Seoul'),
+			((((now() AT TIME ZONE 'Asia/Seoul')::date - d) + time '21:00') AT TIME ZONE 'Asia/Seoul'),
+			20,1 FROM generate_series(1,70) d, unnest(ARRAY['visitor-desktop','visitor-mobile','visitor-anon']) v`, siteID)
 	run(`INSERT INTO daily_site_sessions(site_id,event_date,environment,session_id,visitor_id,user_id,first_seen,last_seen)
-		SELECT $1,(now()-make_interval(days=>d))::date,'prd','ds-'||d||'-'||v,v,NULL,now(),now() FROM generate_series(1,70) d, unnest(ARRAY['visitor-desktop','visitor-mobile']) v`, siteID)
+		SELECT $1,(now()-make_interval(days=>d))::date,'prd','ds-'||d||'-'||v,v,NULL,
+			((((now() AT TIME ZONE 'Asia/Seoul')::date - d) + time '09:00') AT TIME ZONE 'Asia/Seoul'),
+			((((now() AT TIME ZONE 'Asia/Seoul')::date - d) + time '21:00') AT TIME ZONE 'Asia/Seoul')
+			FROM generate_series(1,70) d, unnest(ARRAY['visitor-desktop','visitor-mobile']) v`, siteID)
 
 	// Events the reports read that nothing was creating, so those paths ran and
 	// returned zero and every test passed. Each is seeded with a shape the

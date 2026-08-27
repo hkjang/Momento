@@ -235,18 +235,14 @@ func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environme
 		-- Only the columns the aggregates read. Selecting every column made the
 		-- planner carry both jsonb blobs through a two million row materialisation.
 		period AS (SELECT entity_id entity,event_name,is_conversion,properties FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
-		-- New people are those whose first ever event falls inside the period.
-		-- That needs history, but only history before the period ends: rows at or
-		-- after it cannot move anybody's first event into the window. Reading the
-		-- whole table instead made this the dominant cost of the landing screen,
-		-- and the previous-period comparison paid it a second time.
+		-- New people are those whose first ever visit falls inside the period.
+		-- That needs history, but only history before the period ends, and it is
+		-- read from the daily visitor rollup rather than from every event the site
+		-- has ever collected. insight.FirstSeenCTE says why, and holds the one
+		-- definition this and the insight report both use.
 		new_users AS (
-			SELECT count(*) value FROM (
-				SELECT entity_id
-				FROM analytics_events
-				WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3
-				GROUP BY entity_id HAVING min(event_timestamp) >= $2
-			) firsts
+			SELECT count(*) value FROM (`+insight.FirstSeenCTE("$1", "$4", "$3")+`) firsts
+			WHERE firsts.first_at >= $2
 		)
 		SELECT
 			count(DISTINCT p.entity),

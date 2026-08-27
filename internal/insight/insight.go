@@ -765,11 +765,9 @@ func ratio(numerator, denominator float64) float64 {
 }
 
 func (rep Reporter) insightLifecycle(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]LifecycleRow, error) {
-	// The first-seen scan stops at the end of the period: a row after it cannot
-	// move anybody's first event into the window, and reading the rest made this
-	// grow with the site's whole history instead of with the period.
-	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (
-		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3 GROUP BY 1
+	// Who is new comes from the one definition in FirstSeenCTE, which reads the
+	// daily visitor rollup instead of every event the site has ever collected.
+	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (`+FirstSeenCTE("$1", "$4", "$3")+`
 	), period AS (
 		SELECT entity_id,session_id,is_conversion FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
 	)
@@ -858,9 +856,9 @@ func (rep Reporter) insightLandingPages(ctx context.Context, siteID uuid.UUID, e
 func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]BucketRow, []BucketRow, map[string]int64, error) {
 	// first_at used to be read with a scalar subquery inside per_user, which ran
 	// once per person against an unbounded scan of the site. Grouping first and
-	// joining once is the same answer in one pass.
-	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (
-		SELECT entity_id,min(event_timestamp) first_at FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3 GROUP BY 1
+	// joining once is the same answer in one pass, and FirstSeenCTE now does that
+	// grouping over the daily rollup rather than over the events.
+	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (`+FirstSeenCTE("$1", "$4", "$3")+`
 	), active AS (
 		SELECT entity_id,count(DISTINCT session_id) sessions,max(event_timestamp) last_at,bool_or(is_conversion) converted
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id
@@ -952,8 +950,10 @@ func (rep Reporter) insightRetentionFlow(ctx context.Context, siteID uuid.UUID, 
 		SELECT DISTINCT entity_id FROM analytics_events WHERE site_id=$1 AND environment=$6 AND event_timestamp >= $4 AND event_timestamp < $5
 	), current AS (
 		SELECT DISTINCT entity_id FROM analytics_events WHERE site_id=$1 AND environment=$6 AND event_timestamp >= $2 AND event_timestamp < $3
+	-- Anyone whose first visit predates the comparison period; the rollup answers
+	-- that without reading the site's whole event history.
 	), earlier AS (
-		SELECT DISTINCT entity_id FROM analytics_events WHERE site_id=$1 AND environment=$6 AND event_timestamp < $4
+		SELECT entity_id FROM (`+FirstSeenCTE("$1", "$6", "$4")+`) f
 	)
 	SELECT (SELECT count(*) FROM previous WHERE entity_id NOT IN (SELECT entity_id FROM current)),
 		(SELECT count(*) FROM current WHERE entity_id NOT IN (SELECT entity_id FROM previous) AND entity_id IN (SELECT entity_id FROM earlier))`,
@@ -969,15 +969,11 @@ func (rep Reporter) periodMetrics(ctx context.Context, siteID uuid.UUID, environ
 	err := rep.DB.QueryRow(ctx, `WITH period AS (
 		SELECT entity_id,session_id,event_name,is_conversion FROM analytics_events
 		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
-	-- The first-seen scan stops at the end of the period for the same reason the
-	-- other reports' do: a row after it cannot move anybody's first event into the
-	-- window, and reading the rest made this grow with the site's whole history.
+	-- New people come from the one definition in FirstSeenCTE, the same one the
+	-- overview uses, so the two screens cannot disagree about who is new.
 	), first_seen AS (
-		SELECT count(*) value FROM (
-			SELECT entity_id FROM analytics_events
-			WHERE site_id=$1 AND environment=$4 AND event_timestamp < $3
-			GROUP BY entity_id HAVING min(event_timestamp) >= $2
-		) firsts
+		SELECT count(*) value FROM (`+FirstSeenCTE("$1", "$4", "$3")+`) firsts
+		WHERE firsts.first_at >= $2
 	), session_summary AS (
 		SELECT count(*) sessions,count(*) FILTER(WHERE engaged) engaged,
 			coalesce(avg(extract(epoch FROM (last_event_at-started_at))),0)::double precision average_seconds
