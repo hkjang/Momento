@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.9
+
+- Applied last release's lesson to the other guards that read the source: each one was measured for what it actually inspects, not what it appears to. All three were covering a fraction of their subject.
+- **`DELETE /api/v1/sites/{id}` was absent from the OpenAPI contract.** It erases a site and every event, session and aggregate belonging to it, irreversibly. The contract guard compared paths in both directions and passed, because the path was listed for its PATCH — methods were never compared. Documented now, including the confirm parameter that must match the Site ID exactly, and the guard compares operations rather than paths. 130 operations served, 130 documented.
+- The revenue-property guard inspected **3 of the 28** reads of `properties->>'value'` in the tree, and never opened `internal/service`, where the digest and the daily rollups compute revenue. It matched only what sat within 400 characters after `event_name='purchase'`. It now classifies every read — 17 paired with `revenue`, 11 web vitals where the property has no second name, 0 unclassified — and catches a defect introduced in `internal/service/derived.go`, which the old one could not see. No live defect: every revenue expression already read both names.
+- The query-policy guard checked 7 of the 22 reports that take a date range, described as a representative spread. It covers all 22 now, and a new check fails when a handler that reads a range is added without coverage, naming it. Confirmed by adding one. Verified separately that all 22 refuse a 300-day range under a 14-day policy, and that the four ranged-looking endpoints which answer it — realtime, catalog, identities, anomalies — take no date range at all.
+
 ## v0.32.8
 
 - **A site with a strict contract lost the first batch of every session.** `session_start` was missing from the collector's list of automatic events, so a reject-mode environment answered 422 to the batch carrying it — and one event refuses the whole batch, so the first page view and the web vital sent with it went too. The guard that exists to prevent this had been passing: it matched `track()` and `signal()` calls, and `session_start` is queued directly because `track()` starts a session and would recurse. The guard now matches both paths and fails on the omission, and the integration test sends a real first batch instead of single events.

@@ -46,6 +46,23 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SiteMutation'}
       responses: {'200': {description: Site updated}, '400': {$ref: '#/components/responses/Error'}}
+    delete:
+      summary: Delete a site and every event, session and aggregate belonging to it
+      description: >
+        Irreversible. The confirm query parameter must exactly match the site's
+        Site ID (the site_key, not the uuid in the path), or the request is
+        refused. Requires an administrator session; a personal API key cannot
+        reach it. The deletion is recorded in the audit log before it runs.
+      parameters:
+        - name: confirm
+          in: query
+          required: true
+          description: Must equal the site's Site ID exactly.
+          schema: {type: string}
+      responses:
+        '204': {description: Site deleted}
+        '400': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
   /api/v1/sites/{siteId}/overview:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:

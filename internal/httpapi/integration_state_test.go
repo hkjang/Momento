@@ -581,6 +581,17 @@ func TestIdentityRebuildMatchesTheReferenceSemantics(t *testing.T) {
 // administration screen presents that as a limit in force. It was consulted by
 // one handler — the query builder — while every report screen read whatever
 // range it was asked for, and those are the heavy ones the limit exists for.
+// rangedReports is every site report that accepts from and to. The policy refuses
+// a range beyond its limit, and a report missing from this list is one nobody
+// checks.
+var rangedReports = []string{
+	"overview", "events", "pages", "sessions", "visitors", "visitor-insights",
+	"frustration", "search-analytics", "experience", "ecommerce", "adoption",
+	"feature-intelligence", "insights", "ai-analytics", "cohort", "path",
+	"attribution", "data-quality", "usage", "workspace-rollup", "annotations",
+	"export",
+}
+
 func TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
@@ -598,9 +609,12 @@ func TestQueryPolicyLimitsEveryReportNotJustTheQueryBuilder(t *testing.T) {
 	within, today := f.siteDates(t, 10)
 	beyond := f.siteDate(t, -60)
 
-	// Every report shares one range helper, so checking a representative spread
-	// shows the limit reaches all of them rather than one path.
-	for _, report := range []string{"overview", "visitor-insights", "frustration", "search-analytics", "experience", "visitors", "events"} {
+	// A representative spread was the old approach: seven reports out of the
+	// twenty-two that take a range. They all share one helper, so a spread reads
+	// like enough — until a new report calls the query directly and nothing here
+	// would notice. Every ranged report is listed, and TestEveryRangedReportIsUnderThePolicy
+	// fails when the source grows one that is not.
+	for _, report := range rangedReports {
 		request := httptest.NewRequest(http.MethodGet, site+"/"+report+"?from="+beyond+"&to="+today, nil)
 		request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
 		recorder := httptest.NewRecorder()

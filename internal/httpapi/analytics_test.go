@@ -66,25 +66,36 @@ func TestNormalizePathView(t *testing.T) {
 // builder, which read only `value` and answered zero for a site that sends the
 // other. Nothing failed; the number was simply wrong on one screen.
 //
-// Reading the source is crude, but the alternative is a per-report test that
-// would not exist for the next report someone adds.
+// The first version of this guard inspected three expressions and passed. The
+// tree holds twenty-eight reads of that property: it matched only those within
+// four hundred characters after `event_name='purchase'`, and it never opened
+// internal/service, where the digest and the daily rollups compute revenue. A
+// guard that reports success over a ninth of its subject is worse than none,
+// because it is believed.
+//
+// So every read is classified and none may be skipped. A read is either paired
+// with `revenue` in the same expression, or it belongs to a web vital, where the
+// property has no second name. Anything else is the defect this exists for.
 func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
 	t.Parallel()
 
-	files, err := filepath.Glob(filepath.Join(".", "*.go"))
-	if err != nil {
-		t.Fatalf("list sources: %v", err)
+	var files []string
+	for _, pattern := range []string{
+		filepath.Join(".", "*.go"),
+		filepath.Join("..", "insight", "*.go"),
+		filepath.Join("..", "service", "*.go"),
+		filepath.Join("..", "database", "*.go"),
+	} {
+		matched, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatalf("list %s: %v", pattern, err)
+		}
+		files = append(files, matched...)
 	}
-	insight, err := filepath.Glob(filepath.Join("..", "insight", "*.go"))
-	if err != nil {
-		t.Fatalf("list insight sources: %v", err)
-	}
-	files = append(files, insight...)
 
-	// Each occurrence of a purchase amount is checked in the window around it,
-	// which is where the property names appear.
-	purchase := regexp.MustCompile(`event_name='purchase'[^;]{0,400}`)
-	checked := 0
+	// The alias prefix matters: the rollups read e.properties->>'value'.
+	read := regexp.MustCompile(`(?:[a-z]+\.)?properties->>'value'`)
+	revenue, vitals := 0, 0
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {
 			continue
@@ -93,17 +104,34 @@ func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)
 		}
-		for _, match := range purchase.FindAllString(string(source), -1) {
-			if !strings.Contains(match, "properties->>'value'") {
-				continue
-			}
-			checked++
-			if !strings.Contains(match, "properties->>'revenue'") {
-				t.Errorf("%s reads a purchase amount from `value` without `revenue`, so a site that sends the other name gets zero here and a number elsewhere:\n%s", file, match)
+		text := string(source)
+		for _, location := range read.FindAllStringIndex(text, -1) {
+			// The window is the expression around the read, which is where the
+			// second property name and the metric name both appear.
+			start := max(0, location[0]-160)
+			end := min(len(text), location[1]+160)
+			window := text[start:end]
+			line := strings.Count(text[:location[0]], "\n") + 1
+			switch {
+			case strings.Contains(window, "properties->>'revenue'"):
+				revenue++
+			case strings.Contains(window, "web_vital"),
+				strings.Contains(window, "'metric'"),
+				strings.Contains(window, "'rating'"):
+				vitals++
+			default:
+				t.Errorf("%s:%d reads a purchase amount from `value` with no `revenue` beside it and is not a web vital, so a site that sends the other name gets zero here and a number elsewhere:\n%s",
+					file, line, window)
 			}
 		}
 	}
-	if checked == 0 {
-		t.Fatal("found no purchase amount expressions, so the pattern no longer matches the source")
+	// A floor on both kinds, so a change in how the source is written fails here
+	// rather than quietly reducing this to the three expressions it used to see.
+	if revenue < 15 {
+		t.Fatalf("found only %d revenue expressions, so the pattern no longer matches the source", revenue)
 	}
+	if vitals < 8 {
+		t.Fatalf("found only %d web vital expressions, so the pattern no longer matches the source", vitals)
+	}
+	t.Logf("checked %d revenue expressions and %d web vital reads across %d files", revenue, vitals, len(files))
 }
