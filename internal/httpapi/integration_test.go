@@ -307,6 +307,32 @@ func TestAnalyticalEndpointsRunAgainstPostgres(t *testing.T) {
 	from, today := f.siteDates(t, 30)
 	site := "/api/v1/sites/" + f.siteKey
 
+	// The realtime screen was reached only by the opt-in load harness, so nothing
+	// CI runs ever called it — and it is the one screen that reads the last half
+	// hour rather than a stored range, which is exactly the read that a change to
+	// how its four queries run could break without any other test noticing.
+	t.Run("realtime sees an event that just arrived", func(t *testing.T) {
+		before, _ := f.get(t, site+"/realtime")["active_users_30m"].(float64)
+		f.ingest(t, "visitor-realtime", "", "realtime_check")
+		report := f.get(t, site+"/realtime")
+		if active, _ := report["active_users_30m"].(float64); active != before+1 {
+			t.Errorf("active users in the last 30 minutes = %v, want %v after one arrival", active, before+1)
+		}
+		events, _ := report["top_events"].([]any)
+		found := false
+		for _, item := range events {
+			if entry, ok := item.(map[string]any); ok && entry["name"] == "realtime_check" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the event that just arrived is not among the top events: %v", events)
+		}
+		if timeline, _ := report["timeline"].([]any); len(timeline) == 0 {
+			t.Error("the realtime timeline is empty after an event arrived")
+		}
+	})
+
 	t.Run("overview and insights", func(t *testing.T) {
 		f.get(t, site+"/overview?from="+from+"&to="+today)
 		report := f.get(t, site+"/visitor-insights?from="+from+"&to="+today)

@@ -41,7 +41,13 @@ jobs:
           cache-dependency-path: |
             web/package-lock.json
             sdk/package-lock.json
-      - run: go test ./cmd/... ./internal/...
+      # The reports answer by running their independent reads at the same time, so
+      # the handlers that build them share variables across goroutines. The race
+      # detector is what says that sharing is correct; without it a report that
+      # occasionally returned a half-filled answer would look like a flaky test.
+      # It costs about ninety seconds here, because these tests wait on a database
+      # rather than on the CPU.
+      - run: go test -race ./cmd/... ./internal/...
       - run: go vet ./cmd/... ./internal/...
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./cmd/... ./internal/...
       - run: npm ci && npm audit && npm run typecheck && npm test && npm run build
