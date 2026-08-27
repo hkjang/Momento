@@ -108,3 +108,50 @@ test("정책 초과는 기간 줄이기와 정기 배달을 제시한다", async
   );
   assert.equal(recovery.detail, "180일을 넘습니다");
 });
+
+// Three codes a reporting screen can be answered with had no explanation, so
+// they fell through to "요청을 완료하지 못했습니다" plus whatever the server
+// said — which for one of them was English, in a console that is not.
+test("a screen turned off by a setting is not reported as a failure", () => {
+  const recovery = describeQueryError(
+    { code: "VISITOR_PROFILES_DISABLED", message: "Visitor Explorer is disabled by the privacy policy" },
+    { canRetry: true },
+  );
+  assert.match(recovery.title, /방문자 프로필/);
+  assert.ok(
+    !recovery.actions.some((action) => action.kind === "retry"),
+    "a setting is not fixed by trying again, so retry must not be offered",
+  );
+  assert.ok(
+    recovery.actions.some((action) => action.kind === "link" && action.to.includes("privacy")),
+    "the reader is not told where the setting lives",
+  );
+});
+
+test("an invalid site timezone sends the reader to the setting", () => {
+  const recovery = describeQueryError({ code: "INVALID_TIMEZONE", message: `invalid site timezone "Mars/Olympus"` });
+  assert.match(recovery.title, /시간대/);
+  assert.ok(
+    recovery.actions.some((action) => action.kind === "link" && action.to.includes("sites")),
+    "every report on the site fails until this is corrected, so the setting has to be reachable from here",
+  );
+});
+
+test("a report that produced an unrepresentable value does not offer a retry", () => {
+  const recovery = describeQueryError(
+    { code: "RESPONSE_NOT_ENCODABLE", message: "보고서에 표현할 수 없는 값이 있어 응답을 만들지 못했습니다." },
+    { canRetry: true },
+  );
+  assert.ok(
+    !recovery.actions.some((action) => action.kind === "retry"),
+    "the same request produces the same value, so a retry button is a loop",
+  );
+  assert.match(recovery.explanation, /관리자/, "the reader is not told who can act on it");
+});
+
+// An unmapped code still has to say something, and never an empty screen.
+test("a code nobody has explained yet still reads as something", () => {
+  const recovery = describeQueryError({ code: "SOMETHING_NEW", message: "" });
+  assert.ok(recovery.title.length > 0);
+  assert.ok(recovery.explanation.length > 0, "an unexplained failure must not render blank");
+});

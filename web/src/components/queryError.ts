@@ -25,6 +25,7 @@ const explorer = "/explorer";
 const automation = "/admin/automation";
 const segments = "/segments";
 const sites = "/admin?section=sites";
+const privacy = "/admin?section=privacy";
 
 export function describeQueryError(
   error: unknown,
@@ -34,7 +35,9 @@ export function describeQueryError(
   // error class: this module only needs the code, and staying free of that
   // import keeps it usable from anywhere, tests included.
   const code =
-    typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string"
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === "string"
       ? (error as { code: string }).code
       : "";
   const message = error instanceof Error ? error.message : "";
@@ -54,7 +57,11 @@ export function describeQueryError(
         actions: [
           ...narrow,
           { kind: "link", label: "Segment로 대상 좁히기", to: segments },
-          { kind: "link", label: "쿼리 빌더에서 Fast 모드로 실행", to: explorer },
+          {
+            kind: "link",
+            label: "쿼리 빌더에서 Fast 모드로 실행",
+            to: explorer,
+          },
           { kind: "link", label: "정기 배달로 받기", to: automation },
           ...retry,
         ],
@@ -114,6 +121,37 @@ export function describeQueryError(
           "삭제되었거나 접근 권한이 없는 사이트입니다. 사이트 목록에서 다시 선택하세요.",
         actions: [{ kind: "link", label: "사이트 목록", to: sites }],
       };
+    case "VISITOR_PROFILES_DISABLED":
+      return {
+        // Not a failure: an administrator turned this screen off. The server
+        // says so in English, which is not the language the rest of the console
+        // is in, and the reader was being offered a retry button for a setting.
+        title: "방문자 프로필이 꺼져 있습니다",
+        explanation:
+          "개인정보 정책에서 방문자 프로필 조회를 끄면 이 화면과 신원 화면은 답하지 않습니다. 사람 단위 조회가 필요하면 관리자에게 요청하세요.",
+        actions: [{ kind: "link", label: "개인정보 정책", to: privacy }],
+      };
+    case "INVALID_TIMEZONE":
+      return {
+        // Every report on the site fails until this is corrected, so the reader
+        // needs to be sent to the setting rather than told to try again.
+        title: "사이트의 시간대 설정이 올바르지 않습니다",
+        explanation:
+          "모든 리포트는 사이트의 달력으로 기간을 계산하므로, 시간대가 유효하지 않으면 이 사이트의 어떤 화면도 답할 수 없습니다. 사이트 설정에서 시간대를 고쳐야 합니다.",
+        actions: [{ kind: "link", label: "사이트 설정", to: sites }],
+        detail: message,
+      };
+    case "RESPONSE_NOT_ENCODABLE":
+      return {
+        // The answer was computed and could not be written down — a defect in
+        // the report, not a passing condition. Retrying produces it again, so
+        // it is not offered first.
+        title: "이 리포트가 표현할 수 없는 값을 만들었습니다",
+        explanation:
+          "서버가 답을 계산했지만 그중 일부가 숫자로 적을 수 없는 값이라 응답을 만들지 못했습니다. 다시 시도해도 같은 결과가 나오므로, 어떤 화면과 기간이었는지와 함께 관리자에게 알려주세요.",
+        actions: [],
+        detail: message,
+      };
     case "FORBIDDEN":
       return {
         title: "이 데이터를 볼 권한이 없습니다",
@@ -147,8 +185,13 @@ export function slowQueryNotice(elapsedMs: number): string | null {
  * reader is already on the shortest one. Offering "기간 줄이기" at seven days
  * would be a button that changes nothing.
  */
-export function narrowerRange(days: number, options: number[] = [7, 30, 90]): number | null {
-  const shorter = options.filter((option) => option < days).sort((a, b) => b - a);
+export function narrowerRange(
+  days: number,
+  options: number[] = [7, 30, 90],
+): number | null {
+  const shorter = options
+    .filter((option) => option < days)
+    .sort((a, b) => b - a);
   return shorter.length ? shorter[0] : null;
 }
 
@@ -157,7 +200,10 @@ export function narrowerRange(days: number, options: number[] = [7, 30, 90]): nu
  * the server rejects turns a limit into a broken screen, so the choice reflects
  * the limit instead of colliding with it.
  */
-export function allowedRanges(options: number[], maxExactDays?: number): number[] {
+export function allowedRanges(
+  options: number[],
+  maxExactDays?: number,
+): number[] {
   if (!maxExactDays || maxExactDays <= 0) return options;
   const allowed = options.filter((option) => option <= maxExactDays);
   // Never leave the control empty: if even the shortest period is over the
