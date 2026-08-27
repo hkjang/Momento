@@ -611,3 +611,83 @@ test("a gap longer than the site's session timeout starts a new session", async 
     Date.now = realNow;
   }
 });
+
+// A session's acquisition is decided once, when the session starts, and every
+// event in it carries that same answer — which is what makes the channel table
+// and the attribution report mean anything.
+//
+// The case worth pinning is the boundary. If a session that timed out inherited
+// the previous one's campaign, every later visit by that person would be
+// credited to whatever first brought them, forever: the campaign's numbers
+// would climb on visits it had nothing to do with, and nothing on the server
+// could tell, because the events say so.
+test("a new session after a timeout is not credited to the old campaign", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  setGlobal("sessionStorage", storage);
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  setGlobal(
+    "location",
+    new URL("https://service.internal/land?utm_source=news&utm_medium=email&utm_campaign=spring"),
+  );
+
+  let now = Date.UTC(2026, 0, 2, 9, 0, 0);
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const tracker = new MomentoTracker();
+    tracker.init({
+      siteId: "SITE_ACQ",
+      endpoint: "https://analytics.internal",
+      autoTrack: false,
+      sessionTimeoutMinutes: 5,
+    });
+    tracker.track("page_view", {});
+
+    // Still the same visit, now on a page the campaign never touched: the
+    // acquisition has to be the one the visit arrived with.
+    setGlobal("location", new URL("https://service.internal/inside"));
+    now += 60_000;
+    tracker.track("click", {});
+
+    // Past the timeout, still on a page with no campaign in its URL: this is a
+    // new visit and it arrived from nowhere in particular.
+    now += 10 * 60_000;
+    tracker.track("page_view", {});
+    await tracker.flush();
+
+    const events = deliveries.flatMap((batch) => batch.events);
+    const tracked = events.filter((event) => event.name !== "session_start");
+    assert.equal(tracked.length, 3, `expected three tracked events, got ${tracked.map((e) => e.name)}`);
+    const [landed, inside, returned] = tracked;
+
+    assert.equal(landed.context.traffic.source, "news");
+    assert.equal(landed.context.traffic.campaign, "spring");
+    assert.equal(
+      inside.context.traffic.source,
+      "news",
+      "an event later in the same visit lost the campaign the visit arrived with",
+    );
+    assert.equal(
+      returned.context.traffic.source,
+      undefined,
+      "a visit that began after the previous one timed out is still being credited to its campaign",
+    );
+    assert.equal(returned.context.traffic.campaign, undefined);
+    // The session id travels on the batch, not on each event: a flush sends one
+    // payload per session, which is what keeps queued events under the session
+    // they happened in.
+    const sessions = [...new Set(deliveries.map((batch) => batch.session_id))];
+    assert.equal(
+      sessions.length,
+      2,
+      `the two visits were meant to be delivered as two sessions, got ${sessions.length}`,
+    );
+  } finally {
+    Date.now = realNow;
+  }
+});
