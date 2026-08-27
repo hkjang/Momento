@@ -100,8 +100,15 @@ func seedScale(t *testing.T, f fixture) {
 		f.siteID, scaleEventCount); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "ANALYZE raw_events"); err != nil {
-		t.Fatalf("analyze: %v", err)
+	// VACUUM rather than ANALYZE. Fifty thousand rows have just been inserted, and
+	// autovacuum will work through the table on its own schedule — which is to say
+	// during the probes below, competing with whichever of them happens to run
+	// first. That is not a small effect: measuring immediately after a seed rather
+	// than on a settled table read 423ms for a screen that answers in 134ms, which
+	// is enough to send a reader looking for a defect that is not there. Doing the
+	// work here means the numbers describe the queries.
+	if _, err := pool.Exec(ctx, "VACUUM (ANALYZE) raw_events"); err != nil {
+		t.Fatalf("settle the event table: %v", err)
 	}
 	t.Logf("seeded %d events in %s", scaleEventCount, time.Since(started).Round(time.Millisecond))
 }
@@ -132,9 +139,11 @@ func TestHeavyQueriesStayLinearAtScale(t *testing.T) {
 		t.Errorf("the derived-data rebuild took %s for %d events, over the %s budget: it runs inside privacy deletion, so this is a deletion that does not finish",
 			rebuildTook.Round(time.Millisecond), scaleEventCount, scaleRebuildBudget)
 	}
+	// Same reasoning as the event table: the rebuild has just filled every one of
+	// these, and a probe should not be measuring the cleanup of that.
 	for _, table := range []string{"visitors", "visitor_identities", "identified_users", "sessions", "daily_site_metrics", "daily_site_visitors", "daily_site_sessions"} {
-		if _, err := pool.Exec(ctx, "ANALYZE "+table); err != nil {
-			t.Fatalf("analyze %s: %v", table, err)
+		if _, err := pool.Exec(ctx, "VACUUM (ANALYZE) "+table); err != nil {
+			t.Fatalf("settle %s: %v", table, err)
 		}
 	}
 
