@@ -178,9 +178,15 @@ func (f fixture) deliverAt(t *testing.T, siteKey, sessionID, visitorID string, e
 		parts = append(parts, fmt.Sprintf(`{"id":%q,"name":%q,"timestamp":%d,"properties":%s,"contract_version":1,"context":{"page":{"url":%q,"title":"페이지","referrer":""}}}`,
 			uuid.NewString(), item.name, start.Add(item.after).UnixMilli(), properties, item.page))
 	}
+	f.postCollect(t, siteKey, sessionID, visitorID, events[0].page, parts)
+}
+
+// postCollect delivers one prepared batch the way a browser does.
+func (f fixture) postCollect(t *testing.T, siteKey, sessionID, visitorID, landing string, events []string) {
+	t.Helper()
 	payload := fmt.Sprintf(`{"site_id":%q,"environment":"prd","tracking_key":%q,"visitor_id":%q,"session_id":%q,
 		"context":{"page":{"url":%q,"title":"페이지","referrer":""},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{"source":"intranet","medium":"portal"}},
-		"events":[%s]}`, siteKey, f.trackingKey, visitorID, sessionID, events[0].page, strings.Join(parts, ","))
+		"events":[%s]}`, siteKey, f.trackingKey, visitorID, sessionID, landing, strings.Join(events, ","))
 	request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Origin", "https://portal.internal")
