@@ -5,6 +5,7 @@ import {
   frustrationSetupHint,
   searchSetupHint,
   zeroResultReadiness,
+  ecommerceSetupHint,
 } from "../src/pages/signalGuide.ts";
 
 test("every automatic signal explains what it means and what to do", () => {
@@ -99,4 +100,30 @@ test("영향 분석은 손실이 없을 때와 판단할 수 없을 때를 구�
   );
   assert.equal(frictionHeadline([]), null);
   assert.equal(frictionHeadline(undefined), null);
+});
+
+// The ecommerce screen renders a complete-looking report of zeroes whether a
+// site sold nothing or never instrumented selling at all, and a purchase can
+// arrive without its money or without its items while everything else works.
+test("이커머스 빈 화면은 안 팔린 것과 계측되지 않은 것을 구분한다", () => {
+  const none = ecommerceSetupHint({ transactions: 0, revenue: 0 }, [{ event: "purchase", users: 0 }], []);
+  assert.match(String(none), /이커머스 이벤트가 하나도 없습니다/);
+
+  const noMoney = ecommerceSetupHint({ transactions: 12, revenue: 0 }, [{ event: "purchase", users: 9 }], [{}]);
+  assert.match(String(noMoney), /금액이 비어 있습니다/);
+
+  const noItems = ecommerceSetupHint({ transactions: 12, revenue: 4500 }, [{ event: "purchase", users: 9 }], []);
+  assert.match(String(noItems), /상품 정보가 없습니다/);
+
+  // A site that measures everything and simply had a quiet month gets nothing:
+  // an advisory that never goes away stops being read.
+  assert.equal(
+    ecommerceSetupHint({ transactions: 12, revenue: 4500 }, [{ event: "purchase", users: 9 }], [{}]),
+    null,
+  );
+  // And activity without a sale is a real answer, not a setup problem.
+  assert.equal(
+    ecommerceSetupHint({ transactions: 0, revenue: 0 }, [{ event: "view_item", users: 40 }], []),
+    null,
+  );
 });

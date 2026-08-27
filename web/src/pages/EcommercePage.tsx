@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Box, Card, Chip, Stack, Typography } from "@mui/material";
+import { Alert, Box, Card, Chip, Stack, Typography } from "@mui/material";
 import PaymentsOutlined from "@mui/icons-material/PaymentsOutlined";
 import ReceiptLongOutlined from "@mui/icons-material/ReceiptLongOutlined";
 import ShoppingCartOutlined from "@mui/icons-material/ShoppingCartOutlined";
@@ -10,6 +10,7 @@ import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { get, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
+import { ecommerceSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import RangeSelect from "../components/RangeSelect";
@@ -79,9 +80,18 @@ export default function EcommercePage() {
       </Stack>
     );
   const data = query.data!;
+  // A screen of zeroes reads the same whether nothing was sold or selling was
+  // never instrumented, and a purchase can arrive without its money or its
+  // items while every other number looks right.
+  const setup = ecommerceSetupHint(data.summary, data.funnel, data.products);
   return (
     <Stack spacing={2}>
       {range}
+      {setup && (
+        <Alert severity="info" role="status">
+          {setup}
+        </Alert>
+      )}
       <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
         <Chip label="최근 30일" variant="outlined" />
       </Box>

@@ -209,3 +209,30 @@ export const metricMeaning: Record<string, string> = {
   conversion_sessions: "전환이 일어난 Session의 수입니다.",
   revenue: "`purchase` Event의 `value` 또는 `revenue` Property 합계입니다.",
 };
+
+/**
+ * ecommerceSetupHint separates "nobody bought anything" from "buying is not
+ * measured", and from the two halves of a purchase that a site can leave out.
+ *
+ * The ecommerce screen reads events a site sends itself — view_item,
+ * add_to_cart, begin_checkout, purchase — and reads the money and the products
+ * out of the purchase's own properties. Every one of those can be missing while
+ * the screen still renders a complete-looking report of zeroes, and a zero is
+ * indistinguishable from a bad month unless the screen says which it is.
+ */
+export function ecommerceSetupHint(
+  summary: { transactions?: number; revenue?: number } | undefined,
+  funnel: { event?: string; users?: number }[] | undefined,
+  products: unknown[] | undefined,
+): string | null {
+  if (!summary) return null;
+  const steps = funnel || [];
+  const anyStep = steps.some((step) => (step.users || 0) > 0);
+  if (!anyStep && !summary.transactions)
+    return '이 기간에 이커머스 이벤트가 하나도 없습니다. 상품 조회·장바구니·결제 시작·구매는 자동으로 감지되지 않으므로 `analytics.track("view_item", …)`처럼 사이트가 직접 보내야 합니다.';
+  if ((summary.transactions || 0) > 0 && !summary.revenue)
+    return "구매는 수집되지만 금액이 비어 있습니다. `purchase` 이벤트에 `value`(또는 `revenue`) 속성을 숫자로 담아야 매출·객단가·환불이 계산됩니다.";
+  if ((summary.transactions || 0) > 0 && (products || []).length === 0)
+    return "구매는 수집되지만 상품 정보가 없습니다. 상품별 표는 `purchase` 이벤트의 `items` 배열을 읽으므로, 각 항목에 `item_id`·`price`·`quantity`를 담아 보내세요.";
+  return null;
+}
