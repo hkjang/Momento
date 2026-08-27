@@ -1256,3 +1256,188 @@ func TestTheScreensAgreeOnTheSameQuestion(t *testing.T) {
 	}
 	t.Logf("%d numbers compared across seven screens", compared)
 }
+
+// A segment narrows a report by picking people rather than events, and it is
+// applied by a semi-join that was rewritten from a correlated subquery for speed.
+// The rewrite was checked for being fast and for one pair of numbers; whether it
+// still answers the same question on every screen that takes a segment was not.
+//
+// Two identities settle that without needing a second opinion on any number. A
+// segment matching everybody has to answer exactly what no segment answers, and
+// two segments that partition the population have to add back up to it. Grouping
+// is the same idea: splitting a total by a dimension cannot change it.
+func TestSegmentsAndGroupingPreserveTheTotals(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 30)
+	site := "/api/v1/sites/" + f.siteKey
+
+	// Everyone in the fixture converts, so a converted/not-converted partition
+	// would be the total plus zero and would hold however the predicate behaved.
+	// This adds somebody who never converts, so the two halves are both real.
+	now := time.Now().UnixMilli()
+	parts := []string{}
+	for index := 0; index < 4; index++ {
+		parts = append(parts, fmt.Sprintf(`{"id":%q,"name":"page_view","timestamp":%d,"contract_version":1}`, uuid.NewString(), now-int64(index*1000)))
+	}
+	payload := fmt.Sprintf(`{"site_id":%q,"environment":"prd","tracking_key":%q,"visitor_id":"never-converts","session_id":"never-converts-session",
+		"context":{"page":{"url":"https://portal.internal/browse","title":"Browse"},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{}},
+		"events":[%s]}`, f.siteKey, f.trackingKey, strings.Join(parts, ","))
+	request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://portal.internal")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("ingest somebody who never converts: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+
+	save := func(name, definition string) string {
+		t.Helper()
+		saved := f.do(t, http.MethodPost, "/api/v1/segments", fmt.Sprintf(`{"site_id":%s,"name":%s,"definition":%s,"shared":false}`,
+			strconv.Quote(f.siteKey), strconv.Quote(name), definition))
+		id, _ := saved["id"].(string)
+		if id == "" {
+			t.Fatalf("save the %s segment: %v", name, saved)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), `DELETE FROM segments WHERE id=$1`, id)
+		})
+		return id
+	}
+	everyone := save("모두", `{"combinator":"and","rules":[{"field":"entity.events","operator":">=","value":1}]}`)
+	nobody := save("아무도", `{"combinator":"and","rules":[{"field":"entity.events","operator":">=","value":9999999}]}`)
+	converted := save("전환함", `{"combinator":"and","rules":[{"field":"entity.conversions","operator":">=","value":1}]}`)
+	notConverted := save("전환 안 함", `{"combinator":"and","rules":[{"field":"entity.conversions","operator":"=","value":0}]}`)
+
+	number := func(v any) float64 { n, _ := v.(float64); return n }
+	additive := []string{"sessions", "page_views", "events", "conversions"}
+	ask := func(segment string, dimensions string) []any {
+		t.Helper()
+		clause := ""
+		if segment != "" {
+			clause = fmt.Sprintf(`,"segment_id":%q`, segment)
+		}
+		out := f.do(t, http.MethodPost, "/api/v1/query", fmt.Sprintf(
+			`{"site_id":%q,"environment":"prd","date_range":{"from":%q,"to":%q},"dimensions":[%s],"metrics":["users","sessions","page_views","events","conversions"],"filters":[],"limit":500%s}`,
+			f.siteKey, from, today, dimensions, clause))
+		rows, _ := out["rows"].([]any)
+		return rows
+	}
+	single := func(segment string) map[string]any {
+		t.Helper()
+		rows := ask(segment, "")
+		if len(rows) == 0 {
+			return map[string]any{}
+		}
+		row, _ := rows[0].(map[string]any)
+		return row
+	}
+
+	base := single("")
+	if number(base["users"]) < 3 || number(base["conversions"]) == 0 {
+		t.Fatalf("the fixture has %v users and %v conversions, too little to tell a segment from no segment", base["users"], base["conversions"])
+	}
+
+	all := single(everyone)
+	for _, metric := range append([]string{"users"}, additive...) {
+		if number(all[metric]) != number(base[metric]) {
+			t.Errorf("a segment matching everybody changed %s: no segment says %.0f, the segment says %.0f",
+				metric, number(base[metric]), number(all[metric]))
+		}
+	}
+	none := single(nobody)
+	for _, metric := range append([]string{"users"}, additive...) {
+		if got := number(none[metric]); got != 0 {
+			t.Errorf("a segment matching nobody reports %s = %.0f", metric, got)
+		}
+	}
+
+	yes, no := single(converted), single(notConverted)
+	if number(yes["users"]) == 0 || number(no["users"]) == 0 {
+		t.Fatalf("the partition is one sided — converted has %.0f users and not converted has %.0f — so it would hold whatever the predicate did",
+			number(yes["users"]), number(no["users"]))
+	}
+	for _, metric := range append([]string{"users"}, additive...) {
+		if sum := number(yes[metric]) + number(no[metric]); sum != number(base[metric]) {
+			t.Errorf("the two halves of the population do not add back up for %s: %.0f converted + %.0f not converted = %.0f, but the total is %.0f",
+				metric, number(yes[metric]), number(no[metric]), sum, number(base[metric]))
+		}
+	}
+
+	// Splitting a total by a dimension cannot change it. Users are left out: one
+	// person appears in more than one group and counting them once per group is
+	// correct, so the sum is legitimately larger.
+	for _, dimension := range []string{"device.type", "traffic.source", "page.url"} {
+		rows := ask("", strconv.Quote(dimension))
+		if len(rows) < 2 {
+			t.Errorf("grouping by %s produced %d groups, too few to test that splitting preserves a total", dimension, len(rows))
+			continue
+		}
+		sums := map[string]float64{}
+		for _, row := range rows {
+			r, _ := row.(map[string]any)
+			for _, metric := range additive {
+				sums[metric] += number(r[metric])
+			}
+		}
+		for _, metric := range []string{"page_views", "events", "conversions"} {
+			if sums[metric] != number(base[metric]) {
+				t.Errorf("splitting by %s changed %s: ungrouped %.0f, the %d groups add to %.0f",
+					dimension, metric, number(base[metric]), len(rows), sums[metric])
+			}
+		}
+	}
+
+	// The other screens that take a segment have to honour the same identity.
+	funnelUsers := func(segment string) []float64 {
+		t.Helper()
+		clause := ""
+		if segment != "" {
+			clause = fmt.Sprintf(`,"segment_id":%q`, segment)
+		}
+		out := f.do(t, http.MethodPost, "/api/v1/funnel", fmt.Sprintf(
+			`{"site_id":%q,"environment":"prd","from":%q,"to":%q,"steps":[{"event":"page_view"},{"event":"purchase"}]%s}`,
+			f.siteKey, from, today, clause))
+		steps, _ := out["steps"].([]any)
+		users := []float64{}
+		for _, step := range steps {
+			s, _ := step.(map[string]any)
+			users = append(users, number(s["users"]))
+		}
+		return users
+	}
+	plain, segmented, empty := funnelUsers(""), funnelUsers(everyone), funnelUsers(nobody)
+	if len(plain) != 2 {
+		t.Fatalf("the funnel answered %d steps", len(plain))
+	}
+	for index := range plain {
+		if plain[index] == 0 {
+			t.Fatalf("funnel step %d has nobody in it, so a segment cannot change it", index+1)
+		}
+		if segmented[index] != plain[index] {
+			t.Errorf("a segment matching everybody changed funnel step %d: %.0f without, %.0f with", index+1, plain[index], segmented[index])
+		}
+		if empty[index] != 0 {
+			t.Errorf("a segment matching nobody left %.0f people in funnel step %d", empty[index], index+1)
+		}
+	}
+
+	experienceUsers := func(segment string) float64 {
+		t.Helper()
+		path := site + "/experience?from=" + from + "&to=" + today
+		if segment != "" {
+			path += "&segment_ids=" + segment
+		}
+		out := f.get(t, path)
+		impact, _ := out["impact"].(map[string]any)
+		return number(impact["users"])
+	}
+	if with, without := experienceUsers(everyone), experienceUsers(""); with != without {
+		t.Errorf("a segment matching everybody changed the experience report: %.0f without, %.0f with", without, with)
+	}
+}
