@@ -545,3 +545,69 @@ test("reports events the queue could not keep", async () => {
     "the same loss is reported again on every page load",
   );
 });
+
+// The session timeout is a site setting. It travels from the console into the
+// snippet as data-session-timeout and reaches the tracker as an option, and
+// sessionization happens here — the server accepts whatever session id it is
+// sent. So this is the only place the setting can be shown to do anything.
+//
+// Nothing had tested it. Every existing test passes the default 30 and none of
+// them moves the clock, so a tracker that read the value as seconds, or ignored
+// it, would still have satisfied the suite and the console's snippet test —
+// and every session on every site configured away from the default would have
+// been the wrong length, with nothing to say so.
+test("a gap longer than the site's session timeout starts a new session", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  setGlobal("sessionStorage", storage);
+  setGlobal("fetch", async () => ({ ok: true, status: 202 }));
+
+  let now = Date.UTC(2026, 0, 1, 9, 0, 0);
+  const realNow = Date.now;
+  Date.now = () => now;
+  try {
+    const tracker = new MomentoTracker();
+    tracker.init({
+      siteId: "SITE_TIMEOUT",
+      endpoint: "https://analytics.internal",
+      autoTrack: false,
+      sessionTimeoutMinutes: 5,
+    });
+
+    const sessionOf = (name) => {
+      tracker.track(name, {});
+      const key = [...storage.values.keys()].find((k) => k.includes("momento_session"));
+      return JSON.parse(storage.getItem(key)).id;
+    };
+
+    const first = sessionOf("page_view");
+
+    // Four minutes later, inside the window: the same visit.
+    now += 4 * 60_000;
+    assert.equal(
+      sessionOf("click"),
+      first,
+      "an event four minutes into a five minute window started a new session",
+    );
+
+    // Six minutes after that, past it: a new one.
+    now += 6 * 60_000;
+    const second = sessionOf("page_view");
+    assert.notEqual(
+      second,
+      first,
+      "a six minute gap did not end a session configured to time out after five",
+    );
+
+    // And the setting is read as minutes, not as some other unit: a gap of six
+    // minutes ends a five minute session, and one of six seconds does not.
+    now += 6_000;
+    assert.equal(
+      sessionOf("click"),
+      second,
+      "a six second gap ended a five minute session, so the timeout is not being read as minutes",
+    );
+  } finally {
+    Date.now = realNow;
+  }
+});
