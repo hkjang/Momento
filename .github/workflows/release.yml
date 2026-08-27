@@ -30,11 +30,22 @@ jobs:
           # A dispatched run starts from the default branch, so the tag has to be
           # checked out explicitly or the image would be built from main.
           ref: ${{ inputs.tag || github.ref }}
+      # The commit comes from the tree that was checked out, not from GITHUB_SHA.
+      # For a tag push they are the same. For a dispatch — which is how a missed
+      # or half-published release is repaired — GITHUB_SHA is the branch the
+      # workflow was dispatched against while the checkout above is the tag, so
+      # the artifact was stamped with a commit it does not contain. Measured on
+      # v0.33.7: the tag's own run reported 2a90aee80a9e and a dispatched rebuild
+      # of the same tag reported b1216bf9052b, which is a commit that came after
+      # it. The version endpoint exists so an operator can say what they are
+      # running; a commit from another branch is worse than none.
+      - name: Read the commit being released
+        run: echo "RELEASE_COMMIT=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_ENV"
       - name: Build service image
         run: |
           docker build \
             --build-arg VERSION="${RELEASE_TAG#v}" \
-            --build-arg COMMIT="${GITHUB_SHA::12}" \
+            --build-arg COMMIT="${RELEASE_COMMIT}" \
             --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -t "momento-${RELEASE_TAG}" .
       - name: Export offline image only
@@ -90,6 +101,13 @@ jobs:
           echo "version endpoint: $reported"
           if ! echo "$reported" | grep -q "\"version\":\"${RELEASE_TAG#v}\""; then
             echo "::error title=Wrong version in artifact::expected ${RELEASE_TAG#v}, got $reported"
+            exit 1
+          fi
+          # And the commit it names has to be the tag's own, whichever trigger
+          # built it. A rebuild of an old tag that reports today's branch head
+          # sends anybody investigating to code the image does not contain.
+          if ! echo "$reported" | grep -q "\"commit\":\"${RELEASE_COMMIT}\""; then
+            echo "::error title=Wrong commit in artifact::expected ${RELEASE_COMMIT} for ${RELEASE_TAG}, got $reported"
             exit 1
           fi
 
