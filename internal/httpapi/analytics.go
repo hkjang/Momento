@@ -253,7 +253,7 @@ func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environme
 			count(*) FILTER(WHERE p.is_conversion),
 			count(DISTINCT p.entity) FILTER(WHERE p.is_conversion),
 			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
-			`+revenueAmountSQL("p")+`
+			`+insight.RevenueAmountSQL("p")+`
 		FROM period p`, siteID, from, to, environment).
 		Scan(&m.Users, &m.NewUsers, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.UserConversionRate, &m.Revenue)
 	if err != nil {
@@ -623,21 +623,6 @@ type queryRequest struct {
 	Limit int `json:"limit"`
 }
 
-// revenueAmountSQL is the one definition of the money on a purchase. The tracker
-// accepts either property name, and every report read both — except the query
-// builder, which read only `value` and reported zero revenue for a site that
-// sends `revenue`. Same metric name, same screen family, different answer, and
-// no error to reveal it.
-func revenueAmountSQL(alias string) string {
-	prefix := ""
-	if alias != "" {
-		prefix = alias + "."
-	}
-	amount := "coalesce(" + prefix + "properties->>'value'," + prefix + "properties->>'revenue')"
-	return "coalesce(sum(CASE WHEN " + prefix + "event_name='purchase' AND coalesce(" + amount +
-		",'') ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN " + amount + "::numeric ELSE 0 END),0)"
-}
-
 var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT e.entity_id)", // sessions counts the sessions with activity in the range, which is what a
 	// dimensional breakdown needs: sessions that saw a page, arrived from a
 	// channel, used a feature. sessions_started counts the ones that began in the
@@ -645,7 +630,7 @@ var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT
 	// add up. They differ by the sessions open at the boundary — every session
 	// running at midnight — so both exist under names that say which is which.
 	"sessions":         "count(DISTINCT e.session_id)",
-	"sessions_started": "count(DISTINCT e.session_id) FILTER(WHERE EXISTS(SELECT 1 FROM sessions started WHERE started.site_id=$1 AND started.environment=$4 AND started.session_id=e.session_id AND started.started_at >= $2 AND started.started_at < $3))", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.entity_id),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": revenueAmountSQL("e")}
+	"sessions_started": "count(DISTINCT e.session_id) FILTER(WHERE EXISTS(SELECT 1 FROM sessions started WHERE started.site_id=$1 AND started.environment=$4 AND started.session_id=e.session_id AND started.started_at >= $2 AND started.started_at < $3))", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.entity_id),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": insight.RevenueAmountSQL("e")}
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	var in queryRequest

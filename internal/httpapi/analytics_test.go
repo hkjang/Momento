@@ -76,6 +76,11 @@ func TestNormalizePathView(t *testing.T) {
 // So every read is classified and none may be skipped. A read is either paired
 // with `revenue` in the same expression, or it belongs to a web vital, where the
 // property has no second name. Anything else is the defect this exists for.
+//
+// The expression itself now exists once, in insight.RevenueAmountSQL, and the
+// second half of this test is what keeps it that way: seven copies agreed with
+// each other for as long as nobody edited one of them, and agreement that rests
+// on nobody editing anything is not a property, it is luck.
 func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
 	t.Parallel()
 
@@ -127,11 +132,33 @@ func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
 	}
 	// A floor on both kinds, so a change in how the source is written fails here
 	// rather than quietly reducing this to the three expressions it used to see.
-	if revenue < 15 {
-		t.Fatalf("found only %d revenue expressions, so the pattern no longer matches the source", revenue)
+	// The revenue floor is low because there is one definition now; it is here to
+	// fail if the pattern stops matching the source at all.
+	if revenue < 1 {
+		t.Fatalf("found no revenue expression, so the pattern no longer matches the source")
 	}
 	if vitals < 8 {
 		t.Fatalf("found only %d web vital expressions, so the pattern no longer matches the source", vitals)
 	}
 	t.Logf("checked %d revenue expressions and %d web vital reads across %d files", revenue, vitals, len(files))
+
+	// And the money is summed in one place. A second copy would agree with the
+	// first on the day it was written and there would be nothing to say when it
+	// stopped — the scheduled digest and the landing screen are computed in
+	// different packages and report the same number to the same person.
+	sum := regexp.MustCompile(`coalesce\(sum\(CASE WHEN (?:[a-z]+\.)?event_name='purchase'`)
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") || filepath.Base(file) == "revenue.go" {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		for _, location := range sum.FindAllStringIndex(string(source), -1) {
+			line := strings.Count(string(source)[:location[0]], "\n") + 1
+			t.Errorf("%s:%d writes out the purchase revenue sum by hand instead of calling insight.RevenueAmountSQL: a copy agrees with the definition only until somebody edits one of them",
+				file, line)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/hkjang/Momento/internal/insight"
 	"log/slog"
 	"time"
 
@@ -178,10 +179,10 @@ SELECT a.site_id,a.session_id,a.visitor_id,a.user_id,a.started_at,a.last_event_a
 FROM aggregates a JOIN sites site ON site.id=a.site_id
 LEFT JOIN property_sets p ON p.site_id=a.site_id AND p.environment=a.environment AND p.session_id=a.session_id`
 
-const rebuildDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+var rebuildDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
 SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,count(*),
 	count(*) FILTER(WHERE e.event_name='page_view'),count(*) FILTER(WHERE e.is_conversion),
-	coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value',e.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(e.properties->>'value',e.properties->>'revenue')::numeric ELSE 0 END),0)
+	` + insight.RevenueAmountSQL("e") + `
 FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE e.site_id=$1
 GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment`
 
@@ -203,10 +204,10 @@ FROM raw_events e JOIN sites s ON s.id=e.site_id
 LEFT JOIN visitor_identities i ON i.site_id=e.site_id AND i.visitor_id=e.visitor_id
 WHERE e.site_id=$1 GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,e.session_id`
 
-const rebuildRangeDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
+var rebuildRangeDailyMetricsSQL = `INSERT INTO daily_site_metrics(site_id,event_date,environment,events,page_views,conversions,revenue)
 SELECT e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment,count(*),
 	count(*) FILTER(WHERE e.event_name='page_view'),count(*) FILTER(WHERE e.is_conversion),
-	coalesce(sum(CASE WHEN e.event_name='purchase' AND coalesce(e.properties->>'value',e.properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(e.properties->>'value',e.properties->>'revenue')::numeric ELSE 0 END),0)
+	` + insight.RevenueAmountSQL("e") + `
 FROM raw_events e JOIN sites s ON s.id=e.site_id
 WHERE e.site_id=$1 AND e.environment=$2 AND (e.event_timestamp AT TIME ZONE s.timezone)::date >= $3::date AND (e.event_timestamp AT TIME ZONE s.timezone)::date <= $4::date
 GROUP BY e.site_id,(e.event_timestamp AT TIME ZONE s.timezone)::date,e.environment`

@@ -209,7 +209,7 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 	case "overview", "insights":
 		var users, events, conversions, errors int64
 		var revenue float64
-		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE is_conversion),count(*) FILTER(WHERE event_name=ANY($5)),coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&users, &events, &conversions, &errors, &revenue)
+		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE is_conversion),count(*) FILTER(WHERE event_name=ANY($5)),`+insight.RevenueAmountSQL("")+`::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&users, &events, &conversions, &errors, &revenue)
 		if err != nil {
 			return nil, err
 		}
