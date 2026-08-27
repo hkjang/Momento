@@ -113,6 +113,12 @@ func frictionEvidence(impact frictionImpact) string {
 // totals and the per-signal counts are read from it, so the two sides always
 // add up to the same population.
 func (s *Server) frictionImpactReport(ctx context.Context, siteID any, from, to time.Time, environment string) ([]frictionImpact, error) {
+	// The two site-wide totals are the same on every row, and they used to be
+	// carried there by cross joining a one row relation and taking max() of it.
+	// That one row cost four fifths of the report: 470ms with the cross join and
+	// 91ms with the totals read as scalars, on 200,000 events, for output that is
+	// identical value for value. Joining a relation, however small, puts it in the
+	// planner's hands; a scalar subquery is evaluated once and read.
 	rows, err := s.DB.Query(ctx, `WITH person AS (
 			SELECT entity_id, bool_or(is_conversion) converted
 			FROM analytics_events
@@ -124,8 +130,9 @@ func (s *Server) frictionImpactReport(ctx context.Context, siteID any, from, to 
 			FROM analytics_events
 			WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
 				AND event_name=ANY($5))
-		SELECT t.signal, count(*), count(*) FILTER(WHERE p.converted), max(o.people), max(o.converters)
-		FROM touched t JOIN person p ON p.entity_id=t.entity_id CROSS JOIN totals o
+		SELECT t.signal, count(*), count(*) FILTER(WHERE p.converted),
+			(SELECT people FROM totals), (SELECT converters FROM totals)
+		FROM touched t JOIN person p ON p.entity_id=t.entity_id
 		GROUP BY t.signal`, siteID, from, to, environment, frictionSignalNames)
 	if err != nil {
 		return nil, err
