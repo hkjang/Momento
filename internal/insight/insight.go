@@ -935,17 +935,21 @@ func (rep Reporter) insightLandingPages(ctx context.Context, siteID uuid.UUID, e
 // insightVisitorBuckets returns visit frequency and recency distributions plus the
 // counts behind the actionable audiences, in a single pass over the period.
 func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) ([]BucketRow, []BucketRow, map[string]int64, error) {
-	// first_at used to be read with a scalar subquery inside per_user, which ran
-	// once per person against an unbounded scan of the site. Grouping first and
-	// joining once is the same answer in one pass, and FirstSeenCTE now does that
-	// grouping over the daily rollup rather than over the events.
-	rows, err := rep.DB.Query(ctx, `WITH first_seen AS (`+FirstSeenCTE("$1", "$4", "$3")+`
-	), active AS (
+	// Three of the four answers below need only the period; the fourth needs to
+	// know when each person was first seen. Joining that in for all of them cost
+	// more than everything else the report does: the same four branches run in
+	// 97ms without the join and 454ms with it, over 200,000 events, because the
+	// planner has no idea how many people a period holds and plans the join for
+	// six million rows. The join moved into the one branch that needs it, over the
+	// few hundred rows left by then, and the answers are unchanged.
+	//
+	// It was a LEFT JOIN before and is an inner one here: a person with no
+	// first-seen row has no first visit to compare, so they never satisfied the
+	// condition this branch applies.
+	rows, err := rep.DB.Query(ctx, `WITH per_user AS (
 		SELECT entity_id,count(DISTINCT session_id) sessions,max(event_timestamp) last_at,bool_or(is_conversion) converted
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id
-	), per_user AS (
-		SELECT a.entity_id,a.sessions,a.last_at,a.converted,f.first_at
-		FROM active a LEFT JOIN first_seen f ON f.entity_id=a.entity_id
+	), first_seen AS (`+FirstSeenCTE("$1", "$4", "$3")+`
 	)
 	SELECT 'frequency',CASE WHEN sessions<=1 THEN '1' WHEN sessions<=3 THEN '2-3' WHEN sessions<=9 THEN '4-9' ELSE '10+' END,
 		count(*),count(*) FILTER(WHERE converted) FROM per_user GROUP BY 2
@@ -955,7 +959,8 @@ func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID,
 	UNION ALL
 	SELECT 'signal','loyal_not_converted',count(*),0 FROM per_user WHERE sessions>=3 AND NOT converted
 	UNION ALL
-	SELECT 'signal','single_visit_new',count(*),0 FROM per_user WHERE sessions<=1 AND first_at >= $2`, siteID, from, to, environment)
+	SELECT 'signal','single_visit_new',count(*),0 FROM per_user p JOIN first_seen f ON f.entity_id=p.entity_id
+		WHERE p.sessions<=1 AND f.first_at >= $2`, siteID, from, to, environment)
 	if err != nil {
 		return nil, nil, nil, err
 	}
