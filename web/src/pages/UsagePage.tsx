@@ -3,6 +3,7 @@ import ReactECharts from "../components/Chart";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { get, rangeQuery } from "../api/client";
+import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -29,6 +30,7 @@ export default function UsagePage() {
   const [tab, setTab] = useState(0);
   const q = useQuery({
     queryKey: ["usage", site?.site_id, site?.timezone],
+    placeholderData: keepWithinScope(site?.site_id),
     queryFn: () =>
       get<Usage>(
         `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(30, site!.timezone)}`,

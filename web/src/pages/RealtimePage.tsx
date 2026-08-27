@@ -6,6 +6,7 @@ import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
 import { get } from "../api/client";
+import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import MetricCard from "../components/MetricCard";
 import DataTable from "../components/DataTable";
@@ -25,6 +26,7 @@ export default function RealtimePage() {
   const [live, setLive] = useState(true);
   const q = useQuery({
     queryKey: ["realtime", site?.site_id, environment],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: () => get<Realtime>(`/api/v1/sites/${site!.site_id}/realtime`),
     enabled: !!site,
     refetchInterval: live ? 5000 : false,
@@ -51,7 +53,11 @@ export default function RealtimePage() {
             {live ? "Live · 5초마다 갱신" : "자동 갱신 일시정지"}
           </Typography>
         </Stack>
-        <Chip size="small" variant="outlined" label={environment.toUpperCase()} />
+        <Chip
+          size="small"
+          variant="outlined"
+          label={environment.toUpperCase()}
+        />
         {q.dataUpdatedAt > 0 && (
           <Typography
             variant="caption"

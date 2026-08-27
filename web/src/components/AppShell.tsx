@@ -15,6 +15,7 @@ import {
   List,
   ListItemButton,
   ListItemIcon,
+  LinearProgress,
   ListItemText,
   Menu,
   MenuItem,
@@ -57,12 +58,14 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
+import { useIsFetching } from "@tanstack/react-query";
 import {
   buildStamp,
   consoleVersion,
   shortCommit,
   useRuntimeVersion,
 } from "../version";
+import { useDelayedBusy } from "./useDelayedBusy";
 
 const drawerWidth = 272;
 
@@ -750,6 +753,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [profileAnchor, setProfileAnchor] = useState<HTMLElement | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const runtimeVersion = useRuntimeVersion();
+  // Every screen reads through React Query, so one subscription covers all of them
+  // and no page has to remember to report that it is loading.
+  const busy = useDelayedBusy(useIsFetching() > 0);
   const { user, logout } = useAuth();
   const { sites, site, select, environments, environment, selectEnvironment } =
     useSite();
@@ -918,6 +924,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
             backdropFilter: "blur(16px)",
           }}
         >
+          {/* One place says whether the console is waiting on the service. It sits
+              on the header's own border so nothing moves when it appears, and it
+              waits a moment before appearing at all: a bar that blinks on every
+              background refetch is noise, not feedback. */}
+          {busy && (
+            <LinearProgress
+              aria-label="데이터를 불러오는 중"
+              sx={{
+                position: "absolute",
+                bottom: -1,
+                left: 0,
+                right: 0,
+                height: 2,
+              }}
+            />
+          )}
           <Toolbar
             sx={{ minHeight: "68px!important", gap: { xs: 1, sm: 1.5 } }}
           >

@@ -2,12 +2,14 @@ import {
   Button,
   Card,
   Chip,
+  LinearProgress,
   MenuItem,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import { useDelayedBusy } from "./useDelayedBusy";
 
 export default function AnalysisToolbar({
   days,
@@ -28,8 +30,17 @@ export default function AnalysisToolbar({
   refresh(): void;
   comparePrevious?: boolean;
 }) {
+  // The screen keeps the previous numbers while the next ones load, so without
+  // this the only sign anything was happening was a disabled button.
+  const busy = useDelayedBusy(refreshing);
   return (
-    <Card variant="outlined" sx={{ px: 2, py: 1.4 }}>
+    <Card variant="outlined" sx={{ px: 2, py: 1.4, position: "relative" }}>
+      {busy && (
+        <LinearProgress
+          aria-label="새 기간을 불러오는 중"
+          sx={{ position: "absolute", top: 0, left: 0, right: 0, height: 2 }}
+        />
+      )}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         alignItems={{ sm: "center" }}
@@ -63,14 +74,20 @@ export default function AnalysisToolbar({
           spacing={1}
           sx={{ ml: { sm: "auto!important" } }}
         >
-          {updatedAt > 0 && (
+          {busy ? (
             <Typography variant="caption" color="text.secondary" noWrap>
-              {new Date(updatedAt).toLocaleTimeString("ko-KR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-              에 갱신
+              불러오는 중
             </Typography>
+          ) : (
+            updatedAt > 0 && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                {new Date(updatedAt).toLocaleTimeString("ko-KR", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                에 갱신
+              </Typography>
+            )
           )}
           <Button
             variant="outlined"

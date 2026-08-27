@@ -9,6 +9,7 @@ import ReactECharts from "../components/Chart";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { get, rangeQuery } from "../api/client";
+import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import RangeSelect from "../components/RangeSelect";
@@ -42,6 +43,7 @@ export default function EcommercePage() {
   const [days, setDays] = useState(30);
   const query = useQuery({
     queryKey: ["ecommerce", site?.site_id, site?.timezone, days],
+    placeholderData: keepWithinScope(site?.site_id),
     queryFn: () =>
       get<EcommerceData>(
         `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(days, site!.timezone)}`,
@@ -50,7 +52,14 @@ export default function EcommercePage() {
   });
   const narrower = narrowerRange(days);
   if (!site) return <NoSite />;
-  const range = <RangeSelect days={days} setDays={setDays} maxExactDays={site.max_exact_days} timezone={site.timezone} />;
+  const range = (
+    <RangeSelect
+      days={days}
+      setDays={setDays}
+      maxExactDays={site.max_exact_days}
+      timezone={site.timezone}
+    />
+  );
   if (query.isLoading)
     return (
       <Stack spacing={2}>

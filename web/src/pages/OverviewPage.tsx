@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Alert, Box, Button, Card, Chip, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Chip,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import InsightsRounded from "@mui/icons-material/InsightsRounded";
 import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
@@ -10,18 +18,24 @@ import AdsClickOutlined from "@mui/icons-material/AdsClickOutlined";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
 import { get, rangeQuery } from "../api/client";
+import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import AnalysisToolbar from "../components/AnalysisToolbar";
-import { buildAttentionItems, type AttentionSeverity, type GoalEvaluation } from "./attention";
+import {
+  buildAttentionItems,
+  type AttentionSeverity,
+  type GoalEvaluation,
+} from "./attention";
 import type { AnomalyReport } from "./visitorInsights";
 
-const attentionColor: Record<AttentionSeverity, "error" | "warning" | "info"> = {
-  critical: "error",
-  warning: "warning",
-  info: "info",
-};
+const attentionColor: Record<AttentionSeverity, "error" | "warning" | "info"> =
+  {
+    critical: "error",
+    warning: "warning",
+    info: "info",
+  };
 
 const attentionLabel: Record<AttentionSeverity, string> = {
   critical: "심각",
@@ -63,6 +77,7 @@ export default function OverviewPage() {
   const [days, setDays] = useState(30);
   const q = useQuery({
     queryKey: ["overview", site?.site_id, site?.timezone, environment, days],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: () =>
       get<Overview>(
         `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(days, site!.timezone)}`,
@@ -73,15 +88,21 @@ export default function OverviewPage() {
   // metric registry, so the landing screen stays fast.
   const anomalies = useQuery({
     queryKey: ["overview-anomalies", site?.site_id, environment],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: () =>
-      get<AnomalyReport>(`/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`),
+      get<AnomalyReport>(
+        `/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`,
+      ),
   });
   const goals = useQuery({
     queryKey: ["overview-goals", site?.site_id, environment],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: () =>
-      get<GoalEvaluation[]>(`/api/v1/sites/${site!.site_id}/metric-goals/evaluate`),
+      get<GoalEvaluation[]>(
+        `/api/v1/sites/${site!.site_id}/metric-goals/evaluate`,
+      ),
   });
   if (!site) return <NoSite />;
   const attention = buildAttentionItems(
@@ -153,7 +174,12 @@ export default function OverviewPage() {
             <Stack spacing={1.2}>
               {attention.items.map((item) => (
                 <Card key={item.id} variant="outlined" sx={{ p: 1.8 }}>
-                  <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                  <Stack
+                    direction="row"
+                    gap={1}
+                    alignItems="center"
+                    flexWrap="wrap"
+                  >
                     <Chip
                       size="small"
                       color={attentionColor[item.severity]}
@@ -177,7 +203,8 @@ export default function OverviewPage() {
               ))}
               {attention.hidden > 0 && (
                 <Typography variant="caption" color="text.secondary">
-                  그 외 {attention.hidden}건은 방문자 인사이트와 Goal 화면에서 확인하십시오.
+                  그 외 {attention.hidden}건은 방문자 인사이트와 Goal 화면에서
+                  확인하십시오.
                 </Typography>
               )}
             </Stack>
