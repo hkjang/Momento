@@ -88,13 +88,19 @@ func (e rangeExceedsPolicy) Error() string {
 // writeRangeError answers a bad range. A range the site's policy forbids is a
 // different problem from a malformed one — one is fixed by choosing a shorter
 // period, the other by correcting the dates — so they do not share a code.
+//
+// The malformed case used to call this function again instead of answering. Every
+// report endpoint routes a bad from/to through here, so one request with an
+// unparseable date recursed until the stack ran out, and a Go stack overflow is
+// fatal: it is not a panic the recoverer can catch, so the process died and took
+// every other request with it.
 func writeRangeError(w http.ResponseWriter, err error) {
 	var policy rangeExceedsPolicy
 	if errors.As(err, &policy) {
 		writeError(w, 400, "RANGE_EXCEEDS_POLICY", err.Error())
 		return
 	}
-	writeRangeError(w, err)
+	writeError(w, 400, "INVALID_RANGE", err.Error())
 }
 
 func (s *Server) enforceRangePolicy(ctx context.Context, siteID uuid.UUID, from, to time.Time) error {
