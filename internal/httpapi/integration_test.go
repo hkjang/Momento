@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/database"
@@ -2334,4 +2336,108 @@ func TestRoleGrantsCannotExceedTheCallersOwnAuthority(t *testing.T) {
 			t.Errorf("the fixture administrator is now %q", role)
 		}
 	})
+}
+
+// A personal API key is for reading analytics from a script or a BI tool. It is
+// never an administrator and never makes an interactive change, and that rests
+// entirely on each route being wrapped in the middleware that refuses one. A route
+// added without the wrapper would hand a key whatever its owner's role allows, and
+// nothing would say so — the key would simply start working where it should not.
+//
+// Measured across every mutating route: 51 of 57 refuse a key outright, and the
+// six that reach a handler are reads that use POST only because the question does
+// not fit in a query string. That is the shape this holds in place.
+func TestAPersonalAPIKeyCannotChangeAnything(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	// The key belongs to the fixture's super administrator, so nothing here is
+	// explained by a weak owner: if the confinement leaks, it leaks at full
+	// authority.
+	var owner uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT u.id FROM users u JOIN user_sessions s ON s.user_id=u.id WHERE s.token_hash=$1`, auth.HashToken(f.sessionCook)).Scan(&owner); err != nil {
+		t.Fatalf("find the key owner: %v", err)
+	}
+	plain, hash, prefix, err := auth.NewToken("mom_key_", 32)
+	if err != nil {
+		t.Fatalf("mint a key: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO api_keys(user_id,name,key_hash,key_prefix) VALUES($1,'confinement probe',$2,$3)`, owner, hash, prefix); err != nil {
+		t.Fatalf("store the key: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM api_keys WHERE key_hash=$1`, hash)
+	})
+
+	// Reads that have to be POSTed because the question is a document, not a query
+	// string. Adding to this list is a decision to let keys reach a new handler,
+	// which is the moment to check it changes nothing.
+	readsSentAsPosts := map[string]bool{
+		"POST /api/v1/query":                                     true,
+		"POST /api/v1/funnel":                                    true,
+		"POST /api/v1/sites/{siteID}/natural-query":              true,
+		"POST /api/v1/sites/{siteID}/journeys/analyze":           true,
+		"POST /api/v1/sites/{siteID}/workspace-journeys/analyze": true,
+		"POST /api/v1/sites/{siteID}/event-contracts/validate":   true,
+	}
+
+	mux, ok := f.server.Handler().(*chi.Mux)
+	if !ok {
+		t.Fatalf("the handler is %T, not a chi router", f.server.Handler())
+	}
+	type route struct{ method, pattern string }
+	routes := []route{}
+	if err := chi.Walk(mux, func(method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		pattern = strings.TrimSuffix(pattern, "/")
+		switch method {
+		case http.MethodGet, http.MethodOptions, http.MethodHead:
+			return nil
+		}
+		// Signing in is how a session is obtained; it is not a change to the data.
+		if !strings.HasPrefix(pattern, "/api/v1") || strings.HasPrefix(pattern, "/api/v1/auth") {
+			return nil
+		}
+		routes = append(routes, route{method, pattern})
+		return nil
+	}); err != nil {
+		t.Fatalf("walk the router: %v", err)
+	}
+	if len(routes) < 40 {
+		t.Fatalf("found only %d mutating routes, so this is no longer walking the router it thinks it is", len(routes))
+	}
+
+	unexpected := []string{}
+	for _, r := range routes {
+		path := strings.ReplaceAll(r.pattern, "{siteID}", f.siteKey)
+		path = strings.ReplaceAll(path, "{id}", uuid.NewString())
+		path = strings.ReplaceAll(path, "{key}", "privacy")
+		path = strings.ReplaceAll(path, "{name}", "probe")
+		request := httptest.NewRequest(r.method, path, strings.NewReader(`{}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Authorization", "Bearer "+plain)
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		refused := recorder.Code == http.StatusUnauthorized || recorder.Code == http.StatusForbidden
+		operation := r.method + " " + r.pattern
+		if refused || readsSentAsPosts[operation] {
+			continue
+		}
+		unexpected = append(unexpected, fmt.Sprintf("%s answered %d", operation, recorder.Code))
+	}
+	sort.Strings(unexpected)
+	if len(unexpected) > 0 {
+		t.Errorf("a personal API key reached %d handlers that change something:\n  %s\n\nA key is for reading. If one of these is a read that has to be POSTed, add it to readsSentAsPosts after checking it writes nothing.",
+			len(unexpected), strings.Join(unexpected, "\n  "))
+	}
+	// The other direction: an entry that no longer exists is a stale exemption.
+	served := map[string]bool{}
+	for _, r := range routes {
+		served[r.method+" "+r.pattern] = true
+	}
+	for operation := range readsSentAsPosts {
+		if !served[operation] {
+			t.Errorf("readsSentAsPosts exempts %q, which this server no longer serves", operation)
+		}
+	}
 }

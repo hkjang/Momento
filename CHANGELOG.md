@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.33.2
+
+- Swept what a personal API key can reach, with real requests against every mutating route rather than by reading the middleware. **No defect: 51 of 57 refuse a key outright, and the six that reach a handler are reads that use POST only because the question does not fit in a query string** — the query builder, the funnel, natural-language query, two journey analyses and contract validation. None of them writes.
+- That confinement rests entirely on each route being wrapped, and a route added without the wrapper would hand a key whatever its owner's role allows with nothing to say so. A test now walks the router and fails, naming the route, when a mutating one answers a key. Confirmed by adding one. The key it uses belongs to a super administrator, so a leak would leak at full authority.
+- The RBAC table in the admin guide still said a Workspace Admin can change PII rules, which stopped being true in v0.33.1. Corrected, along with what a workspace administrator can now reach and the rule that no one may change their own role or grant one above it.
+- Documented what an API key can do, which was nowhere: never administration regardless of the owner's role, no writes, every site the owner can see and no way to narrow that, and `scopes` carries the same value on every key — the limits come from the authentication layer, not from that field.
+
 ## v0.33.1
 
 - **A workspace_admin could promote itself to super_admin.** `PATCH /api/v1/users/{id}` sat behind the admin middleware, which means "at least workspace_admin", and nothing bounded the role being granted. Measured: as a workspace_admin of one workspace, `{"role":"super_admin"}` on its own account answered 200 and the next request satisfied every workspace check in the service. `POST /api/v1/users` was the same door — it accepted any role, so a super_admin account could be created outright with a known password.
