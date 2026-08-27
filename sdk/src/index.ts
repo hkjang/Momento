@@ -69,6 +69,32 @@ interface QueuedEvent {
  * Rage clicks follow the industry convention of three clicks on one element
  * inside a second; a slow interaction is the "poor" end of the INP scale.
  */
+/**
+ * The identifier identify() refuses. It becomes the user id on every event, in
+ * the visitor and identified-user tables, on the identities screen and in every
+ * export — and the collector's privacy filter does not look at it. It walks user
+ * properties, session properties, event properties, items and the page URL,
+ * title and referrer; the user id is not among them, so this is the only place
+ * that decides.
+ *
+ * It used to be `@` or eight consecutive digits, which let through the way a
+ * Korean phone number and a resident registration number are actually written:
+ * 010-1234-5678 and 860101-1234567 have no run of eight digits in them. These
+ * are the shapes the collector already masks everywhere else, so the two halves
+ * now refuse the same things. The long-digit rule is kept alongside them, so
+ * this only ever refuses more than it did.
+ */
+const PII_IDENTIFIER = [
+  /@/,
+  /\+?\d{8,}/,
+  /(?:\+?82[- ]?)?0?1[016789][- ]?\d{3,4}[- ]?\d{4}/,
+  /\b\d{6}[- ]?[1-8]\d{6}\b/,
+];
+
+function looksLikeAPerson(value: string): boolean {
+  return PII_IDENTIFIER.some((pattern) => pattern.test(value));
+}
+
 const RAGE_CLICK_WINDOW_MS = 1000;
 const RAGE_CLICK_THRESHOLD = 3;
 const DEAD_CLICK_WINDOW_MS = 1200;
@@ -368,7 +394,7 @@ export class MomentoTracker {
   }
 
   identify(userId: string, properties: Properties = {}) {
-    if (!userId || /@|\+?\d{8,}/.test(userId)) {
+    if (!userId || looksLikeAPerson(userId)) {
       console.error(
         "[Momento] userId must be a non-PII internal or pseudonymous identifier",
       );

@@ -691,3 +691,67 @@ test("a new session after a timeout is not credited to the old campaign", async 
     Date.now = realNow;
   }
 });
+
+// identify() is where a browser says who somebody is, and the identifier it
+// accepts becomes the user id on every event, in visitors, in identified_users,
+// on the identities screen and in every export. The tracker refuses one that
+// looks like PII.
+//
+// Nothing tested that. The server's privacy filter walks user properties,
+// session properties, event properties, items and the page URL, title and
+// referrer — it does not look at the user id, so this guard is the only thing
+// between a careless integration and an email address stored as an identifier.
+test("identify refuses an identifier that looks like a person", async () => {
+  const storage = new MemoryStorage();
+  setGlobal("localStorage", storage);
+  setGlobal("sessionStorage", storage);
+  setGlobal("location", new URL("https://service.internal/page"));
+  const deliveries = [];
+  setGlobal("fetch", async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true, status: 202 };
+  });
+  const errors = [];
+  const realError = console.error;
+  console.error = (...args) => errors.push(args.join(" "));
+
+  try {
+    const tracker = new MomentoTracker();
+    tracker.init({
+      siteId: "SITE_IDENTIFY",
+      endpoint: "https://analytics.internal",
+      autoTrack: false,
+    });
+
+    for (const refused of [
+      "person@example.com",
+      "010-1234-5678",
+      "01012345678",
+      "+82 10 1234 5678",
+      "860101-1234567",
+      "8601011234567",
+      "20260827",
+      "",
+    ]) {
+      tracker.identify(refused, { department: "기술" });
+    }
+    tracker.track("page_view", {});
+    await tracker.flush();
+    assert.equal(
+      deliveries.at(-1).user_id,
+      undefined,
+      `an identifier that looks like PII was accepted: ${deliveries.at(-1).user_id}`,
+    );
+    assert.ok(errors.length >= 7, "a refused identifier was not reported to the developer");
+
+    // And an internal identifier is accepted, or the guard would be refusing
+    // everything and passing this test for the wrong reason.
+    tracker.identify("EMP-4821", { department: "기술" });
+    tracker.track("click", {});
+    await tracker.flush();
+    assert.equal(deliveries.at(-1).user_id, "EMP-4821");
+    assert.equal(deliveries.at(-1).user_properties.department, "기술");
+  } finally {
+    console.error = realError;
+  }
+});
