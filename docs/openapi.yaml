@@ -171,10 +171,22 @@ paths:
       responses: {'200': {description: Data deleted or property scrubbed}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/funnel:
     post:
-      description: Send compare_segment_ids (up to 3) to run the same funnel per segment beside the baseline; the response then also carries series and comparison.
-      description: Send compare_segment_ids (up to 3) to run the same funnel per segment beside the baseline; the response then also carries series and comparison.
+      # The date range is flat here and nested under date_range on /api/v1/query.
+      # Both are POST analytics endpoints and the difference surprises anyone who
+      # writes against one and then the other, so the body is spelled out rather
+      # than left to be discovered from a 400.
+      description: >
+        Send compare_segment_ids (up to 3) to run the same funnel per segment beside
+        the baseline; the response then also carries series and comparison. Note that
+        the date range is given as flat from and to fields, unlike /api/v1/query which
+        nests them under date_range.
       summary: Analyze an open or closed 2-10 step event funnel with segment and property conditions
-      responses: {'200': {description: Funnel steps}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FunnelRequest'}
+      responses: {'200': {description: Funnel steps}, '400': {$ref: '#/components/responses/Error'}, '404': {$ref: '#/components/responses/Error'}}
   /api/v1/sites/{siteId}/environments:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:
@@ -766,6 +778,30 @@ components:
         timezone: {type: string, examples: [Asia/Seoul]}
         engagement_threshold_seconds: {type: integer, minimum: 1, maximum: 300, default: 10}
         active: {type: boolean}
+    FunnelRequest:
+      type: object
+      required: [site_id, from, to, steps]
+      properties:
+        site_id: {type: string}
+        environment: {type: string, default: prd}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        mode: {type: string, enum: [exact, fast, preview], default: exact}
+        within_minutes: {type: integer, description: Close the funnel to this window; omit for an open funnel}
+        segment_id: {type: string, format: uuid}
+        compare_segment_ids: {type: array, maxItems: 3, items: {type: string, format: uuid}}
+        steps:
+          type: array
+          minItems: 2
+          maxItems: 10
+          items:
+            type: object
+            required: [event]
+            properties:
+              event: {type: string}
+              property: {type: string}
+              operator: {type: string}
+              value: {}
     QueryRequest:
       type: object
       required: [site_id, date_range, metrics]

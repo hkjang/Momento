@@ -1094,3 +1094,165 @@ func (f fixture) callMCP(t *testing.T, tool, arguments string) string {
 	}
 	return fmt.Sprint(item["text"])
 }
+
+// Every report builds its own SQL. When two of them answer the same question
+// differently, an operator with both screens open stops trusting either, and
+// there is no error anywhere to find — that is how the average session duration
+// came to read 960 on one screen and 720 on another.
+//
+// This asks one question through every screen that can answer it and compares.
+// The fixture alone cannot do that: it reports 90 sessions, 90 page views and 90
+// conversions, so a report returning the wrong one of those would look like
+// agreement. A batch is ingested first to pull them apart — 7 page views, 2
+// purchases and one add to cart in a single new session — so each number is
+// distinct before anything is compared.
+func TestTheScreensAgreeOnTheSameQuestion(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+	from, today := f.siteDates(t, 30)
+	site := "/api/v1/sites/" + f.siteKey
+	rng := fmt.Sprintf("?from=%s&to=%s", from, today)
+
+	now := time.Now().UnixMilli()
+	parts := []string{}
+	for index := 0; index < 7; index++ {
+		parts = append(parts, fmt.Sprintf(`{"id":%q,"name":"page_view","timestamp":%d,"contract_version":1}`, uuid.NewString(), now-int64(index*1000)))
+	}
+	for index := 0; index < 2; index++ {
+		parts = append(parts, fmt.Sprintf(`{"id":%q,"name":"purchase","timestamp":%d,"properties":{"value":1500},"contract_version":1}`, uuid.NewString(), now-int64(index*500)))
+	}
+	parts = append(parts, fmt.Sprintf(`{"id":%q,"name":"add_to_cart","timestamp":%d,"contract_version":1}`, uuid.NewString(), now))
+	payload := fmt.Sprintf(`{"site_id":%q,"environment":"prd","tracking_key":%q,"visitor_id":"agreement-visitor","session_id":"agreement-session",
+		"context":{"page":{"url":"https://portal.internal/agree","title":"Agree"},"device":{"browser":"Chrome","os":"Windows","type":"desktop"},"traffic":{"source":"google","medium":"organic"}},
+		"events":[%s]}`, f.siteKey, f.trackingKey, strings.Join(parts, ","))
+	request := httptest.NewRequest(http.MethodPost, "/collect/v1/events", strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "https://portal.internal")
+	recorder := httptest.NewRecorder()
+	f.server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("ingest the distinguishing batch: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("process the batch: %v", err)
+	}
+
+	number := func(v any) float64 { n, _ := v.(float64); return n }
+	overview := f.get(t, site+"/overview"+rng)
+	current, _ := overview["current"].(map[string]any)
+	rowsOf := func(path string) []any {
+		body := f.get(t, path)
+		if list, ok := body["list"].([]any); ok {
+			return list
+		}
+		return nil
+	}
+	sessions := rowsOf(site + "/sessions" + rng)
+	pages := rowsOf(site + "/pages" + rng)
+	events := rowsOf(site + "/events" + rng)
+	sum := func(rows []any, key string) float64 {
+		total := 0.0
+		for _, row := range rows {
+			r, _ := row.(map[string]any)
+			total += number(r[key])
+		}
+		return total
+	}
+	eventRow := func(name string) map[string]any {
+		for _, row := range events {
+			r, _ := row.(map[string]any)
+			if fmt.Sprint(r["event"]) == name {
+				return r
+			}
+		}
+		return map[string]any{}
+	}
+	compared := 0
+	agree := func(question string, left float64, leftName string, right float64, rightName string) {
+		t.Helper()
+		compared++
+		if left != right {
+			t.Errorf("%s: %s says %.0f, %s says %.0f — an operator with both screens open cannot tell which is wrong",
+				question, leftName, left, rightName, right)
+		}
+	}
+
+	// The fixture's own numbers have to differ from each other, or agreeing proves
+	// nothing about which number each screen returned.
+	distinct := map[float64]string{}
+	for name, value := range map[string]float64{
+		"sessions":    number(current["sessions"]),
+		"page_views":  number(current["page_views"]),
+		"conversions": number(current["conversions"]),
+		"events":      number(current["events"]),
+	} {
+		if other, clash := distinct[value]; clash {
+			t.Fatalf("%s and %s are both %.0f, so this test cannot tell them apart", name, other, value)
+		}
+		distinct[value] = name
+	}
+
+	agree("sessions", number(current["sessions"]), "the overview", float64(len(sessions)), "the sessions report")
+	agree("page views", number(current["page_views"]), "the overview", sum(pages, "views"), "the pages report")
+	agree("events", number(current["events"]), "the overview", sum(events, "count"), "the events report")
+	agree("conversions", number(current["conversions"]), "the overview", sum(events, "conversions"), "the events report")
+
+	built := f.do(t, http.MethodPost, "/api/v1/query", fmt.Sprintf(
+		`{"site_id":%q,"environment":"prd","date_range":{"from":%q,"to":%q},"dimensions":[],"metrics":["users","sessions","page_views","events","conversions"],"filters":[],"limit":10}`,
+		f.siteKey, from, today))
+	queried, _ := built["rows"].([]any)
+	if len(queried) == 0 {
+		t.Fatalf("the query builder answered no rows: %v", built)
+	}
+	row, _ := queried[0].(map[string]any)
+	for _, metric := range []string{"users", "sessions", "page_views", "events", "conversions"} {
+		agree("query builder "+metric, number(current[metric]), "the overview", number(row[metric]), "the query builder")
+	}
+
+	ecommerce := f.get(t, site+"/ecommerce"+rng)
+	summary, _ := ecommerce["summary"].(map[string]any)
+	agree("revenue", number(current["revenue"]), "the overview", number(summary["revenue"]), "the ecommerce report")
+	agree("transactions", number(summary["transactions"]), "the ecommerce report", number(eventRow("purchase")["count"]), "the events report")
+	agree("buyers", number(summary["buyers"]), "the ecommerce report", number(eventRow("purchase")["users"]), "the events report")
+	steps, _ := ecommerce["funnel"].([]any)
+	for _, step := range steps {
+		s, _ := step.(map[string]any)
+		name := fmt.Sprint(s["event"])
+		agree("people who did "+name, number(s["users"]), "the ecommerce funnel", number(eventRow(name)["users"]), "the events report")
+	}
+
+	funnel := f.do(t, http.MethodPost, "/api/v1/funnel", fmt.Sprintf(
+		`{"site_id":%q,"environment":"prd","from":%q,"to":%q,"steps":[{"event":"page_view"},{"event":"purchase"}]}`,
+		f.siteKey, from, today))
+	funnelSteps, _ := funnel["steps"].([]any)
+	if len(funnelSteps) != 2 {
+		t.Fatalf("the funnel answered %d steps for a two step funnel", len(funnelSteps))
+	}
+	for _, step := range funnelSteps {
+		s, _ := step.(map[string]any)
+		name := fmt.Sprint(s["event"])
+		agree("people who did "+name, number(s["users"]), "the funnel", number(eventRow(name)["users"]), "the events report")
+	}
+
+	rollup := f.get(t, site+"/workspace-rollup"+rng)
+	services, _ := rollup["services"].([]any)
+	found := false
+	for _, service := range services {
+		r, _ := service.(map[string]any)
+		if fmt.Sprint(r["site_id"]) != f.siteKey {
+			continue
+		}
+		found = true
+		for _, metric := range []string{"users", "sessions", "events"} {
+			agree("workspace rollup "+metric, number(current[metric]), "the overview", number(r[metric]), "the workspace rollup")
+		}
+	}
+	if !found {
+		t.Errorf("the workspace rollup does not list this site at all: %v", services)
+	}
+	if compared < 18 {
+		t.Fatalf("only %d comparisons ran, so a screen stopped answering rather than started disagreeing", compared)
+	}
+	t.Logf("%d numbers compared across seven screens", compared)
+}

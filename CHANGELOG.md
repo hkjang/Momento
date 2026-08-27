@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.33.3
+
+- Asked one question through every screen that can answer it and compared: sessions, page views, events, conversions, revenue, transactions, buyers, the ecommerce and analysis funnels, the query builder and the workspace rollup. **21 numbers across seven screens, all agreeing.** Every report builds its own SQL, and when two disagree there is no error to find — an operator with both screens open simply stops trusting each.
+- The fixture alone could not have shown that: it reports 90 sessions, 90 page views and 90 conversions, so a report returning the wrong one of those would have looked like agreement. The test ingests a batch first to pull the numbers apart, and refuses to run if any two of them are still equal.
+- Confirmed the comparison catches a real drift by making the pages report count every event instead of page views: `page views: the overview says 97, the pages report says 667`.
+- `/api/v1/funnel` had no request body in the OpenAPI document, and its `description` key was written twice so the file silently kept one. Its date range is also flat `from` and `to` while `/api/v1/query` nests them under `date_range` — the difference cost a request to discover. The body is now specified, the duplicate is gone, and the difference is stated where a reader will meet it.
+
 ## v0.33.2
 
 - Swept what a personal API key can reach, with real requests against every mutating route rather than by reading the middleware. **No defect: 51 of 57 refuse a key outright, and the six that reach a handler are reads that use POST only because the question does not fit in a query string** — the query builder, the funnel, natural-language query, two journey analyses and contract validation. None of them writes.
