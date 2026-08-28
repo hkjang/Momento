@@ -62,9 +62,26 @@ type fixture struct {
 	segmentID   string
 }
 
-// seed builds a small but realistic site: two services in one workspace, an SSO user
-// active on both, an anonymous visitor, ten weeks of daily activity, sessions,
-// conversions, web vitals and errors.
+// seed builds a small but realistic site: two services in one workspace, an
+// anonymous visitor, ten weeks of daily activity, sessions, conversions, web
+// vitals and errors.
+//
+// The two services are not symmetrical, and tests are written against that.
+// SITE_MAIN carries the events. SITE_HR carries the identity link for the same
+// SSO person and a touch session per day — which is what workspace-scope
+// attribution reads, since it credits from sessions — and no events at all.
+//
+// That is deliberate and load-bearing in both directions. Several tests use the
+// second site as a blank canvas, where what they deliver is the whole of what
+// the report can see; integration_trend_test.go says so in as many words and its
+// comparison of a total against a chart is only meaningful because of it. And a
+// test that needs one person on two services in the event tables has to build
+// that itself, as integration_rollup_identity_test.go does.
+//
+// This comment used to say "an SSO user active on both", which read as events on
+// both and is how the cross-service reports came to be checked against a
+// workspace where nobody was on two services. TestTheFixtureIsWhatItSaysItIs
+// holds the description and the data together.
 func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	t.Helper()
 	ctx := context.Background()

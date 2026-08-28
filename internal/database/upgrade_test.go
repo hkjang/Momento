@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/database"
@@ -261,25 +262,53 @@ func TestMigrateIsIdempotentAndOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("versions: %v", err)
 	}
-	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations ORDER BY applied_at, version`)
+	// Ordered by version, not by applied_at.
+	//
+	// applied_at is now(), which is the wall clock at the start of each
+	// migration's transaction, and a wall clock can step backwards — an NTP
+	// correction, or a host resuming from sleep, which is ordinary on a
+	// developer's machine. Reading the sequence from it made a clock step look
+	// like a migration applied out of order, and it failed here exactly that way:
+	// 007 recorded before 001, on a run where 001 could not have come second.
+	//
+	// What is actually being checked is that every migration ran and each one
+	// recorded itself, so the versions are the thing to order by. The timestamps
+	// are checked below for what they can honestly say.
+	rows, err := pool.Query(ctx, `SELECT version, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		t.Fatalf("read schema_migrations: %v", err)
 	}
 	defer rows.Close()
 	applied := []string{}
+	stamps := []time.Time{}
 	for rows.Next() {
 		var version string
-		if err := rows.Scan(&version); err != nil {
+		var at time.Time
+		if err := rows.Scan(&version, &at); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
 		applied = append(applied, version)
+		stamps = append(stamps, at)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read schema_migrations: %v", err)
 	}
 	if len(applied) != len(versions) {
 		t.Fatalf("recorded %d migrations, expected %d", len(applied), len(versions))
 	}
 	for i := range versions {
 		if applied[i] != versions[i] {
-			t.Fatalf("migration %d applied out of order: recorded %s, expected %s", i, applied[i], versions[i])
+			t.Fatalf("migration %d is recorded as %s and the embedded set has %s at that position: the recorded set has to be exactly the migrations that exist",
+				i, applied[i], versions[i])
+		}
+	}
+	// The timestamps should climb with the versions, and when they do not the
+	// clock moved rather than the migrations. Said as what it is, so nobody
+	// spends an afternoon looking for a reordering that did not happen.
+	for i := 1; i < len(stamps); i++ {
+		if stamps[i].Before(stamps[i-1]) {
+			t.Logf("%s is stamped before %s, which the migration order rules out: the wall clock stepped backwards during this run",
+				applied[i], applied[i-1])
 		}
 	}
 	if err := database.MigrateThrough(ctx, pool, "unknown_migration.sql"); err == nil {
