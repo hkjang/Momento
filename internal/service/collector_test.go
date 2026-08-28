@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -165,6 +166,41 @@ func TestAnIdentifierThatIsAPersonIsNotStoredAsOne(t *testing.T) {
 	}
 	if ordinary.UserID != "EMP-4821" {
 		t.Errorf("an internal identifier was altered: %q", ordinary.UserID)
+	}
+}
+
+// The acquisition fields are lifted out of the page's query string, and that
+// string is scanned. So the same value was masked in the URL and kept in full
+// in traffic.term beside it — in a field the channel and campaign reports group
+// by. The visitor and session ids reach storage from a request too, and
+// server-to-server ingestion sets them itself.
+func TestTheFieldsBesideTheURLAreInspectedToo(t *testing.T) {
+	req := model.CollectRequest{
+		VisitorID: "person@example.com",
+		SessionID: "010-9999-8888",
+		Context: model.EventContext{
+			Page:    model.PageContext{URL: "https://portal.internal/s?utm_term=person@example.com"},
+			Traffic: model.TrafficContext{Source: "naver", Term: "person@example.com"},
+		},
+		Events: []model.IncomingEvent{{Name: "search"}},
+	}
+	count, kinds := protectPII(&req, "mask")
+	if count < 4 {
+		t.Errorf("detected %d values, want the URL, the term and both identifiers", count)
+	}
+	if !slices.Contains(kinds, "email") || !slices.Contains(kinds, "phone") {
+		t.Errorf("detectors reported %v, want both the email and the phone named", kinds)
+	}
+	if strings.Contains(req.Context.Traffic.Term, "@") {
+		t.Errorf("the search term kept an address the URL beside it had masked: %q", req.Context.Traffic.Term)
+	}
+	if req.Context.Traffic.Source != "naver" {
+		t.Errorf("an ordinary acquisition value was altered: %q", req.Context.Traffic.Source)
+	}
+	// The identifiers are reported, not rewritten: an event cannot be attributed
+	// without them and a constant would merge every affected visit into one.
+	if req.VisitorID != "person@example.com" || req.SessionID != "010-9999-8888" {
+		t.Errorf("an identifier was rewritten rather than reported: %q %q", req.VisitorID, req.SessionID)
 	}
 }
 

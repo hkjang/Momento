@@ -931,6 +931,54 @@ func protectPII(req *model.CollectRequest, configuredMode string) (int, []string
 			*target = masked
 		}
 	}
+	// The acquisition fields come out of the page's own query string, and that
+	// string is scanned two lines below. utm_term in particular carries whatever
+	// somebody searched for. So the same value was masked in the URL and kept in
+	// full beside it, in a field every channel and campaign report groups by.
+	//
+	// The event name is grouped by everywhere and shown as a label; an
+	// integration naming an event after the person it happened to is not the
+	// usual mistake, but it is the same kind of string reaching the same tables.
+	acquisition := []*string{
+		&req.Context.Traffic.Source, &req.Context.Traffic.Medium,
+		&req.Context.Traffic.Campaign, &req.Context.Traffic.Term, &req.Context.Traffic.Content,
+	}
+	for i := range req.Events {
+		acquisition = append(acquisition, &req.Events[i].Name)
+		if req.Events[i].Context != nil {
+			acquisition = append(acquisition,
+				&req.Events[i].Context.Traffic.Source, &req.Events[i].Context.Traffic.Medium,
+				&req.Events[i].Context.Traffic.Campaign, &req.Events[i].Context.Traffic.Term,
+				&req.Events[i].Context.Traffic.Content)
+		}
+	}
+	for _, target := range acquisition {
+		masked, found := maskPIIString(*target)
+		for _, kind := range found {
+			count++
+			kinds[kind] = true
+		}
+		if mode == "mask" {
+			*target = masked
+		}
+	}
+
+	// The visitor and session ids are identifiers the browser generates, but
+	// server-to-server ingestion sets them itself and nothing looked at them.
+	// They are reported rather than altered: an event cannot be attributed
+	// without them, and replacing them with a constant would merge every
+	// affected visit into one. Under reject the batch is refused, which is the
+	// answer an operator who set that mode is asking for; under the others this
+	// shows up on the data quality screen with the detector that named it.
+	for _, identifier := range []string{req.VisitorID, req.SessionID} {
+		if _, found := maskPIIString(identifier); len(found) > 0 {
+			for _, kind := range found {
+				count++
+				kinds[kind] = true
+			}
+		}
+	}
+
 	// The user id was inspected by nothing. Every other string a request carries
 	// passes through the detectors above — user properties, session properties,
 	// event properties, items, the page URL, title and referrer — and this one
