@@ -109,7 +109,7 @@ cd ../web && npm install && npm run lint && npm test && npm run build
 make docker            # momento:v<version> 이미지를 만듭니다
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento:v<version>` 이미지를 만들어 `momento-v<version>.tar.gz`로 내보내고 Release에 첨부합니다. 이미지는 저장소와 태그(`momento:v0.34.14`), 아카이브는 한 단어(`momento-v0.34.14.tar.gz`)입니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento:v<version>` 이미지를 만들어 `momento-v<version>.tar.gz`로 내보내고 Release에 첨부합니다. 이미지는 저장소와 태그(`momento:v0.34.15`), 아카이브는 한 단어(`momento-v0.34.15.tar.gz`)입니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 
