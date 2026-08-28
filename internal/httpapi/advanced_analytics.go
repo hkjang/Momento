@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/insight"
+	"github.com/jackc/pgx/v5"
 )
 
 type retentionPolicy struct {
@@ -31,7 +33,12 @@ func (s *Server) getRetentionPolicy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		value = retentionPolicy{RawEventMonths: 13, SessionMonths: 25, RealtimeHours: 24, DebugDays: 7}
 	}
-	writeJSON(w, 200, map[string]any{"policy": value, "updated_at": updated, "last_run": s.lastRetentionRun(r)})
+	run, err := s.lastRetentionRun(r)
+	if err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"policy": value, "updated_at": updated, "last_run": run})
 }
 
 // retentionRun is the account of one unattended pass. The policy alone told an
@@ -48,17 +55,26 @@ type retentionRun struct {
 // The pass is service-wide rather than per-site, because one sweep applies every
 // site's policy. It is reported on the retention screen because that is where an
 // operator goes to ask whether retention is working.
-func (s *Server) lastRetentionRun(r *http.Request) *retentionRun {
+// A pass that has not happened yet and a read that failed are different answers,
+// and this returned the same thing for both. Reporting no run is what the screen
+// shows when retention has never run, so a broken read said "nothing has
+// happened" on the screen an operator opens to ask whether anything is
+// happening — the ambiguity the record was added to remove, arriving by another
+// door.
+func (s *Server) lastRetentionRun(r *http.Request) (*retentionRun, error) {
 	var run retentionRun
 	var removed []byte
 	err := s.DB.QueryRow(r.Context(), `SELECT started_at,finished_at,status,removed,error FROM retention_runs ORDER BY started_at DESC LIMIT 1`).
 		Scan(&run.StartedAt, &run.FinishedAt, &run.Status, &removed, &run.Error)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	run.Removed = map[string]int64{}
 	_ = json.Unmarshal(removed, &run.Removed)
-	return &run
+	return &run, nil
 }
 
 func validateRetention(value retentionPolicy) error {
