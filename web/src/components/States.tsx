@@ -11,6 +11,7 @@ import AddRounded from "@mui/icons-material/AddRounded";
 import InboxOutlined from "@mui/icons-material/InboxOutlined";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { useSite } from "../contexts/SiteContext";
 import { useEffect, useState, type ReactNode } from "react";
 import { describeQueryError, slowQueryNotice } from "./queryError";
 
@@ -25,7 +26,10 @@ export function Loading({
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const started = Date.now();
-    const timer = window.setInterval(() => setElapsed(Date.now() - started), 1000);
+    const timer = window.setInterval(
+      () => setElapsed(Date.now() - started),
+      1000,
+    );
     return () => window.clearInterval(timer);
   }, []);
   const notice = slowQueryNotice(elapsed);
@@ -113,7 +117,9 @@ export function ErrorState({
                 size="small"
                 color="inherit"
                 variant={action.kind === "retry" ? "outlined" : "text"}
-                startIcon={action.kind === "retry" ? <RefreshRounded /> : undefined}
+                startIcon={
+                  action.kind === "retry" ? <RefreshRounded /> : undefined
+                }
                 onClick={action.kind === "retry" ? retry : narrowRange}
               >
                 {action.label}
@@ -126,8 +132,36 @@ export function ErrorState({
   );
 }
 
+/**
+ * NoSite is what fifteen screens render when there is no site to analyse.
+ *
+ * It used to say the same thing whether the reader had no sites or the console
+ * could not reach the server, so a failed request told somebody with sites to go
+ * and create their first one — inviting them to fix the wrong thing, and to fix
+ * it by adding a duplicate.
+ */
 export function NoSite() {
   const navigate = useNavigate();
+  const { loadError } = useSite();
+  if (loadError) {
+    return (
+      <Card
+        sx={{ p: { xs: 4, md: 7 }, textAlign: "center", borderStyle: "dashed" }}
+      >
+        <Box className="empty-state-icon">
+          <InboxOutlined />
+        </Box>
+        <Typography variant="h6" mt={2}>
+          사이트 목록을 불러오지 못했습니다
+        </Typography>
+        <Typography color="text.secondary" mb={3}>
+          사이트가 없는 것이 아니라 목록을 읽지 못한 것입니다. 세션이
+          만료되었거나 서버에 닿지 못했을 수 있습니다.
+        </Typography>
+        <ErrorState error={loadError} />
+      </Card>
+    );
+  }
   return (
     <Card
       sx={{ p: { xs: 4, md: 7 }, textAlign: "center", borderStyle: "dashed" }}

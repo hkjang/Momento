@@ -18,10 +18,20 @@ interface SiteValue {
   select(id: string): void;
   selectEnvironment(name: string): void;
   refresh(): Promise<void>;
+  /**
+   * What went wrong reading the site list, when something did.
+   *
+   * Without it a failed request left `sites` empty, `site` null, and every screen
+   * rendering NoSite — "분석할 사이트가 없습니다" — to somebody who has sites and
+   * cannot reach the server. Being told to create your first site while your
+   * sites are sitting there is worse than an error: it invites the reader to fix
+   * the wrong thing.
+   */
+  loadError: unknown;
 }
 const SiteContext = createContext<SiteValue | null>(null);
 export function SiteProvider({ children }: { children: ReactNode }) {
-	const queryClient = useQueryClient();
+  const queryClient = useQueryClient();
   const [sites, setSites] = useState<Site[]>([]);
   const [selected, setSelected] = useState(
     localStorage.getItem("momento:selected-site") || "",
@@ -30,8 +40,18 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     localStorage.getItem("momento:selected-environment") || "prd",
   );
   const [environments, setEnvironments] = useState<SiteEnvironment[]>([]);
+  const [loadError, setLoadError] = useState<unknown>(null);
   const refresh = useCallback(async () => {
-    const next = await get<Site[]>("/api/v1/sites");
+    let next: Site[];
+    try {
+      next = await get<Site[]>("/api/v1/sites");
+    } catch (error) {
+      // Kept rather than thrown: the caller after creating a site wants to know,
+      // and the shell needs it to tell an empty list from an unreachable server.
+      setLoadError(error);
+      throw error;
+    }
+    setLoadError(null);
     setSites(next);
     setSelected((current) => {
       const available = next.some((item) => item.site_id === current);
@@ -45,7 +65,9 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     });
   }, []);
   useEffect(() => {
-    void refresh();
+    // The rejection is recorded inside refresh; this call is the one nobody is
+    // waiting on, so it must not become an unhandled rejection.
+    refresh().catch(() => {});
   }, [refresh]);
   const site = sites.find((s) => s.site_id === selected) || sites[0] || null;
   const siteID = site?.site_id;
@@ -54,17 +76,23 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       setEnvironments([]);
       return;
     }
-    void get<SiteEnvironment[]>(
-      `/api/v1/sites/${siteID}/environments`,
-    ).then((items) => {
-      const active = items.filter((item) => item.active);
-      setEnvironments(active);
-      if (!active.some((item) => item.name === environment)) {
-        const next = active.find((item) => item.name === "prd")?.name || active[0]?.name || "prd";
-        setEnvironment(next);
-        localStorage.setItem("momento:selected-environment", next);
-      }
-    });
+    get<SiteEnvironment[]>(`/api/v1/sites/${siteID}/environments`)
+      .then((items) => {
+        const active = items.filter((item) => item.active);
+        setEnvironments(active);
+        if (!active.some((item) => item.name === environment)) {
+          const next =
+            active.find((item) => item.name === "prd")?.name ||
+            active[0]?.name ||
+            "prd";
+          setEnvironment(next);
+          localStorage.setItem("momento:selected-environment", next);
+        }
+      })
+      // A site always has at least one environment, so failing to read them is a
+      // failure rather than an empty answer. The selector keeps what it had and
+      // the shell reports it, instead of silently offering nothing to choose.
+      .catch(setLoadError);
   }, [siteID, environment]);
   const value = useMemo(
     () => ({
@@ -72,6 +100,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       site,
       environments,
       environment,
+      loadError,
       select: (id: string) => {
         setSelected(id);
         localStorage.setItem("momento:selected-site", id);
@@ -83,7 +112,7 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       },
       refresh,
     }),
-    [sites, site, environments, environment, refresh, queryClient],
+    [sites, site, environments, environment, loadError, refresh, queryClient],
   );
   return <SiteContext.Provider value={value}>{children}</SiteContext.Provider>;
 }
