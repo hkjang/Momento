@@ -4,7 +4,7 @@
 
 릴리스 자산에는 실행에 필요한 Momento 서비스 이미지 레이어가 모두 포함됩니다. 대상 서버에 Docker Engine과 접근 가능한 PostgreSQL 15 이상이 있어야 합니다.
 
-1. 인터넷 연결이 가능한 구간에서 GitHub Release의 `momento-v<version>.tar.gz`와 `.sha256`을 내려받습니다. 예: `momento-v0.34.3.tar.gz`.
+1. 인터넷 연결이 가능한 구간에서 GitHub Release의 `momento-v<version>.tar.gz`와 `.sha256`을 내려받습니다. 예: `momento-v0.34.9.tar.gz`.
 
    아카이브 이름과 그 안의 이미지 이름은 형태가 다릅니다. 파일은 한 단어라 `momento-v<version>.tar.gz`이고, 이미지는 저장소와 태그라 `momento:v<version>`입니다. `docker load`가 출력하는 이름이 아래 `docker run`에 쓰는 이름입니다.
 2. 보안 반입 절차 후 checksum을 확인합니다.
