@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -94,4 +97,69 @@ func TestSharedMemoryExhaustionNamesTheSetting(t *testing.T) {
 	}); diskCode == "DATABASE_SHARED_MEMORY" {
 		t.Error("a full disk is being reported as a shared memory setting, which sends the operator to the wrong place")
 	}
+}
+
+// TestEveryHeavyReadRunsUnderTheDeadline holds the claim analyticalContext makes
+// about itself: "Every heavy read therefore runs under a deadline and fails with
+// guidance."
+//
+// Ten of them did not. The event list, the page list, the visitor list, the
+// query builder, the search report, the feature intelligence report, both
+// journey analyses, the experiment report and the natural language endpoint all
+// read analytics_events through the request's own context. A widened range there
+// holds a connection until the browser gives up, and cancelling the browser tab
+// is the only thing that ends it — which is the exact failure the deadline was
+// written for. The query builder is the worst of them: it is the one surface
+// whose range and dimensions a reader chooses freely.
+//
+// The check reads the source because that is where the property lives. A
+// behavioural test would have to make a query slow on purpose, which pins the
+// fixture rather than the rule.
+func TestEveryHeavyReadRunsUnderTheDeadline(t *testing.T) {
+	t.Parallel()
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("list the package: %v", err)
+	}
+	handler := regexp.MustCompile(`func \(s \*Server\) (\w+)\(w http\.ResponseWriter, r \*http\.Request\) \{`)
+	checked := 0
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		lines := strings.Split(string(source), "\n")
+		for index, line := range lines {
+			match := handler.FindStringSubmatch(line)
+			if match == nil {
+				continue
+			}
+			depth, end := 0, index
+			for scan := index; scan < len(lines); scan++ {
+				depth += strings.Count(lines[scan], "{") - strings.Count(lines[scan], "}")
+				if depth <= 0 && scan > index {
+					end = scan
+					break
+				}
+			}
+			body := strings.Join(lines[index:end+1], "\n")
+			if !strings.Contains(body, "analytics_events") {
+				continue
+			}
+			checked++
+			if !strings.Contains(body, "analyticalContext") {
+				t.Errorf("%s:%d %s reads analytics_events without opening an analytical context: a widened range holds a connection until the browser gives up, and the reader gets a hung page instead of the advice the timeout carries",
+					file, index+1, match[1])
+			}
+		}
+	}
+	// The scan has to have found the handlers it is checking. A regexp that stops
+	// matching would report a package where every read is bounded.
+	if checked < 15 {
+		t.Fatalf("only %d handlers were found to read analytics_events, so this proves nothing about the rest", checked)
+	}
+	t.Logf("checked %d handlers that read analytics_events", checked)
 }

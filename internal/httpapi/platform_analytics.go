@@ -148,6 +148,11 @@ func (s *Server) deleteBusinessJourney(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -170,7 +175,7 @@ func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) 
 	if in.JourneyID != "" {
 		id, parseErr := uuid.Parse(in.JourneyID)
 		var raw []byte
-		if parseErr != nil || s.DB.QueryRow(r.Context(), `SELECT steps,conversion_window_days FROM business_journeys WHERE id=$1 AND site_id=$2 AND active`, id, siteID).Scan(&raw, &in.ConversionWindowDays) != nil {
+		if parseErr != nil || s.DB.QueryRow(reportCtx, `SELECT steps,conversion_window_days FROM business_journeys WHERE id=$1 AND site_id=$2 AND active`, id, siteID).Scan(&raw, &in.ConversionWindowDays) != nil {
 			writeError(w, 404, "JOURNEY_NOT_FOUND", "journey not found")
 			return
 		}
@@ -211,7 +216,7 @@ func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) 
 		selects = append(selects, fmt.Sprintf("SELECT %d step_no,(SELECT count(*) FROM %s) users,%s avg_seconds", index+1, name, elapsed))
 	}
 	query := "WITH " + strings.Join(ctes, ",") + " " + strings.Join(selects, " UNION ALL ") + " ORDER BY step_no"
-	rows, err := s.DB.Query(r.Context(), query, args...)
+	rows, err := s.DB.Query(reportCtx, query, args...)
 	if err != nil {
 		writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
 		return
@@ -353,14 +358,60 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
-	// Four independent reads over the same window. Serially they were most of the
-	// endpoint's cost before a single segment was compared.
 	baseCtx, cancelBase := s.analyticalContext(r)
 	defer cancelBase()
+
+	// Optional cohort comparison: the same measurements per segment, so a site wide
+	// p75 stops hiding the group that is actually slow.
+	compare := []string{}
+	for _, id := range strings.Split(r.URL.Query().Get("segment_ids"), ",") {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			compare = append(compare, trimmed)
+		}
+	}
+	if len(compare) > 3 {
+		writeError(w, 400, "TOO_MANY_SEGMENTS", "segment_ids accepts at most 3 segments")
+		return
+	}
+	var resolver dimensionResolver
+	definitions := make([]segmentNode, len(compare))
+	names := make([]string, len(compare))
+	if len(compare) > 0 {
+		var resolverErr error
+		resolver, resolverErr = s.newDimensionResolver(baseCtx, siteID, environment)
+		if resolverErr != nil {
+			writeQueryError(w, resolverErr)
+			return
+		}
+		// The definitions are read first because an unknown segment is a request
+		// error, not a query failure, and the two answer differently.
+		for index, id := range compare {
+			definition, segmentErr := s.loadSegment(baseCtx, siteID, id)
+			if segmentErr != nil {
+				writeError(w, 400, "INVALID_SEGMENT", segmentErr.Error())
+				return
+			}
+			definitions[index] = definition
+			names[index], _ = s.segmentName(baseCtx, siteID, id)
+		}
+	}
+
+	// Every read this endpoint makes, in one flight.
+	//
+	// The site-wide measurements and the per-cohort ones were two phases, one
+	// after the other, and nothing in the second needed anything from the first.
+	// With three segments compared that made the page wait for the slowest of
+	// four reads and then for the slowest of four more — the two together were
+	// most of the seven and a half seconds this endpoint took over two million
+	// events. They are independent, so they run together, inside the same
+	// QueryConcurrency ceiling that already bounds one report's share of the
+	// connection pool.
 	var vitals, errorsOut, releases []map[string]any
 	var summary insight.ExperienceSummary
 	errorEvents := insight.ErrorEvents
-	if err := insight.RunParallel(baseCtx, insight.QueryConcurrency,
+	var baseline experienceCohort
+	cohorts := make([]experienceCohort, len(compare))
+	steps := []func(context.Context) error{
 		func(ctx context.Context) error {
 			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'metric','unknown'),coalesce(page_url,'(unknown)'),count(*),avg((properties->>'value')::numeric)::double precision,percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric)::double precision,count(*) FILTER(WHERE properties->>'rating'='good')
 				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name='web_vital' AND coalesce(properties->>'value','') ~ '^[0-9]+(\.[0-9]+)?$' GROUP BY 1,2 ORDER BY 1,5 DESC LIMIT 200`, siteID, from, to, environment)
@@ -418,63 +469,20 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 				return map[string]any{"release": release, "events": events, "users": users, "errors": errors, "user_conversion_rate": conversionRate, "last_seen": lastSeen}, err
 			})
 			return nil
-		}); err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases,
-		"impact": map[string]any{"users": summary.Users, "error_users": summary.ErrorUsers,
-			"error_user_conversion_rate": summary.ErrorUserConversionRate, "clean_user_conversion_rate": summary.CleanUserConversionRate,
-			"conversion_rate_delta": summary.ConversionRateDelta}}
-	// Optional cohort comparison: the same measurements per segment, so a site wide
-	// p75 stops hiding the group that is actually slow.
-	compare := []string{}
-	for _, id := range strings.Split(r.URL.Query().Get("segment_ids"), ",") {
-		if trimmed := strings.TrimSpace(id); trimmed != "" {
-			compare = append(compare, trimmed)
-		}
-	}
-	if len(compare) > 3 {
-		writeError(w, 400, "TOO_MANY_SEGMENTS", "segment_ids accepts at most 3 segments")
-		return
+		},
 	}
 	if len(compare) > 0 {
-		ctx, cancel := s.analyticalContext(r)
-		defer cancel()
-		resolver, resolverErr := s.newDimensionResolver(ctx, siteID, environment)
-		if resolverErr != nil {
-			writeQueryError(w, resolverErr)
-			return
-		}
-		// The definitions are read first because an unknown segment is a request
-		// error, not a query failure, and the two answer differently.
-		definitions := make([]segmentNode, len(compare))
-		names := make([]string, len(compare))
-		for index, id := range compare {
-			definition, segmentErr := s.loadSegment(ctx, siteID, id)
-			if segmentErr != nil {
-				writeError(w, 400, "INVALID_SEGMENT", segmentErr.Error())
-				return
-			}
-			definitions[index] = definition
-			names[index], _ = s.segmentName(ctx, siteID, id)
-		}
 		// The baseline and each cohort are the same measurements over different
-		// people, so they are independent reads. Serially, three segments made this
-		// the slowest endpoint in the product.
-		var baseline experienceCohort
-		cohorts := make([]experienceCohort, len(compare))
-		steps := []func(context.Context) error{
-			func(stepCtx context.Context) error {
-				cohort, err := s.runExperienceCohort(stepCtx, siteID, environment, from, to, resolver, nil)
-				if err != nil {
-					return err
-				}
-				cohort.Key, cohort.Label = "baseline", "전체"
-				baseline = cohort
-				return nil
-			},
-		}
+		// people.
+		steps = append(steps, func(stepCtx context.Context) error {
+			cohort, err := s.runExperienceCohort(stepCtx, siteID, environment, from, to, resolver, nil)
+			if err != nil {
+				return err
+			}
+			cohort.Key, cohort.Label = "baseline", "전체"
+			baseline = cohort
+			return nil
+		})
 		for index := range compare {
 			index := index
 			steps = append(steps, func(stepCtx context.Context) error {
@@ -487,10 +495,16 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 				return nil
 			})
 		}
-		if err := insight.RunParallel(ctx, insight.QueryConcurrency, steps...); err != nil {
-			writeQueryError(w, err)
-			return
-		}
+	}
+	if err := insight.RunParallel(baseCtx, insight.QueryConcurrency, steps...); err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases,
+		"impact": map[string]any{"users": summary.Users, "error_users": summary.ErrorUsers,
+			"error_user_conversion_rate": summary.ErrorUserConversionRate, "clean_user_conversion_rate": summary.CleanUserConversionRate,
+			"conversion_rate_delta": summary.ConversionRateDelta}}
+	if len(compare) > 0 {
 		response["cohorts"] = append([]experienceCohort{baseline}, cohorts...)
 		response["gaps"] = compareExperience(baseline, cohorts)
 	}
@@ -577,6 +591,11 @@ func (s *Server) insightsReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) naturalLanguageAnalytics(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -593,7 +612,7 @@ func (s *Server) naturalLanguageAnalytics(w http.ResponseWriter, r *http.Request
 	if !environmentNamePattern.MatchString(in.Environment) {
 		in.Environment = "prd"
 	}
-	_, location, _ := s.siteTimezone(r.Context(), siteID)
+	_, location, _ := s.siteTimezone(reportCtx, siteID)
 	now := time.Now().In(location)
 	endLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
 	startLocal := endLocal.AddDate(0, 0, -7)
@@ -637,7 +656,7 @@ func (s *Server) naturalLanguageAnalytics(w http.ResponseWriter, r *http.Request
 	} else {
 		expressions := map[string]string{"feature": "coalesce(properties->>'feature','(미지정)')", "department": "coalesce(canonical_user_properties->>'department','(미지정)')", "organization": "coalesce(canonical_user_properties->>'organization','(미지정)')", "page": "coalesce(page_url,'(미지정)')", "model": "coalesce(properties->>'model','(미지정)')", "agent": "coalesce(properties->>'agent','(미지정)')", "tool": "coalesce(properties->>'tool',properties->>'mcp_server','(미지정)')"}
 		expression := expressions[dimension]
-		rows, queryErr := s.DB.Query(r.Context(), `SELECT `+expression+`,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND `+expression+`<>'(미지정)' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`, siteID, from, to, in.Environment)
+		rows, queryErr := s.DB.Query(reportCtx, `SELECT `+expression+`,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND `+expression+`<>'(미지정)' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`, siteID, from, to, in.Environment)
 		if queryErr != nil {
 			writeError(w, 500, "QUERY_FAILED", queryErr.Error())
 			return

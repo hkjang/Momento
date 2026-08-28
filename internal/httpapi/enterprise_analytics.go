@@ -200,6 +200,11 @@ func (s *Server) saveWorkspaceJourney(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, workspaceID, err := s.workspaceForSite(r)
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -222,7 +227,7 @@ func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request)
 	if in.JourneyID != "" {
 		id, parseErr := uuid.Parse(in.JourneyID)
 		var raw []byte
-		if parseErr != nil || s.DB.QueryRow(r.Context(), `SELECT steps,conversion_window_days FROM workspace_journeys WHERE id=$1 AND workspace_id=$2 AND active`, id, workspaceID).Scan(&raw, &in.ConversionWindowDays) != nil {
+		if parseErr != nil || s.DB.QueryRow(reportCtx, `SELECT steps,conversion_window_days FROM workspace_journeys WHERE id=$1 AND workspace_id=$2 AND active`, id, workspaceID).Scan(&raw, &in.ConversionWindowDays) != nil {
 			writeError(w, 404, "JOURNEY_NOT_FOUND", "workspace journey not found")
 			return
 		}
@@ -259,7 +264,7 @@ func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request)
 		}
 		selects = append(selects, fmt.Sprintf("SELECT %d,(SELECT count(*) FROM %s),%s", index+1, name, elapsed))
 	}
-	rows, err := s.DB.Query(r.Context(), "WITH "+strings.Join(ctes, ",")+" "+strings.Join(selects, " UNION ALL ")+" ORDER BY 1", args...)
+	rows, err := s.DB.Query(reportCtx, "WITH "+strings.Join(ctes, ",")+" "+strings.Join(selects, " UNION ALL ")+" ORDER BY 1", args...)
 	if err != nil {
 		writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
 		return
@@ -282,6 +287,11 @@ func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -297,11 +307,11 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 	// Counted over distinct rows rather than with count(DISTINCT ...): the
 	// aggregate form cannot be answered by a hash, so PostgreSQL sorts the whole
 	// period for one number and spills to disk once the period is large.
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM (SELECT DISTINCT entity_id FROM analytics_events
+	_ = s.DB.QueryRow(reportCtx, `SELECT count(*) FROM (SELECT DISTINCT entity_id FROM analytics_events
 		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) people`,
 		siteID, from, to, environment).Scan(&population)
 	midpoint := from.Add(to.Sub(from) / 2)
-	rows, err := s.DB.Query(r.Context(), `WITH user_feature AS (
+	rows, err := s.DB.Query(reportCtx, `WITH user_feature AS (
 		SELECT properties->>'feature' feature,entity_id,count(*) events,bool_or(is_conversion) converted,bool_or(event_name=ANY($6)) errored,min(event_timestamp) first_seen,max(event_timestamp) last_seen
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1,2
 	), trend AS (
@@ -310,7 +320,7 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 	) SELECT u.feature,count(*) users,sum(u.events) events,count(*) FILTER(WHERE u.events>=2) repeat_users,count(*) FILTER(WHERE u.converted) converted_users,count(*) FILTER(WHERE u.errored) error_users,min(u.first_seen),max(u.last_seen),t.previous_events,t.current_events,coalesce(a.eligible_users,$7)
 	FROM user_feature u JOIN trend t USING(feature) LEFT JOIN adoption_targets a ON a.site_id=$1 AND a.organization='' AND a.department='' AND a.feature=u.feature GROUP BY u.feature,t.previous_events,t.current_events,a.eligible_users ORDER BY users DESC`, siteID, from, to, environment, midpoint, []string{"error", "resource_error"}, population)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -335,6 +345,11 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -347,12 +362,12 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	environment := requestEnvironment(r)
 	var searches, users, noResults, clicks, refinements, exits, successes int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_refine'),count(*) FILTER(WHERE event_name='search_exit'),count(*) FILTER(WHERE event_name='search_success')
+	_ = s.DB.QueryRow(reportCtx, `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_refine'),count(*) FILTER(WHERE event_name='search_exit'),count(*) FILTER(WHERE event_name='search_success')
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&searches, &users, &noResults, &clicks, &refinements, &exits, &successes)
-	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(properties->>'query',properties->>'search_term','(not set)') query,count(*) FILTER(WHERE event_name='search') searches,count(DISTINCT entity_id) users,count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')) no_results,count(*) FILTER(WHERE event_name='search_click') clicks,max(event_timestamp) last_seen
+	rows, err := s.DB.Query(reportCtx, `SELECT coalesce(properties->>'query',properties->>'search_term','(not set)') query,count(*) FILTER(WHERE event_name='search') searches,count(DISTINCT entity_id) users,count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')) no_results,count(*) FILTER(WHERE event_name='search_click') clicks,max(event_timestamp) last_seen
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY 1 ORDER BY searches DESC LIMIT 200`, siteID, from, to, environment, []string{"search", "search_result", "search_click", "search_no_result", "search_refine", "search_exit", "search_success"})
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -365,7 +380,7 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 			queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
 		}
 	}
-	audiences, err := s.frictionAudiences(r.Context(), siteID, from, to, environment, "search")
+	audiences, err := s.frictionAudiences(reportCtx, siteID, from, to, environment, "search")
 	if err != nil {
 		writeQueryError(w, err)
 		return
@@ -678,6 +693,11 @@ func (s *Server) saveExperiment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -691,7 +711,7 @@ func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
 	var key, metric, environment string
 	var variantsRaw, definitionRaw []byte
 	var starts, ends *time.Time
-	if err := s.DB.QueryRow(r.Context(), `SELECT e.experiment_key,e.primary_metric,e.environment,e.variants,e.starts_at,e.ends_at,m.definition FROM experiments e JOIN semantic_metrics m ON m.site_id=e.site_id AND m.name=e.primary_metric WHERE e.id=$1 AND e.site_id=$2`, id, siteID).Scan(&key, &metric, &environment, &variantsRaw, &starts, &ends, &definitionRaw); err != nil {
+	if err := s.DB.QueryRow(reportCtx, `SELECT e.experiment_key,e.primary_metric,e.environment,e.variants,e.starts_at,e.ends_at,m.definition FROM experiments e JOIN semantic_metrics m ON m.site_id=e.site_id AND m.name=e.primary_metric WHERE e.id=$1 AND e.site_id=$2`, id, siteID).Scan(&key, &metric, &environment, &variantsRaw, &starts, &ends, &definitionRaw); err != nil {
 		writeError(w, 404, "EXPERIMENT_NOT_FOUND", "experiment or primary metric not found")
 		return
 	}
@@ -722,7 +742,7 @@ func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var users, converted int64
-		_ = s.DB.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE converted) FROM (
+		_ = s.DB.QueryRow(reportCtx, `SELECT count(*),count(*) FILTER(WHERE converted) FROM (
 			SELECT entity_id,bool_or(is_conversion) converted FROM analytics_events
 			WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4
 				AND properties->>'experiment_id'=$5 AND properties->>'variant'=$6

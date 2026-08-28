@@ -381,6 +381,11 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -397,7 +402,7 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 	// a sort, and on two million events that is four seconds against one and a
 	// half. The counts add up because each inner group is one person's events of
 	// one name.
-	rows, err := s.DB.Query(r.Context(), `SELECT event_name,sum(events)::bigint,count(*),sum(conversions)::bigint,max(last_seen)
+	rows, err := s.DB.Query(reportCtx, `SELECT event_name,sum(events)::bigint,count(*),sum(conversions)::bigint,max(last_seen)
 		FROM (
 			SELECT event_name,entity_id,count(*) events,count(*) FILTER(WHERE is_conversion) conversions,max(event_timestamp) last_seen
 			FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
@@ -405,7 +410,7 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 		) per_person
 		GROUP BY 1 ORDER BY 2 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	out := rowsToList(rows, func() (map[string]any, error) {
@@ -418,6 +423,11 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -428,9 +438,9 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(page_url,'(unknown)'),max(coalesce(page_title,'')),count(*),count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_name='page_view' AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY page_url ORDER BY 3 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
+	rows, err := s.DB.Query(reportCtx, `SELECT coalesce(page_url,'(unknown)'),max(coalesce(page_title,'')),count(*),count(DISTINCT entity_id),count(DISTINCT session_id),count(*) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_name='page_view' AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY page_url ORDER BY 3 DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	out := rowsToList(rows, func() (map[string]any, error) {
@@ -534,8 +544,13 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	var enabled bool
-	if s.DB.QueryRow(r.Context(), `SELECT coalesce((value->>'visitor_profiles')::bool,false) FROM settings WHERE key='privacy'`).Scan(&enabled) != nil || !enabled {
+	if s.DB.QueryRow(reportCtx, `SELECT coalesce((value->>'visitor_profiles')::bool,false) FROM settings WHERE key='privacy'`).Scan(&enabled) != nil || !enabled {
 		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
 		return
 	}
@@ -549,12 +564,12 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `WITH grouped AS (
+	rows, err := s.DB.Query(reportCtx, `WITH grouped AS (
 		SELECT visitor_id,max(canonical_user_id) user_id,(array_agg(canonical_user_properties ORDER BY event_timestamp DESC))[1] user_properties,min(event_timestamp) first_seen,max(event_timestamp) last_seen,count(*) events,count(DISTINCT session_id) sessions,count(*) FILTER(WHERE is_conversion) conversions
 		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY visitor_id
 	) SELECT g.*,(SELECT count(*) FROM visitor_identities linked WHERE linked.site_id=$1 AND linked.user_id=g.user_id) FROM grouped g ORDER BY g.last_seen DESC LIMIT 500`, siteID, from, to, requestEnvironment(r))
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
 	out := rowsToList(rows, func() (map[string]any, error) {
@@ -630,12 +645,17 @@ var metricSQL = map[string]string{"events": "count(*)", "users": "count(DISTINCT
 	"sessions_started": "count(DISTINCT e.session_id) FILTER(WHERE EXISTS(SELECT 1 FROM sessions started WHERE started.site_id=$1 AND started.environment=$4 AND started.session_id=e.session_id AND started.started_at >= $2 AND started.started_at < $3))", "page_views": "count(*) FILTER(WHERE e.event_name='page_view')", "conversions": "count(*) FILTER(WHERE e.is_conversion)", "conversion_users": "count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)", "conversion_sessions": "count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)", "user_conversion_rate": "coalesce(100.0*count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.entity_id),0),0)", "session_conversion_rate": "coalesce(100.0*count(DISTINCT e.session_id) FILTER(WHERE e.is_conversion)/nullif(count(DISTINCT e.session_id),0),0)", "revenue": insight.RevenueAmountSQL("e")}
 
 func (s *Server) query(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	var in queryRequest
 	if err := decodeJSON(r, &in, 256<<10); err != nil {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
 		return
 	}
-	siteID, err := s.resolveSiteKey(r.Context(), in.SiteID)
+	siteID, err := s.resolveSiteKey(reportCtx, in.SiteID)
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
@@ -645,28 +665,28 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	if !environmentNamePattern.MatchString(in.Environment) {
 		in.Environment = "prd"
 	}
-	resolver, err := s.newDimensionResolver(r.Context(), siteID, in.Environment)
+	resolver, err := s.newDimensionResolver(reportCtx, siteID, in.Environment)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	from, to, err := s.explicitDateRange(r.Context(), siteID, in.DateRange.From, in.DateRange.To)
+	from, to, err := s.explicitDateRange(reportCtx, siteID, in.DateRange.From, in.DateRange.To)
 	if err != nil {
 		writeRangeError(w, err)
 		return
 	}
-	plan, planError := s.planAnalyticsQuery(r.Context(), siteID, in, from, to)
+	plan, planError := s.planAnalyticsQuery(reportCtx, siteID, in, from, to)
 	if planError != "" {
-		s.createQueryAudit(r.Context(), siteID, in.Environment, in, from, to, plan, "rejected", planError)
+		s.createQueryAudit(reportCtx, siteID, in.Environment, in, from, to, plan, "rejected", planError)
 		writeError(w, 422, "QUERY_COST_LIMIT", planError)
 		return
 	}
 	started := time.Now()
-	auditID := s.createQueryAudit(r.Context(), siteID, in.Environment, in, from, to, plan, "running", "")
+	auditID := s.createQueryAudit(reportCtx, siteID, in.Environment, in, from, to, plan, "running", "")
 	auditComplete := false
 	defer func() {
 		if !auditComplete {
-			s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", "query validation or execution stopped")
+			s.finishQueryAudit(reportCtx, auditID, started, 0, "failed", "query validation or execution stopped")
 		}
 	}()
 	semanticCount := 0
@@ -690,7 +710,7 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		for _, metric := range in.Metrics {
 			name := strings.TrimPrefix(metric, "semantic.")
 			var raw []byte
-			if err := s.DB.QueryRow(r.Context(), `SELECT definition FROM semantic_metrics WHERE site_id=$1 AND name=$2 AND status='active'`, siteID, name).Scan(&raw); err != nil {
+			if err := s.DB.QueryRow(reportCtx, `SELECT definition FROM semantic_metrics WHERE site_id=$1 AND name=$2 AND status='active'`, siteID, name).Scan(&raw); err != nil {
 				writeError(w, 400, "INVALID_METRIC", "semantic metric not found: "+name)
 				return
 			}
@@ -701,15 +721,15 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 			}
 			value, err := s.evaluateSemanticMetric(r, siteID, in.Environment, from, to, definition, 1)
 			if err != nil {
-				s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", err.Error())
+				s.finishQueryAudit(reportCtx, auditID, started, 0, "failed", err.Error())
 				auditComplete = true
-				writeError(w, 500, "QUERY_FAILED", err.Error())
+				writeQueryError(w, err)
 				return
 			}
 			row[metric] = value
 			columns = append(columns, metric)
 		}
-		s.finishQueryAudit(r.Context(), auditID, started, 1, "success", "")
+		s.finishQueryAudit(reportCtx, auditID, started, 1, "success", "")
 		auditComplete = true
 		writeJSON(w, 200, map[string]any{"columns": columns, "rows": []map[string]any{row}, "environment": in.Environment, "query": plan})
 		return
@@ -756,7 +776,7 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		where = append(where, part)
 	}
 	if in.SegmentID != "" {
-		definition, err := s.loadSegment(r.Context(), siteID, in.SegmentID)
+		definition, err := s.loadSegment(reportCtx, siteID, in.SegmentID)
 		if err != nil {
 			writeError(w, 400, "INVALID_SEGMENT", err.Error())
 			return
@@ -785,9 +805,9 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		sql += ` GROUP BY ` + strings.Join(groups, ",")
 	}
 	sql += ` ORDER BY ` + strconv.Itoa(len(in.Dimensions)+1) + ` DESC LIMIT ` + strconv.Itoa(limit)
-	rows, err := s.DB.Query(r.Context(), sql, args...)
+	rows, err := s.DB.Query(reportCtx, sql, args...)
 	if err != nil {
-		s.finishQueryAudit(r.Context(), auditID, started, 0, "failed", err.Error())
+		s.finishQueryAudit(reportCtx, auditID, started, 0, "failed", err.Error())
 		auditComplete = true
 		writeError(w, 400, "QUERY_FAILED", err.Error())
 		return
@@ -806,12 +826,12 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
-		s.finishQueryAudit(r.Context(), auditID, started, len(result), "failed", err.Error())
+		s.finishQueryAudit(reportCtx, auditID, started, len(result), "failed", err.Error())
 		auditComplete = true
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	s.finishQueryAudit(r.Context(), auditID, started, len(result), "success", "")
+	s.finishQueryAudit(reportCtx, auditID, started, len(result), "success", "")
 	auditComplete = true
 	writeJSON(w, 200, map[string]any{"columns": columns, "rows": result, "environment": in.Environment, "query": plan})
 }
