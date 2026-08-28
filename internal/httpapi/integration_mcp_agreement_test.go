@@ -67,6 +67,70 @@ func TestTheMCPToolsAgreeWithTheScreens(t *testing.T) {
 		t.Fatal("no rows were comparable, so this proves nothing about the two agreeing")
 	}
 	t.Logf("compared %d rows across %d cuts of the same period", compared, len(usageDimensions))
+
+	// The three list-shaped tools that mirror a screen, row by row. The AI one
+	// used to answer a strictly smaller report than its screen — no success rate
+	// and no cost, which are the two numbers somebody asks an agent about.
+	for _, probe := range []struct {
+		tool, screen, list, key string
+		arguments               map[string]any
+		fields                  []string
+	}{
+		{
+			tool: "get_workspace_rollup", screen: site + "/workspace-rollup?from=" + from + "&to=" + today,
+			list: "services", key: "site_id",
+			fields: []string{"site_name", "service", "events", "users", "sessions", "conversion_users"},
+		},
+		{
+			tool: "get_feature_scores", screen: site + "/feature-intelligence?from=" + from + "&to=" + today,
+			list: "features", key: "feature",
+			fields: []string{"events", "users", "repeat_rate", "conversion_rate"},
+		},
+		{
+			tool: "analyze_ai_operations", screen: site + "/ai-analytics?from=" + from + "&to=" + today + "&group_by=model",
+			list: "rows", key: "label", arguments: map[string]any{"group_by": "model"},
+			fields: []string{"calls", "users", "success_rate", "average_latency_ms", "input_tokens", "output_tokens", "cost", "fallbacks"},
+		},
+	} {
+		arguments := map[string]any{"site_id": f.siteKey, "from": from, "to": today, "environment": "prd"}
+		for key, value := range probe.arguments {
+			arguments[key] = value
+		}
+		answered := f.callTool(t, probe.tool, arguments)
+		shownRows, _ := f.get(t, probe.screen)[probe.list].([]any)
+		if len(shownRows) == 0 {
+			t.Errorf("%s: the screen has no %s to compare against, so agreement proves nothing", probe.tool, probe.list)
+			continue
+		}
+		byKey := map[string]map[string]any{}
+		for _, row := range shownRows {
+			if shown, ok := row.(map[string]any); ok {
+				byKey[fmt.Sprint(shown[probe.key])] = shown
+			}
+		}
+		for _, row := range answered {
+			said, _ := row.(map[string]any)
+			if said == nil {
+				continue
+			}
+			shown, ok := byKey[fmt.Sprint(said[probe.key])]
+			if !ok {
+				t.Errorf("%s: the tool reports %v and the screen does not", probe.tool, said[probe.key])
+				continue
+			}
+			for _, field := range probe.fields {
+				value, valueOK := said[field]
+				expected, expectedOK := shown[field]
+				if !valueOK || !expectedOK {
+					t.Errorf("%s %v: %s is on the screen=%v and in the tool=%v", probe.tool, said[probe.key], field, expectedOK, valueOK)
+					continue
+				}
+				if fmt.Sprint(value) != fmt.Sprint(expected) {
+					t.Errorf("%s %v %s: the tool says %v and the screen says %v", probe.tool, said[probe.key], field, value, expected)
+				}
+			}
+		}
+	}
 }
 
 // callTool runs one MCP tool and decodes the JSON document it answers with.

@@ -345,24 +345,14 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(map[string]any{"errors": errors, "affected_users": affected, "p75": map[string]float64{"LCP": lcp, "INP": inp, "CLS": cls}}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_ai_operations":
-		group := stringArgDefault(call.Arguments, "group_by", "model")
-		if !map[string]bool{"model": true, "provider": true, "agent": true, "mcp_server": true, "tool": true}[group] {
-			group = "model"
-		}
-		rows, err := s.DB.Query(r.Context(), `SELECT coalesce(properties->>$5,'(not set)'),count(*),count(DISTINCT entity_id),coalesce(avg(CASE WHEN coalesce(properties->>'latency_ms','')~'^[0-9]+(\.[0-9]+)?$' THEN (properties->>'latency_ms')::numeric END),0)::double precision,coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','')~'^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','')~'^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($6) GROUP BY 1 ORDER BY 2 DESC LIMIT 100`, siteID, from, to, stringArgDefault(call.Arguments, "environment", "prd"), group, []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"})
+		// The same rows the AI operations screen shows, from the one definition:
+		// this used to stop at the token counts, so an agent asked what the usage
+		// cost was answered with a report that had no cost in it.
+		out, err := s.aiOperationRows(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"),
+			aiOperationDimension(stringArg(call.Arguments, "group_by")), from, to)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
-		}
-		defer rows.Close()
-		out := []map[string]any{}
-		for rows.Next() {
-			var label string
-			var calls, users, input, output int64
-			var latency float64
-			if rows.Scan(&label, &calls, &users, &latency, &input, &output) == nil {
-				out = append(out, map[string]any{"label": label, "calls": calls, "users": users, "average_latency_ms": latency, "input_tokens": input, "output_tokens": output})
-			}
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))

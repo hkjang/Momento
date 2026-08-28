@@ -504,6 +504,49 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, response)
 }
 
+// aiOperationRows answers the AI operations report: one row per value of the
+// chosen dimension, with what it was called, by how many people, how often it
+// worked, how long it took, what it consumed and what it cost.
+//
+// The MCP tool that answers the same question had its own query, and that query
+// stopped at the token counts — an agent asked what the AI usage cost got a
+// report with no cost in it, and no success rate either, while the screen beside
+// it had both. One definition now, so the two cannot answer differently or
+// answer different amounts.
+func (s *Server) aiOperationRows(ctx context.Context, siteID uuid.UUID, environment, group string, from, to time.Time) ([]map[string]any, error) {
+	rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>$5,'(not set)'),count(*),count(DISTINCT entity_id),100.0*count(*) FILTER(WHERE lower(coalesce(properties->>'success','true')) IN ('true','1'))/nullif(count(*),0),coalesce(avg(CASE WHEN coalesce(properties->>'latency_ms','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'latency_ms')::numeric END),0)::double precision,coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','') ~ '^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','') ~ '^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'cost','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'cost')::numeric ELSE 0 END),0)::double precision,count(*) FILTER(WHERE lower(coalesce(properties->>'fallback_model','')) NOT IN ('','false'))
+		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($6) GROUP BY 1 ORDER BY 2 DESC LIMIT 200`,
+		siteID, from, to, environment, group, aiOperationEvents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var label string
+		var calls, users, inputTokens, outputTokens, fallbacks int64
+		var successRate, latency, cost float64
+		if rows.Scan(&label, &calls, &users, &successRate, &latency, &inputTokens, &outputTokens, &cost, &fallbacks) != nil {
+			continue
+		}
+		out = append(out, map[string]any{"label": label, "calls": calls, "users": users, "success_rate": successRate,
+			"average_latency_ms": latency, "input_tokens": inputTokens, "output_tokens": outputTokens, "cost": cost, "fallbacks": fallbacks})
+	}
+	return out, rows.Err()
+}
+
+// aiOperationEvents are the events an application sends for its model, agent and
+// tool calls. None of them is collected automatically.
+var aiOperationEvents = []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"}
+
+// aiOperationDimension is the cut the caller asked for, or the default.
+func aiOperationDimension(group string) string {
+	if map[string]bool{"model": true, "provider": true, "agent": true, "mcp_server": true, "tool": true}[group] {
+		return group
+	}
+	return "model"
+}
+
 func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
@@ -515,28 +558,14 @@ func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	group := r.URL.Query().Get("group_by")
-	allowed := map[string]bool{"model": true, "provider": true, "agent": true, "mcp_server": true, "tool": true}
-	if !allowed[group] {
-		group = "model"
-	}
-	rows, err := s.DB.Query(r.Context(), `SELECT coalesce(properties->>$5,'(not set)'),count(*),count(DISTINCT entity_id),100.0*count(*) FILTER(WHERE lower(coalesce(properties->>'success','true')) IN ('true','1'))/nullif(count(*),0),coalesce(avg(CASE WHEN coalesce(properties->>'latency_ms','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'latency_ms')::numeric END),0)::double precision,coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','') ~ '^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','') ~ '^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'cost','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'cost')::numeric ELSE 0 END),0)::double precision,count(*) FILTER(WHERE lower(coalesce(properties->>'fallback_model','')) NOT IN ('','false'))
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($6) GROUP BY 1 ORDER BY 2 DESC LIMIT 200`, siteID, from, to, requestEnvironment(r), group, []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"})
+	group := aiOperationDimension(r.URL.Query().Get("group_by"))
+	environment := requestEnvironment(r)
+	out, err := s.aiOperationRows(r.Context(), siteID, environment, group, from, to)
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
+		writeQueryError(w, err)
 		return
 	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var label string
-		var calls, users, inputTokens, outputTokens, fallbacks int64
-		var successRate, latency, cost float64
-		if rows.Scan(&label, &calls, &users, &successRate, &latency, &inputTokens, &outputTokens, &cost, &fallbacks) == nil {
-			out = append(out, map[string]any{"label": label, "calls": calls, "users": users, "success_rate": successRate, "average_latency_ms": latency, "input_tokens": inputTokens, "output_tokens": outputTokens, "cost": cost, "fallbacks": fallbacks})
-		}
-	}
-	writeJSON(w, 200, map[string]any{"environment": requestEnvironment(r), "group_by": group, "rows": out})
+	writeJSON(w, 200, map[string]any{"environment": environment, "group_by": group, "rows": out})
 }
 
 type platformMetricValues struct {
