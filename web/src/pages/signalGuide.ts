@@ -207,6 +207,13 @@ export const metricMeaning: Record<string, string> = {
   conversions: "전환으로 등록된 Event의 건수입니다. 사람 수가 아닙니다.",
   conversion_users: "전환한 사람의 수입니다.",
   conversion_sessions: "전환이 일어난 Session의 수입니다.",
+  // Two rates that differ by one word and by their denominator. The Explorer
+  // offers them next to each other, and this module exists for exactly that.
+
+  user_conversion_rate:
+    "전환한 사람 ÷ 전체 사람. 한 사람이 여러 번 전환해도 한 번으로 셉니다.",
+  session_conversion_rate:
+    "전환이 일어난 Session ÷ 전체 Session. 같은 사람이 여러 방문에서 전환하면 각각 셉니다.",
   revenue: "`purchase` Event의 `value` 또는 `revenue` Property 합계입니다.",
 };
 
