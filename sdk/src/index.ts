@@ -72,10 +72,16 @@ interface QueuedEvent {
 /**
  * The identifier identify() refuses. It becomes the user id on every event, in
  * the visitor and identified-user tables, on the identities screen and in every
- * export — and the collector's privacy filter does not look at it. It walks user
- * properties, session properties, event properties, items and the page URL,
- * title and referrer; the user id is not among them, so this is the only place
- * that decides.
+ * export.
+ *
+ * The collector judges it too, since v0.34.0 — server-to-server ingestion does
+ * not come through a browser, so this could not be the only place that decides.
+ * The two halves are checked against one list of shapes in
+ * testdata/pii_identifiers.json, which both this test suite and the collector's
+ * read, because a rule written twice in two languages is a rule that drifts. It
+ * had already drifted: the collector accepted a long run of digits that this
+ * refuses, so the same site got a different answer depending on which door the
+ * identifier arrived through.
  *
  * It used to be `@` or eight consecutive digits, which let through the way a
  * Korean phone number and a resident registration number are actually written:

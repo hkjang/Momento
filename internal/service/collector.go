@@ -1001,8 +1001,9 @@ func protectPII(req *model.CollectRequest, configuredMode string) (int, []string
 	// every per-user number for them. Under a policy that says do not keep this,
 	// the honest record is that we do not know who this was, so the event becomes
 	// anonymous — which is also what the browser produces when identify() refuses.
-	if _, found := maskPIIString(req.UserID); len(found) > 0 {
-		for _, kind := range found {
+	userFound := maskUserID(req.UserID)
+	if len(userFound) > 0 {
+		for _, kind := range userFound {
 			count++
 			kinds[kind] = true
 		}
@@ -1012,7 +1013,7 @@ func protectPII(req *model.CollectRequest, configuredMode string) (int, []string
 	}
 
 	labels := make([]string, 0, len(kinds))
-	for _, kind := range []string{"email", "phone", "resident_number", "payment_card", "credential"} {
+	for _, kind := range []string{"email", "phone", "resident_number", "payment_card", "credential", "long_digits"} {
 		if kinds[kind] {
 			labels = append(labels, kind)
 		}
@@ -1026,6 +1027,31 @@ func protectPII(req *model.CollectRequest, configuredMode string) (int, []string
 		}
 	}
 	return count, labels
+}
+
+// longDigitsPIIPattern is a run of digits long enough to be a phone number, a
+// card, or an account number, and it is applied to the user id alone.
+//
+// The tracker refuses one from identify(), and the collector did not: a browser
+// could not send it and a server-to-server integration could, so the same site
+// got a different answer depending on which door the identifier came through.
+// That asymmetry is the shape the v0.34.0 defect had, left open for this one
+// pattern.
+//
+// It is not added to maskPIIString, which walks every property a site sends —
+// order numbers, transaction ids and timestamps are long digit runs, and masking
+// those would be destroying ordinary data to protect nothing. The user id is
+// different: it is the value that becomes a person, and the tracker already
+// judges it by this rule.
+var longDigitsPIIPattern = regexp.MustCompile(`\+?\d{8,}`)
+
+// maskUserID names what makes an identifier a person rather than an account.
+func maskUserID(value string) []string {
+	_, found := maskPIIString(value)
+	if len(found) == 0 && longDigitsPIIPattern.MatchString(value) {
+		found = append(found, "long_digits")
+	}
+	return found
 }
 
 func maskPIIString(value string) (string, []string) {

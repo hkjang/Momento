@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 class MemoryStorage {
   values = new Map();
@@ -692,6 +693,10 @@ test("a new session after a timeout is not credited to the old campaign", async 
   }
 });
 
+const examples = JSON.parse(
+  readFileSync(new URL("../../testdata/pii_identifiers.json", import.meta.url), "utf8"),
+);
+
 // identify() is where a browser says who somebody is, and the identifier it
 // accepts becomes the user id on every event, in visitors, in identified_users,
 // on the identities screen and in every export. The tracker refuses one that
@@ -723,17 +728,16 @@ test("identify refuses an identifier that looks like a person", async () => {
       autoTrack: false,
     });
 
-    for (const refused of [
-      "person@example.com",
-      "010-1234-5678",
-      "01012345678",
-      "+82 10 1234 5678",
-      "860101-1234567",
-      "8601011234567",
-      "20260827",
-      "",
-    ]) {
-      tracker.identify(refused, { department: "기술" });
+    // The shapes come from testdata/pii_identifiers.json, which the collector's
+    // own test reads too. The tracker refuses an identifier in the browser and
+    // the collector refuses one that reaches it another way — two halves of one
+    // rule in two languages, and the tracker's comment claims they "refuse the
+    // same things". They did not: the collector accepted a long run of digits
+    // that the tracker rejects, so the same site got a different answer
+    // depending on whether the identifier came from a browser or from a
+    // server-to-server integration.
+    for (const { value } of [...examples.refused, { value: "20260827" }, { value: "" }]) {
+      tracker.identify(value, { department: "기술" });
     }
     tracker.track("page_view", {});
     await tracker.flush();
@@ -744,13 +748,19 @@ test("identify refuses an identifier that looks like a person", async () => {
     );
     assert.ok(errors.length >= 7, "a refused identifier was not reported to the developer");
 
-    // And an internal identifier is accepted, or the guard would be refusing
-    // everything and passing this test for the wrong reason.
-    tracker.identify("EMP-4821", { department: "기술" });
-    tracker.track("click", {});
-    await tracker.flush();
-    assert.equal(deliveries.at(-1).user_id, "EMP-4821");
-    assert.equal(deliveries.at(-1).user_properties.department, "기술");
+    // And the identifiers identify() exists for are accepted, or the guard would
+    // be refusing everything and passing this test for the wrong reason.
+    for (const { value, why } of examples.allowed) {
+      tracker.identify(value, { department: "기술" });
+      tracker.track("click", {});
+      await tracker.flush();
+      assert.equal(
+        deliveries.at(-1).user_id,
+        value,
+        `${value} (${why}) was refused: identify() exists to carry values like this, and refusing one makes that person anonymous`,
+      );
+      assert.equal(deliveries.at(-1).user_properties.department, "기술");
+    }
   } finally {
     console.error = realError;
   }
