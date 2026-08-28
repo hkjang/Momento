@@ -29,7 +29,7 @@ services:
       # tree it was built from, which is what the console shows the operator.
       args:
         COMMIT: ${MOMENTO_COMMIT:-unknown}
-    image: momento:v0.34.18
+    image: momento:v0.34.19
     depends_on:
       postgres:
         condition: service_healthy
