@@ -40,19 +40,36 @@ func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	endpoint := s.publicURL(r.Context(), r)
 
+	// This screen diagnoses a site's collection, and every check below is derived
+	// from these four reads. A discarded failure does not leave a figure blank —
+	// it produces zero events in the last day, which the checks then report as
+	// "수집이 안 되고 있습니다". The operator is told their tracking is broken by a
+	// screen whose own query broke, and goes to look at the tracker.
 	var lastEvent *time.Time
 	var events24h, events1h, visitors24h, environments int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT max(received_at),
+	if err := s.DB.QueryRow(r.Context(), `SELECT max(received_at),
 		count(*) FILTER(WHERE received_at>now()-interval '24 hours'),
 		count(*) FILTER(WHERE received_at>now()-interval '1 hour'),
 		count(DISTINCT visitor_id) FILTER(WHERE received_at>now()-interval '24 hours'),
 		count(DISTINCT environment) FILTER(WHERE received_at>now()-interval '24 hours')
-		FROM raw_events WHERE site_id=$1`, siteID).Scan(&lastEvent, &events24h, &events1h, &visitors24h, &environments)
+		FROM raw_events WHERE site_id=$1`, siteID).Scan(&lastEvent, &events24h, &events1h, &visitors24h, &environments); err != nil {
+		writeQueryError(w, err)
+		return
+	}
 	var environmentEvents int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM raw_events WHERE site_id=$1 AND environment=$2 AND received_at>now()-interval '24 hours'`, siteID, environment).Scan(&environmentEvents)
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM raw_events WHERE site_id=$1 AND environment=$2 AND received_at>now()-interval '24 hours'`, siteID, environment).Scan(&environmentEvents); err != nil {
+		writeQueryError(w, err)
+		return
+	}
 	var pending, stalled, deadLetters int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE created_at<now()-interval '5 minutes') FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &stalled)
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at>now()-interval '24 hours'`, siteID).Scan(&deadLetters)
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE created_at<now()-interval '5 minutes') FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &stalled); err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at>now()-interval '24 hours'`, siteID).Scan(&deadLetters); err != nil {
+		writeQueryError(w, err)
+		return
+	}
 
 	observed := s.observedOrigins(r, siteID)
 	unlisted := unlistedOrigins(observed, domains)

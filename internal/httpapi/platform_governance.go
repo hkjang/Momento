@@ -651,10 +651,23 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	if received > 0 {
 		score -= minFloat(100, float64(defects)*100/float64(received))
 	}
+	// The backlog and the dead letters are why this screen exists: an operator
+	// reads them to decide whether ingestion is healthy. A discarded failure
+	// reports no backlog and no dead letters — the screen says everything is
+	// fine, which is the one answer it must never give by default.
 	var inboxLag float64
 	var pending, deadLetters int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*),coalesce(extract(epoch FROM(now()-min(received_at))),0) FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &inboxLag)
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at >= $2 AND failed_at < $3`, siteID, from, to).Scan(&deadLetters)
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*),coalesce(extract(epoch FROM(now()-min(created_at))),0) FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &inboxLag); err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at >= $2 AND failed_at < $3`, siteID, from, to).Scan(&deadLetters); err != nil {
+		writeQueryError(w, err)
+		return
+	}
+	// The cardinality limit is a setting rather than a measurement, and a site
+	// environment that has none is a legitimate answer, so this one stays
+	// tolerant: no row means no limit configured.
 	var cardinalityLimit int64
 	_ = s.DB.QueryRow(r.Context(), `SELECT cardinality_limit FROM site_environments WHERE site_id=$1 AND name=$2`, siteID, environment).Scan(&cardinalityLimit)
 	cardinalityRows, _ := s.DB.Query(r.Context(), `SELECT dimension,count(DISTINCT value_hash) FROM data_quality_dimension_values WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY dimension ORDER BY count(DISTINCT value_hash) DESC`, siteID, environment, dateFrom, dateTo)

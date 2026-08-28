@@ -307,9 +307,15 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 	// Counted over distinct rows rather than with count(DISTINCT ...): the
 	// aggregate form cannot be answered by a hash, so PostgreSQL sorts the whole
 	// period for one number and spills to disk once the period is large.
-	_ = s.DB.QueryRow(reportCtx, `SELECT count(*) FROM (SELECT DISTINCT entity_id FROM analytics_events
+	// The adoption rate is this number's denominator, so a read that fails and is
+	// discarded does not leave the report short of one figure — it makes every
+	// adoption rate on the screen zero, which reads as a feature nobody uses.
+	if err := s.DB.QueryRow(reportCtx, `SELECT count(*) FROM (SELECT DISTINCT entity_id FROM analytics_events
 		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) people`,
-		siteID, from, to, environment).Scan(&population)
+		siteID, from, to, environment).Scan(&population); err != nil {
+		writeQueryError(w, err)
+		return
+	}
 	midpoint := from.Add(to.Sub(from) / 2)
 	rows, err := s.DB.Query(reportCtx, `WITH user_feature AS (
 		SELECT properties->>'feature' feature,entity_id,count(*) events,bool_or(is_conversion) converted,bool_or(event_name=ANY($6)) errored,min(event_timestamp) first_seen,max(event_timestamp) last_seen
@@ -361,27 +367,45 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
+	// Three independent reads over the same window: the totals, the queries
+	// themselves, and the people to act on. They ran one after another, so the
+	// page waited for the sum of all three.
+	//
+	// The first also discarded its error. With the read now under a deadline that
+	// is worse than untidy: a search report that timed out answered zero searches
+	// and zero users — a site that looks like nobody searches it, rather than a
+	// report that did not finish. There is no reading of a swallowed error that
+	// leaves the screen honest.
 	var searches, users, noResults, clicks, refinements, exits, successes int64
-	_ = s.DB.QueryRow(reportCtx, `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_refine'),count(*) FILTER(WHERE event_name='search_exit'),count(*) FILTER(WHERE event_name='search_success')
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&searches, &users, &noResults, &clicks, &refinements, &exits, &successes)
-	rows, err := s.DB.Query(reportCtx, `SELECT coalesce(properties->>'query',properties->>'search_term','(not set)') query,count(*) FILTER(WHERE event_name='search') searches,count(DISTINCT entity_id) users,count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')) no_results,count(*) FILTER(WHERE event_name='search_click') clicks,max(event_timestamp) last_seen
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY 1 ORDER BY searches DESC LIMIT 200`, siteID, from, to, environment, []string{"search", "search_result", "search_click", "search_no_result", "search_refine", "search_exit", "search_success"})
-	if err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	defer rows.Close()
 	queries := []map[string]any{}
-	for rows.Next() {
-		var query string
-		var count, queryUsers, zero, queryClicks int64
-		var last time.Time
-		if rows.Scan(&query, &count, &queryUsers, &zero, &queryClicks, &last) == nil {
-			queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
-		}
-	}
-	audiences, err := s.frictionAudiences(reportCtx, siteID, from, to, environment, "search")
-	if err != nil {
+	var audiences []frictionAudience
+	if err := insight.RunParallel(reportCtx, insight.QueryConcurrency,
+		func(ctx context.Context) error {
+			return s.DB.QueryRow(ctx, `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_refine'),count(*) FILTER(WHERE event_name='search_exit'),count(*) FILTER(WHERE event_name='search_success')
+				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&searches, &users, &noResults, &clicks, &refinements, &exits, &successes)
+		},
+		func(ctx context.Context) error {
+			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'query',properties->>'search_term','(not set)') query,count(*) FILTER(WHERE event_name='search') searches,count(DISTINCT entity_id) users,count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')) no_results,count(*) FILTER(WHERE event_name='search_click') clicks,max(event_timestamp) last_seen
+				FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY 1 ORDER BY searches DESC LIMIT 200`, siteID, from, to, environment, []string{"search", "search_result", "search_click", "search_no_result", "search_refine", "search_exit", "search_success"})
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var query string
+				var count, queryUsers, zero, queryClicks int64
+				var last time.Time
+				if rows.Scan(&query, &count, &queryUsers, &zero, &queryClicks, &last) == nil {
+					queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
+				}
+			}
+			return rows.Err()
+		},
+		func(ctx context.Context) error {
+			found, err := s.frictionAudiences(ctx, siteID, from, to, environment, "search")
+			audiences = found
+			return err
+		}); err != nil {
 		writeQueryError(w, err)
 		return
 	}
@@ -742,11 +766,16 @@ func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var users, converted int64
-		_ = s.DB.QueryRow(reportCtx, `SELECT count(*),count(*) FILTER(WHERE converted) FROM (
+		// A discarded failure here reports the variant as having no users and no
+		// conversions, which the comparison then reads as a variant that lost.
+		if err := s.DB.QueryRow(reportCtx, `SELECT count(*),count(*) FILTER(WHERE converted) FROM (
 			SELECT entity_id,bool_or(is_conversion) converted FROM analytics_events
 			WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4
 				AND properties->>'experiment_id'=$5 AND properties->>'variant'=$6
-			GROUP BY entity_id) people`, siteID, environment, from, to, key, variant).Scan(&users, &converted)
+			GROUP BY entity_id) people`, siteID, environment, from, to, key, variant).Scan(&users, &converted); err != nil {
+			writeQueryError(w, err)
+			return
+		}
 		rate := percent(converted, users)
 		lift, confidence := float64(0), float64(0)
 		if index == 0 {
