@@ -83,19 +83,18 @@ func TestTheFixtureIsWhatItSaysItIs(t *testing.T) {
 		GROUP BY entity_id
 		HAVING bool_or(event_name IN ('rage_click','dead_click','form_retry')) AND NOT bool_or(is_conversion)) people`, f.siteKey)
 	if unconverted == 0 {
-		// Reported, not asserted, and worth being precise about why.
-		//
-		// The impact report's two populations are the people who hit a signal and
-		// the people who did not, and both exist here — that part works. What does
-		// not is the comparison it draws between them: every person in this fixture
-		// converts, so both conversion rates are 100%, every gap is zero, and a
-		// report that computed the gap backwards would produce the same output.
-		//
-		// The fix is a person who converts nothing, and adding one moves the
-		// conversion rate on every screen that has one. That is a change to make on
-		// its own, with the assertions it moves handled deliberately, which is how
-		// the search and friction events above arrived.
-		t.Log("every person in this fixture converts, so the friction impact comparison has no gap to state and a report that computed it backwards would look the same")
+		t.Error("everybody who hits friction in this fixture also converts, so both conversion rates are 100%, every gap the impact report states is zero, and a report that computed the gap backwards would produce the same output")
+	}
+
+	// Every visitor the events know about has to be in the daily rollup, because
+	// that is where the reports read who is new — the overview, the insight report
+	// and the cohort grid all resolve first-seen through insight.FirstSeenCTE. A
+	// visitor with events and no rollup row is a person the events count and the
+	// screens do not, and the disagreement is reported as the product's.
+	missing := count(`SELECT count(DISTINCT e.visitor_id) FROM raw_events e WHERE e.site_id=`+site+`
+		AND NOT EXISTS(SELECT 1 FROM daily_site_visitors d WHERE d.site_id=e.site_id AND d.visitor_id=e.visitor_id)`, f.siteKey)
+	if missing > 0 {
+		t.Errorf("%d visitor(s) have events and no daily_site_visitors row: the events see them and every screen that asks who is new does not", missing)
 	}
 
 	// An anonymous visitor, so identity-scoped reads have somebody to exclude.

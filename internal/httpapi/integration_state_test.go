@@ -326,6 +326,13 @@ func (f fixture) clearAnomalies(t *testing.T) {
 
 // TestBehaviouralSegmentEvaluates runs the entity aggregate compiler against real
 // data, which the unit test can only check as generated SQL.
+//
+// It used to require the segment to match nobody, because everybody in the
+// fixture converted. That showed the compiler was not silently matching everyone
+// and nothing else — a segment that always matched nobody would have passed it
+// just as well. The fixture now has one person who hits friction and converts
+// nothing, so the segment can be held to selecting them and excluding the people
+// who did convert.
 func TestBehaviouralSegmentEvaluates(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
@@ -341,11 +348,24 @@ func TestBehaviouralSegmentEvaluates(t *testing.T) {
 	if response["rows"] == nil {
 		t.Fatalf("behavioural segment query returned no rows key: %v", response)
 	}
-	// Everyone in the fixture converts, so the segment must match nobody rather than
-	// silently matching everyone.
 	rows, _ := response["rows"].([]any)
-	if len(rows) != 0 {
-		t.Fatalf("the never-converted segment matched %d rows: %v", len(rows), rows)
+	if len(rows) == 0 {
+		t.Fatal("the never-converted segment matched nobody: the fixture has somebody who visits repeatedly and converts nothing, so an empty answer means the aggregate is not selecting on what it says it does")
+	}
+	// The compiler must exclude everyone who converted. The people who do carry
+	// the purchases, so a purchase reaching this answer is the segment matching
+	// somebody it defines itself by not matching.
+	for _, row := range rows {
+		item, _ := row.(map[string]any)
+		if item == nil {
+			continue
+		}
+		if fmt.Sprint(item["event.name"]) == "purchase" {
+			t.Errorf("the never-converted segment answered a purchase row: %v", item)
+		}
+		if users := toNumber(item["users"]); users != 1 {
+			t.Errorf("%v matched %v people, and one person in the fixture converts nothing", item["event.name"], users)
+		}
 	}
 }
 

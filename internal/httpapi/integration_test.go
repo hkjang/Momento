@@ -130,6 +130,9 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 
 	const person = "EMP001"
 	desktop, mobile, anonymous := "visitor-desktop", "visitor-mobile", "visitor-anon"
+	// A person who hits friction and never converts, so the impact comparison has
+	// two sides. They appear only in the recent days the signal block covers.
+	const blocked = "visitor-blocked"
 	for _, visitor := range []string{desktop, mobile} {
 		run(`INSERT INTO visitor_identities(site_id,visitor_id,user_id,first_seen,linked_at,last_seen)
 			VALUES($1,$2,$3,now()-interval '70 days',now()-interval '70 days',now())`, siteID, visitor, person)
@@ -285,6 +288,26 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		anonymousEvent("rage_click", `{"element_text":"신청"}`, 16)
 		anonymousEvent("form_retry", `{"form_id":"leave"}`, 17)
 		anonymousEvent("search", `{"query":"환불","result_count":"0","query_words":1}`, 18)
+
+		// Somebody who hits friction and converts nothing.
+		//
+		// Every other person in this fixture converts, so the friction impact
+		// report's two populations both existed and the comparison between them was
+		// degenerate: both conversion rates 100%, every gap zero, and a report that
+		// computed the gap backwards would have produced the same output. A gap
+		// needs somebody on the other side of it.
+		blockedSession := fmt.Sprintf("s-%s-%d", blocked, day)
+		run(fmt.Sprintf(`INSERT INTO sessions(site_id,session_id,visitor_id,started_at,last_event_at,event_count,page_views,conversion_count,engaged,landing_page,exit_page,source,medium,campaign,device_type,environment)
+			VALUES($1,$2,$3,%s+interval '16 minutes',%s+interval '19 minutes',3,1,0,false,'https://portal.internal/help','https://portal.internal/help','intranet','portal','','mobile','prd')`, at, at),
+			siteID, blockedSession, blocked)
+		blockedEvent := func(name, properties string, minute int) {
+			run(fmt.Sprintf(`INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,received_at,visitor_id,session_id,page_url,source,medium,device_type,browser,os,properties,is_conversion,environment,contract_version)
+				VALUES(gen_random_uuid(),$1,$2,%s+interval '%d minutes',now(),$3,$4,'https://portal.internal/help','intranet','portal','mobile','Chrome','Android',$5,false,'prd',1)`, at, minute),
+				siteID, name, blocked, blockedSession, properties)
+		}
+		blockedEvent("page_view", `{}`, 16)
+		blockedEvent("rage_click", `{"element_text":"제출"}`, 17)
+		blockedEvent("dead_click", `{"element_text":"도움말"}`, 18)
 	}
 
 	// Daily rollups feed the anomaly baseline, and the landing screen draws its
@@ -304,6 +327,31 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 			coalesce(sum(CASE WHEN event_name='purchase' AND coalesce(properties->>'value','') ~ '^[0-9]+(\.[0-9]+)?$'
 				THEN (properties->>'value')::numeric ELSE 0 END),0)
 		FROM raw_events WHERE site_id=$1 GROUP BY 1,2,3`, siteID)
+
+	// The per-visitor rollup, for anybody the fixed list above did not cover.
+	//
+	// daily_site_visitors is where the reports read who is new — the overview, the
+	// insight report and the cohort grid all resolve first-seen through
+	// insight.FirstSeenCTE — so a visitor with events and no rollup row is a
+	// visitor the events know about and the screens do not. Adding one caught
+	// exactly that: three tests failed saying the events see two new people and
+	// both screens see one, which is the fixture disagreeing with itself and not
+	// the product disagreeing with the fixture.
+	//
+	// Derived rather than listed, and after the last event, for the same reason
+	// the metrics above are.
+	run(`INSERT INTO daily_site_visitors(site_id,event_date,environment,visitor_id,first_seen,last_seen,event_count,conversion_count)
+		SELECT e.site_id,(e.event_timestamp AT TIME ZONE 'Asia/Seoul')::date,e.environment,e.visitor_id,
+			min(e.event_timestamp),max(e.event_timestamp),count(*),count(*) FILTER(WHERE e.is_conversion)
+		FROM raw_events e WHERE e.site_id=$1
+			AND NOT EXISTS(SELECT 1 FROM daily_site_visitors d WHERE d.site_id=e.site_id AND d.visitor_id=e.visitor_id)
+		GROUP BY 1,2,3,4`, siteID)
+	run(`INSERT INTO daily_site_sessions(site_id,event_date,environment,session_id,visitor_id,user_id,first_seen,last_seen)
+		SELECT e.site_id,(e.event_timestamp AT TIME ZONE 'Asia/Seoul')::date,e.environment,e.session_id,e.visitor_id,max(e.user_id),
+			min(e.event_timestamp),max(e.event_timestamp)
+		FROM raw_events e WHERE e.site_id=$1 AND e.session_id IS NOT NULL
+			AND NOT EXISTS(SELECT 1 FROM daily_site_sessions d WHERE d.site_id=e.site_id AND d.session_id=e.session_id)
+		GROUP BY 1,2,3,4,5`, siteID)
 
 	var segmentID uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO segments(site_id,name,description,definition,shared,owner_id)
