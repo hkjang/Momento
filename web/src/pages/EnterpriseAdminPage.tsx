@@ -23,6 +23,12 @@ import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
+import {
+  defaultQueryPolicyForm,
+  queryPolicyFields,
+  queryPolicyLabel,
+  readQueryPolicy,
+} from "./queryPolicyForm";
 
 export default function EnterpriseAdminPage({
   mode,
@@ -41,7 +47,13 @@ function AnalyticsEngineering() {
   const { site, environment } = useSite();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
-  const panelNames = ["metrics", "query-cost", "aggregate", "calendar", "catalog"];
+  const panelNames = [
+    "metrics",
+    "query-cost",
+    "aggregate",
+    "calendar",
+    "catalog",
+  ];
   const requestedPanel = panelNames.indexOf(params.get("panel") || "metrics");
   const panel = requestedPanel < 0 ? 0 : requestedPanel;
   const selectPanel = (value: number) => {
@@ -125,13 +137,7 @@ function AnalyticsEngineering() {
     owner: "",
     environment,
   });
-  const [policyForm, setPolicyForm] = useState({
-    max_exact_days: 180,
-    max_complexity_score: 90,
-    background_threshold: 60,
-    fast_sample_percent: 10,
-    preview_sample_percent: 1,
-  });
+  const [policyForm, setPolicyForm] = useState(defaultQueryPolicyForm);
   const [job, setJob] = useState({
     job_type: "date_range",
     date_from: "",
@@ -148,7 +154,8 @@ function AnalyticsEngineering() {
     workspace_wide: false,
   });
   useEffect(() => {
-    if (policy.data) setPolicyForm(policy.data as typeof policyForm);
+    if (policy.data)
+      setPolicyForm((current) => readQueryPolicy(policy.data, current));
   }, [policy.data]);
   useEffect(() => {
     setGoal((v) => ({ ...v, environment }));
@@ -470,20 +477,12 @@ function AnalyticsEngineering() {
         <Card sx={{ p: 2.5 }}>
           <Typography variant="h6">Query Cost Guard & Sampling</Typography>
           <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} mt={2}>
-            {Object.entries(policyForm).map(([key, value]) => (
+            {queryPolicyFields.map((key) => (
               <TextField
                 key={key}
                 type="number"
-                label={
-                  {
-                    max_exact_days: "Exact 최대 기간(일)",
-                    max_complexity_score: "최대 복잡도 점수",
-                    background_threshold: "백그라운드 기준",
-                    fast_sample_percent: "Fast 표본(%)",
-                    preview_sample_percent: "Preview 표본(%)",
-                  }[key] || key
-                }
-                value={value}
+                label={queryPolicyLabel[key]}
+                value={policyForm[key]}
                 onChange={(e) =>
                   setPolicyForm({
                     ...policyForm,
