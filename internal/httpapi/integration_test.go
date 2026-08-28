@@ -231,6 +231,8 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	//   user_engagement the engaged-time path, including its numeric guard
 	//   resource_error  the experience report reads it alongside error
 	//   ai_*            the whole AI operations report
+	//   search_*        the search report, and the audiences it offers
+	//   friction        the frustration report and its impact comparison
 	for day := 3; day >= 1; day-- {
 		// Inside the desktop visitor's existing session for that day, not a session
 		// of their own: the collector never writes an event without a session row,
@@ -258,6 +260,31 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		event("resource_error", `{"resource":"https://portal.internal/app.js","resource_type":"script"}`, false, 9)
 		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"true","latency_ms":"820","input_tokens":"1200","output_tokens":"300","cost":"0.02"}`, false, 10)
 		event("ai_model_call", `{"model":"claude","provider":"anthropic","success":"false","latency_ms":"1400","input_tokens":"800","output_tokens":"0","cost":"0.01"}`, false, 11)
+		// Three searches, one of which finds nothing, and one click on a result.
+		// Every rate the search report states is a different fraction of these, so
+		// a report that mixed two of them up cannot produce the same numbers.
+		event("search", `{"query":"연차","result_count":"7","query_words":1}`, false, 12)
+		event("search", `{"query":"출장 정산","result_count":"3","query_words":2}`, false, 13)
+		event("search", `{"query":"없는말","result_count":"0","query_words":1}`, false, 14)
+		event("search_click", `{"query":"연차","position":"1"}`, false, 15)
+		// Friction on somebody who converts. The impact report compares the people
+		// who hit a signal against the people who did not, so it needs both, and
+		// the anonymous visitor below is the other side.
+		event("rage_click", `{"element_text":"제출"}`, false, 16)
+		event("dead_click", `{"element_text":"도움말"}`, false, 17)
+
+		// The anonymous visitor hits friction and never converts, in their own
+		// session for the day — the same rule as above: an event belongs to a
+		// session that exists.
+		anonymousSession := fmt.Sprintf("s-%s-%d", anonymous, day)
+		anonymousEvent := func(name, properties string, minute int) {
+			run(fmt.Sprintf(`INSERT INTO raw_events(event_id,site_id,event_name,event_timestamp,received_at,visitor_id,session_id,page_url,source,medium,device_type,browser,os,properties,is_conversion,environment,contract_version)
+				VALUES(gen_random_uuid(),$1,$2,%s+interval '%d minutes',now(),$3,$4,'https://portal.internal/help','','','desktop','Chrome','Windows',$5,false,'prd',1)`, at, minute),
+				siteID, name, anonymous, anonymousSession, properties)
+		}
+		anonymousEvent("rage_click", `{"element_text":"신청"}`, 16)
+		anonymousEvent("form_retry", `{"form_id":"leave"}`, 17)
+		anonymousEvent("search", `{"query":"환불","result_count":"0","query_words":1}`, 18)
 	}
 
 	// Daily rollups feed the anomaly baseline, and the landing screen draws its

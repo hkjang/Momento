@@ -62,29 +62,40 @@ func TestTheFixtureIsWhatItSaysItIs(t *testing.T) {
 	if days := count(`SELECT count(DISTINCT (event_timestamp AT TIME ZONE 'Asia/Seoul')::date) FROM raw_events WHERE site_id=`+site, f.siteKey); days < 60 {
 		t.Errorf("the first service has activity on %d days, and the fixture describes ten weeks", days)
 	}
-	for _, signal := range []string{"page_view", "purchase", "web_vital", "error", "resource_error", "user_engagement", "refund"} {
+	for _, signal := range []string{
+		"page_view", "purchase", "web_vital", "error", "resource_error", "user_engagement", "refund",
+		// Search and friction were missing until the report tests had to deliver
+		// their own to have anything to compare. Both reports answered nothing
+		// against this fixture, so a test comparing two nothings agreed however
+		// wrong either side was.
+		"search", "search_click", "rage_click", "dead_click", "form_retry",
+	} {
 		if events := count(`SELECT count(*) FROM raw_events WHERE site_id=`+site+` AND event_name=$2`, f.siteKey, signal); events == 0 {
 			t.Errorf("the fixture has no %s events, so every report that reads them answers zero and agrees with itself", signal)
 		}
 	}
 
-	// What the fixture does not carry, said out loud rather than discovered.
-	//
-	// The seed already fixed this for one set of signals — its own comment says
-	// they were "events the reports read that nothing was creating, so those paths
-	// ran and returned zero and every test passed" — and search and friction were
-	// not in that set. Both reports exist, and against this fixture both answer
-	// nothing, so a test that compares two nothings agrees however wrong either
-	// side is. integration_mcp_agreement_test.go hit exactly that and works around
-	// it by delivering its own; so does the frustration agreement test.
-	//
-	// This is reported rather than asserted because adding them to the shared
-	// fixture changes the numbers those tests already pin, which is a change worth
-	// making deliberately and not as a side effect of writing this one.
-	for _, absent := range []string{"search", "rage_click", "dead_click", "form_retry"} {
-		if events := count(`SELECT count(*) FROM raw_events WHERE site_id=`+site+` AND event_name=$2`, f.siteKey, absent); events == 0 {
-			t.Logf("the fixture has no %s events: a test about that report has to deliver its own, or it compares nothing with nothing", absent)
-		}
+	// Friction has to reach somebody who does not convert, or the impact report
+	// compares one population against nothing and every gap it states is the
+	// whole population's rate wearing a comparison.
+	unconverted := count(`SELECT count(*) FROM (
+		SELECT entity_id FROM analytics_events WHERE site_id=`+site+`
+		GROUP BY entity_id
+		HAVING bool_or(event_name IN ('rage_click','dead_click','form_retry')) AND NOT bool_or(is_conversion)) people`, f.siteKey)
+	if unconverted == 0 {
+		// Reported, not asserted, and worth being precise about why.
+		//
+		// The impact report's two populations are the people who hit a signal and
+		// the people who did not, and both exist here — that part works. What does
+		// not is the comparison it draws between them: every person in this fixture
+		// converts, so both conversion rates are 100%, every gap is zero, and a
+		// report that computed the gap backwards would produce the same output.
+		//
+		// The fix is a person who converts nothing, and adding one moves the
+		// conversion rate on every screen that has one. That is a change to make on
+		// its own, with the assertions it moves handled deliberately, which is how
+		// the search and friction events above arrived.
+		t.Log("every person in this fixture converts, so the friction impact comparison has no gap to state and a report that computed it backwards would look the same")
 	}
 
 	// An anonymous visitor, so identity-scoped reads have somebody to exclude.

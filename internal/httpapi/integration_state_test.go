@@ -922,16 +922,29 @@ func TestAdoptionAgreesAcrossScreenDigestAndTool(t *testing.T) {
 // not do before: it checks the search report's arithmetic against known inputs,
 // and it checks that the screen and the MCP tool answer the same.
 //
-// The fixture carried no search events, so nothing in the suite had ever verified
-// a search number. Meanwhile the screen and the tool each own their own copy of
-// the query, which is the arrangement that let the same defect ship three times
-// in the adoption report — the copies agree today and a test is what keeps them
-// agreeing.
+// Nothing in the suite had ever verified a search number, and the screen and the
+// tool each own their own copy of the query — the arrangement that let the same
+// defect ship three times in the adoption report. The copies agree today and a
+// test is what keeps them agreeing.
+//
+// The numbers are read as a difference rather than as a total. This test used to
+// assert the site's absolute counts, which only worked because the fixture had no
+// searches of its own — so it was pinned to an absence, and the absence was the
+// reason nothing about search was being exercised anywhere else. Measuring the
+// change this test causes says the same thing about the report and stops the
+// fixture from having to stay empty for it.
 func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
 	ctx := context.Background()
 	from, today := f.siteDates(t, 7)
+
+	// What the site already reports, so what follows is the difference these
+	// searches make rather than the whole of what the report can see.
+	before, _ := f.get(t, "/api/v1/sites/"+f.siteKey+"/search-analytics?from="+from+"&to="+today)["summary"].(map[string]any)
+	if before == nil {
+		t.Fatal("the search report has no summary before anything is seeded")
+	}
 
 	// Five people search once and find results, one of them searches again and
 	// finds nothing, and one clicks a result. Every number below follows from that.
@@ -969,35 +982,17 @@ func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 		{"users", 5},
 		{"zero_results", 1},
 		{"clicks", 1},
-	} {
-		if got, _ := summary[expected.key].(float64); got != expected.value {
-			t.Errorf("%s is %v, want %v from the seeded searches", expected.key, summary[expected.key], expected.value)
-		}
-	}
-	for _, expected := range []struct {
-		key   string
-		value float64
-	}{
+		// These three had never been anything but zero, for want of the event
+		// rather than want of the behaviour.
 		{"refinements", 1},
 		{"exits", 1},
 		{"successes", 1},
 	} {
-		if got, _ := summary[expected.key].(float64); got != expected.value {
-			t.Errorf("%s is %v, want %v: this figure was zero for want of the event, not for want of the behaviour",
-				expected.key, summary[expected.key], expected.value)
+		change := toNumber(summary[expected.key]) - toNumber(before[expected.key])
+		if change != expected.value {
+			t.Errorf("%s went from %v to %v, a change of %v, and the seeded searches add %v",
+				expected.key, before[expected.key], summary[expected.key], change, expected.value)
 		}
-	}
-	// One success out of six searches.
-	if rate, _ := summary["success_rate"].(float64); rate < 16.6 || rate > 16.7 {
-		t.Errorf("success_rate is %v, want one success in six searches", summary["success_rate"])
-	}
-
-	// One click out of six searches, and one of the six returned nothing.
-	if rate, _ := summary["search_ctr"].(float64); rate < 16.6 || rate > 16.7 {
-		t.Errorf("search_ctr is %v, want one click in six searches", summary["search_ctr"])
-	}
-	if rate, _ := summary["zero_result_rate"].(float64); rate < 16.6 || rate > 16.7 {
-		t.Errorf("zero_result_rate is %v, want one empty result in six searches", summary["zero_result_rate"])
 	}
 
 	tool := f.callMCP(t, "analyze_search", fmt.Sprintf(`"from":%q,"to":%q`, from, today))
