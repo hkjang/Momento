@@ -294,7 +294,12 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 	}
 	environment := requestEnvironment(r)
 	var population int64
-	_ = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&population)
+	// Counted over distinct rows rather than with count(DISTINCT ...): the
+	// aggregate form cannot be answered by a hash, so PostgreSQL sorts the whole
+	// period for one number and spills to disk once the period is large.
+	_ = s.DB.QueryRow(r.Context(), `SELECT count(*) FROM (SELECT DISTINCT entity_id FROM analytics_events
+		WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3) people`,
+		siteID, from, to, environment).Scan(&population)
 	midpoint := from.Add(to.Sub(from) / 2)
 	rows, err := s.DB.Query(r.Context(), `WITH user_feature AS (
 		SELECT properties->>'feature' feature,entity_id,count(*) events,bool_or(is_conversion) converted,bool_or(event_name=ANY($6)) errored,min(event_timestamp) first_seen,max(event_timestamp) last_seen
@@ -496,7 +501,13 @@ func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
 			return rows.Err()
 		},
 		func(ctx context.Context) error {
-			return s.DB.QueryRow(ctx, `SELECT count(DISTINCT session_id),count(DISTINCT session_id) FILTER(WHERE event_name=ANY($5)) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment, events).Scan(&totalSessions, &affectedSessions)
+			// Folded per session first: two count(DISTINCT session_id) aggregates
+			// over the same key make PostgreSQL sort the period, and grouping by
+			// the session answers both without one.
+			return s.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE affected) FROM (
+				SELECT session_id,bool_or(event_name=ANY($5)) affected FROM analytics_events
+				WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+				GROUP BY session_id) sessions`, siteID, from, to, environment, events).Scan(&totalSessions, &affectedSessions)
 		},
 		func(ctx context.Context) error {
 			var err error
@@ -711,7 +722,11 @@ func (s *Server) analyzeExperiment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var users, converted int64
-		_ = s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id),count(DISTINCT entity_id) FILTER(WHERE is_conversion) FROM analytics_events WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4 AND properties->>'experiment_id'=$5 AND properties->>'variant'=$6`, siteID, environment, from, to, key, variant).Scan(&users, &converted)
+		_ = s.DB.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE converted) FROM (
+			SELECT entity_id,bool_or(is_conversion) converted FROM analytics_events
+			WHERE site_id=$1 AND environment=$2 AND event_timestamp >= $3 AND event_timestamp < $4
+				AND properties->>'experiment_id'=$5 AND properties->>'variant'=$6
+			GROUP BY entity_id) people`, siteID, environment, from, to, key, variant).Scan(&users, &converted)
 		rate := percent(converted, users)
 		lift, confidence := float64(0), float64(0)
 		if index == 0 {

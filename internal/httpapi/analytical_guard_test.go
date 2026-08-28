@@ -68,3 +68,30 @@ func TestUnrelatedDatabaseErrorIsNotATimeout(t *testing.T) {
 		t.Fatalf("status = %d, want 500 for an unrelated database error", status)
 	}
 }
+
+// A database that cannot grow the shared memory a parallel query needs is not a
+// query that was too wide. Reported as a generic failure, it sends the reader to
+// narrow a period that is not the problem, and nobody reading "could not resize
+// shared memory segment" thinks of a container flag.
+func TestSharedMemoryExhaustionNamesTheSetting(t *testing.T) {
+	t.Parallel()
+	status, code, message := queryErrorResponse(&pgconn.PgError{
+		Code:    "53100",
+		Message: `could not resize shared memory segment "/PostgreSQL.3275806154" to 16777216 bytes: No space left on device`,
+	})
+	if code != "DATABASE_SHARED_MEMORY" {
+		t.Fatalf("a shared memory failure is reported as %q with status %d", code, status)
+	}
+	for _, want := range []string{"/dev/shm", "shm-size", "shm_size"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the message does not name %q, so an operator has nothing to act on: %s", want, message)
+		}
+	}
+	// A genuine disk-full is a different problem and must not be renamed into
+	// this one: 53100 is also what PostgreSQL reports when the volume fills.
+	if _, diskCode, _ := queryErrorResponse(&pgconn.PgError{
+		Code: "53100", Message: "could not extend file: No space left on device",
+	}); diskCode == "DATABASE_SHARED_MEMORY" {
+		t.Error("a full disk is being reported as a shared memory setting, which sends the operator to the wrong place")
+	}
+}

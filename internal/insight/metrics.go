@@ -33,17 +33,35 @@ func (r Reporter) Metrics(ctx context.Context, siteID uuid.UUID, environment str
 		new_users AS (
 			SELECT count(*) value FROM (`+FirstSeenCTE("$1", "$4", "$3")+`) firsts
 			WHERE firsts.first_at >= $2
+		),
+		-- Folded per person first, then counted.
+		--
+		-- count(DISTINCT ...) cannot be answered by a hash: PostgreSQL sorts the
+		-- whole period for it, and on two million events that sort spills to disk
+		-- — a hundred megabytes of temporary files for a number the planner can
+		-- reach by grouping. Grouping by the person once produces every figure
+		-- here, the event counts included, and answers the same numbers in half
+		-- the time. This query runs twice per overview and twice per insight
+		-- report, once for each period being compared.
+		people AS (
+			SELECT p.entity,
+				bool_or(p.is_conversion) converted,
+				count(*) events,
+				count(*) FILTER(WHERE p.event_name='page_view') page_views,
+				count(*) FILTER(WHERE p.is_conversion) conversions,
+				`+RevenueAmountSQL("p")+` revenue
+			FROM period p GROUP BY p.entity
 		)
 		SELECT
-			count(DISTINCT p.entity),
-			(SELECT value FROM new_users),
-			count(*) FILTER(WHERE p.event_name='page_view'),
 			count(*),
-			count(*) FILTER(WHERE p.is_conversion),
-			count(DISTINCT p.entity) FILTER(WHERE p.is_conversion),
-			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
-			`+RevenueAmountSQL("p")+`
-		FROM period p`, siteID, from, to, environment).
+			(SELECT value FROM new_users),
+			coalesce(sum(page_views),0),
+			coalesce(sum(events),0),
+			coalesce(sum(conversions),0),
+			count(*) FILTER(WHERE converted),
+			coalesce(100.0*count(*) FILTER(WHERE converted)/nullif(count(*),0),0),
+			coalesce(sum(revenue),0)
+		FROM people`, siteID, from, to, environment).
 		Scan(&m.Users, &m.NewUsers, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.UserConversionRate, &m.Revenue)
 	if err != nil {
 		return m, err

@@ -1,6 +1,14 @@
 services:
   postgres:
     image: postgres:17-alpine
+    # Docker gives a container 64MB of /dev/shm, and PostgreSQL puts a parallel
+    # query's shared hash tables and tuple queues there. A report that groups
+    # millions of rows asks for more than that and the query does not slow down —
+    # it fails, with "could not resize shared memory segment ... No space left on
+    # device", which reaches the reader as a 500 on a screen that worked last
+    # month. It appears only once a site is large enough for the planner to go
+    # parallel, which is exactly when nobody is changing the deployment.
+    shm_size: 1gb
     environment:
       POSTGRES_DB: momento
       POSTGRES_USER: momento

@@ -1068,18 +1068,32 @@ func (rep Reporter) periodMetrics(ctx context.Context, siteID uuid.UUID, environ
 		-- Only consulted when no session row exists for the period, which means
 		-- the derived data is behind rather than that nothing happened. Taking the
 		-- larger of the two would mix definitions and disagree with the overview.
-		SELECT count(DISTINCT session_id) sessions FROM period
+		--
+		-- Counted by distinct rows rather than by count(DISTINCT ...): the
+		-- aggregate form makes PostgreSQL sort the whole period, and this is
+		-- computed on every read for a branch that is almost never taken.
+		SELECT count(*) sessions FROM (SELECT DISTINCT session_id FROM period) distinct_sessions
+	),
+	-- Folded per person first. count(DISTINCT ...) cannot be answered by a hash,
+	-- so the period was sorted for it; grouping by the person reaches the same
+	-- figures without the sort, and this runs once for each of the two periods
+	-- the report compares.
+	people AS (
+		SELECT p.entity_id,
+			bool_or(p.is_conversion) converted,
+			count(*) FILTER(WHERE p.event_name='page_view') page_views
+		FROM period p GROUP BY p.entity_id
 	)
-	SELECT count(DISTINCT p.entity_id),
+	SELECT count(*),
 		(SELECT value FROM first_seen),
 		CASE WHEN (SELECT sessions FROM session_summary) > 0
 			THEN (SELECT sessions FROM session_summary)
 			ELSE (SELECT sessions FROM event_sessions) END,
-		count(*) FILTER(WHERE p.event_name='page_view'),
-		count(DISTINCT p.entity_id) FILTER(WHERE p.is_conversion),
+		coalesce(sum(page_views),0),
+		count(*) FILTER(WHERE converted),
 		(SELECT engaged FROM session_summary),
 		(SELECT average_seconds FROM session_summary)
-	FROM period p`, siteID, from, to, environment).
+	FROM people`, siteID, from, to, environment).
 		Scan(&m.Users, &m.NewUsers, &m.Sessions, &m.PageViews, &m.ConvertedUsers, &m.EngagedSessions, &m.AverageSeconds)
 	return m, err
 }

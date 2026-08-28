@@ -77,6 +77,38 @@ func TestTheImageAndTheArchiveAreNamedTheAgreedWay(t *testing.T) {
 	}
 }
 
+// TestTheShippedDatabaseHasEnoughSharedMemory pins one line of the compose file
+// that is invisible until it is too late.
+//
+// Docker gives a container 64MB of /dev/shm, and PostgreSQL puts a parallel
+// query's shared hash tables and tuple queues there. A report that groups
+// millions of rows asks for more, and the query does not slow down — it fails
+// with "could not resize shared memory segment", which reaches the reader as a
+// 500 on a screen that worked last month. It appears only once a site is large
+// enough for the planner to go parallel, which is when nobody is touching the
+// deployment. It was hit here on a two million event database.
+//
+// The guide tells an operator running their own PostgreSQL container the same
+// thing, so both are checked: a compose file that quietly loses this line ships
+// a deployment that breaks on growth.
+func TestTheShippedDatabaseHasEnoughSharedMemory(t *testing.T) {
+	root := repoRoot(t)
+	compose, err := os.ReadFile(filepath.Join(root, "compose.yml"))
+	if err != nil {
+		t.Fatalf("read compose.yml: %v", err)
+	}
+	if !strings.Contains(string(compose), "shm_size:") {
+		t.Error("compose.yml no longer sets shm_size on the database, so a parallel query fails once the site is large enough to need one")
+	}
+	guide, err := os.ReadFile(filepath.Join(root, "docs/OFFLINE.md"))
+	if err != nil {
+		t.Fatalf("read docs/OFFLINE.md: %v", err)
+	}
+	if !strings.Contains(string(guide), "--shm-size") {
+		t.Error("the offline guide no longer tells an operator running their own PostgreSQL container to raise --shm-size")
+	}
+}
+
 func TestEveryBuildStampsTheVersion(t *testing.T) {
 	root := repoRoot(t)
 	for file, forbidden := range map[string][]string{

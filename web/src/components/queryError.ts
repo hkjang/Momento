@@ -152,6 +152,17 @@ export function describeQueryError(
         actions: [],
         detail: message,
       };
+    case "DATABASE_SHARED_MEMORY":
+      return {
+        // Not a wide query. Offering "기간 줄이기" here sends the reader to fix
+        // something that is not broken; the fix is a container setting and the
+        // person who can make it is the administrator.
+        title: "데이터베이스 설정 때문에 조회가 실패했습니다",
+        explanation:
+          "PostgreSQL이 병렬 조회에 필요한 공유 메모리를 확보하지 못했습니다. Docker로 운영 중이라면 컨테이너의 /dev/shm이 기본값 64MB일 가능성이 큽니다. 데이터가 늘면서 조회 계획이 병렬로 바뀌는 시점에 나타나므로, 어제까지 되던 화면이 오늘 실패할 수 있습니다. 관리자에게 아래 메시지를 그대로 전달하세요.",
+        actions: [{ kind: "link", label: "사이트 설정", to: sites }],
+        detail: message,
+      };
     case "FORBIDDEN":
       return {
         title: "이 데이터를 볼 권한이 없습니다",
