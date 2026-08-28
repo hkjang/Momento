@@ -40,11 +40,11 @@ const labels: Record<string, string> = {
 };
 
 export default function EcommercePage() {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const [days, setDays] = useState(30);
   const query = useQuery({
-    queryKey: ["ecommerce", site?.site_id, site?.timezone, days],
-    placeholderData: keepWithinScope(site?.site_id),
+    queryKey: ["ecommerce", site?.site_id, site?.timezone, environment, days],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: () =>
       get<EcommerceData>(
         `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(days, site!.timezone)}`,

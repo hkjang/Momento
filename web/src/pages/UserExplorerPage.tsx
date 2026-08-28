@@ -37,7 +37,7 @@ import {
 } from "./visitorTrace";
 
 export default function UserExplorerPage() {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const [params, setParams] = useSearchParams();
   const subject = params.get("visitor") || "";
   // ?q= lets a report hand over a search instead of a single visitor: the
@@ -61,7 +61,7 @@ export default function UserExplorerPage() {
   }, [requestedQuery]);
 
   const search = useQuery({
-    queryKey: ["visitor-search", site?.site_id, query],
+    queryKey: ["visitor-search", site?.site_id, environment, query],
     enabled: !!site && query.length >= 2,
     queryFn: () =>
       get<{ results: VisitorSearchResult[] }>(
@@ -69,7 +69,7 @@ export default function UserExplorerPage() {
       ),
   });
   const trace = useQuery({
-    queryKey: ["visitor-trace", site?.site_id, subject, scope, cursor],
+    queryKey: ["visitor-trace", site?.site_id, environment, subject, scope, cursor],
     enabled: !!site && !!subject,
     queryFn: () =>
       get<VisitorTrace>(

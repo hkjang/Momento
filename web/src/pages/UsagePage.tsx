@@ -26,11 +26,11 @@ const tabs = [
   { k: "networks", l: "네트워크 망" },
 ] as const;
 export default function UsagePage() {
-  const { site } = useSite();
+  const { site, environment } = useSite();
   const [tab, setTab] = useState(0);
   const q = useQuery({
-    queryKey: ["usage", site?.site_id, site?.timezone],
-    placeholderData: keepWithinScope(site?.site_id),
+    queryKey: ["usage", site?.site_id, site?.timezone, environment],
+    placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: () =>
       get<Usage>(
         `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(30, site!.timezone)}`,
