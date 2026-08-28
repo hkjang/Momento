@@ -56,9 +56,40 @@ func (s *Server) runCohortGrid(ctx context.Context, siteID uuid.UUID, params coh
 		// activity, so a segment never retains people it never counted.
 		predicate = " AND (" + part + ")"
 	}
+	// Where a cohort comes from.
+	//
+	// A person's cohort is the bucket of their first activity, which needs their
+	// whole history — and reading it from every event they have ever sent means
+	// grouping the entire site to answer a question about one quarter. On two
+	// million events that grouping sorted to disk.
+	//
+	// When the cohort is not narrowed by an event name and not scoped by a
+	// segment, the daily visitor rollup already holds it: one row per person per
+	// active day, and insight.FirstSeenCTE is the definition the overview's new
+	// user count reads. It is also the more truthful of the two — raw events
+	// expire on their own retention policy while the rollups are kept, so once a
+	// person's early events aged out the events version called them new again.
+	//
+	// A cohort event or a segment scopes which events define the cohort, and the
+	// rollup cannot answer that, so those keep reading the events.
+	candidates := `SELECT e.entity_id,min(` + bucket + `) cohort_date FROM analytics_events e
+		WHERE e.site_id=$1 AND e.environment=$4 AND ($6='' OR e.event_name=$6)` + predicate + ` GROUP BY e.entity_id`
+	if params.CohortEvent == "" && segment == nil {
+		// $3 bounds the read the same way the events version is bounded by the
+		// cohort_date filter below: a person first seen at or after the window's
+		// end cannot fall inside it.
+		firstAt := strings.ReplaceAll(bucket, "e.event_timestamp", "firsts.first_at")
+		// $6 is the cohort event, and this shape is only chosen when it is empty.
+		// It is still referenced because PostgreSQL rejects a statement that
+		// leaves a supplied parameter unused, and stating the branch's own
+		// precondition is the honest way to reference it: if the Go condition and
+		// this query ever disagreed, the grid would come back empty rather than
+		// come back wrong.
+		candidates = `SELECT firsts.entity_id,` + firstAt + ` cohort_date FROM (` +
+			insight.FirstSeenCTE("$1", "$4", "$3") + `) firsts WHERE $6=''`
+	}
 	query := `WITH cohort_candidates AS (
-		SELECT e.entity_id,min(` + bucket + `) cohort_date FROM analytics_events e
-		WHERE e.site_id=$1 AND e.environment=$4 AND ($6='' OR e.event_name=$6)` + predicate + ` GROUP BY e.entity_id
+		` + candidates + `
 	), cohorts AS (
 		SELECT entity_id,cohort_date FROM cohort_candidates WHERE cohort_date >= ($2 AT TIME ZONE $5)::date AND cohort_date < ($3 AT TIME ZONE $5)::date
 	), activity AS (

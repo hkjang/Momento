@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/insight"
+	"github.com/jackc/pgx/v5"
 )
 
 // Tracing a real visitor means following one person, not one browser profile. A
@@ -44,14 +46,25 @@ type traceSubject struct {
 func (s *Server) resolveTraceSubject(ctx context.Context, siteID uuid.UUID, value, scope string) (traceSubject, error) {
 	subject := traceSubject{VisitorID: value, Scope: "device", VisitorIDs: []string{value}}
 	var canonical *string
-	// The value is a visitor ID when the identity graph or the visitor summary knows it.
-	if err := s.DB.QueryRow(ctx, `SELECT user_id FROM visitor_identities WHERE site_id=$1 AND visitor_id=$2`, siteID, value).Scan(&canonical); err != nil {
+	// The value is a visitor ID when the identity graph or the visitor summary
+	// knows it. Only a missing row means "not this"; anything else is the database
+	// failing, and answering "no such person" to that tells an administrator
+	// looking for somebody that the person is not there.
+	err := s.DB.QueryRow(ctx, `SELECT user_id FROM visitor_identities WHERE site_id=$1 AND visitor_id=$2`, siteID, value).Scan(&canonical)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return subject, err
+	}
+	if err != nil {
 		var exists bool
-		_ = s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM visitors WHERE site_id=$1 AND visitor_id=$2)`, siteID, value).Scan(&exists)
+		if err := s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM visitors WHERE site_id=$1 AND visitor_id=$2)`, siteID, value).Scan(&exists); err != nil {
+			return subject, err
+		}
 		if !exists {
 			// Fall back to treating the value as an SSO user ID.
 			var userExists bool
-			_ = s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM identified_users WHERE site_id=$1 AND user_id=$2)`, siteID, value).Scan(&userExists)
+			if err := s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM identified_users WHERE site_id=$1 AND user_id=$2)`, siteID, value).Scan(&userExists); err != nil {
+				return subject, err
+			}
 			if !userExists {
 				return subject, nil
 			}
