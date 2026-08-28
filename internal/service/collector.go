@@ -1400,7 +1400,34 @@ func (w Worker) cleanupOnce(ctx context.Context) (map[string]int64, error) {
 }
 
 // ProcessPending is used by tests and operational drains.
-func (w Worker) ProcessPending(ctx context.Context) error { return w.processBatch(ctx) }
+// ProcessPending drains the inbox: it keeps taking batches until nothing is
+// available to take.
+//
+// It used to run processBatch once, which reads a hundred rows. Every caller
+// treats it as "everything I just delivered has landed" — the integration guards
+// deliver a batch, call this, and then read the tables — so beyond a hundred
+// rows they measured a period that had only partly arrived and reported the gap
+// as a defect in whatever they were looking at.
+//
+// A row that fails is rescheduled into the future, so it leaves the available
+// set and the loop ends. The iteration cap is a backstop against a row that
+// somehow stays available: better to return having done a great deal of work
+// than to spin.
+func (w Worker) ProcessPending(ctx context.Context) error {
+	for round := 0; round < 10000; round++ {
+		var available int64
+		if err := w.DB.QueryRow(ctx, `SELECT count(*) FROM event_inbox WHERE processed_at IS NULL AND available_at<=now()`).Scan(&available); err != nil {
+			return err
+		}
+		if available == 0 {
+			return nil
+		}
+		if err := w.processBatch(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // ApplyRetention runs the retention sweep once. Retention deletes data, so it is
 // exposed for tests and for an operator who needs to apply a policy change now

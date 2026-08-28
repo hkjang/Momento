@@ -749,6 +749,13 @@ func TestDeliveredNumbersMatchTheScreenTheyAreNamedAfter(t *testing.T) {
 	// digest against a window the test invented rather than the one the screen uses.
 	overview := f.get(t, "/api/v1/sites/"+f.siteKey+"/overview")
 	current, _ := overview["current"].(map[string]any)
+	// The digest nests the period's figures under "current" beside "previous" and
+	// the change between them, the way the screen does. It used to be a flat bag
+	// of totals with nothing to compare them against.
+	deliveredCurrent, _ := delivered["current"].(map[string]any)
+	if deliveredCurrent == nil {
+		t.Fatalf("the delivered digest carries no current period: %v", delivered)
+	}
 
 	for _, key := range []string{"users", "sessions", "events", "conversions", "revenue"} {
 		want, ok := current[key].(float64)
@@ -756,7 +763,7 @@ func TestDeliveredNumbersMatchTheScreenTheyAreNamedAfter(t *testing.T) {
 			t.Errorf("the overview does not report %s", key)
 			continue
 		}
-		got, ok := delivered[key].(float64)
+		got, ok := deliveredCurrent[key].(float64)
 		if !ok {
 			t.Errorf("the delivered digest does not report %s: %v", key, delivered)
 			continue

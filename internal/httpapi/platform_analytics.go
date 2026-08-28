@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -538,15 +536,10 @@ func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"environment": environment, "group_by": group, "rows": out})
 }
 
-type platformMetricValues struct {
-	Users, Events, Conversions, Errors int64
-	Revenue                            float64
-}
+type platformMetricValues = insight.PlatformMetrics
 
 func (s *Server) platformMetrics(r *http.Request, siteID uuid.UUID, environment string, from, to time.Time) (platformMetricValues, error) {
-	var value platformMetricValues
-	err := s.DB.QueryRow(r.Context(), `SELECT count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE is_conversion),count(*) FILTER(WHERE event_name=ANY($5)),`+insight.RevenueAmountSQL("")+`::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment, []string{"error", "resource_error"}).Scan(&value.Users, &value.Events, &value.Conversions, &value.Errors, &value.Revenue)
-	return value, err
+	return insight.New(s.DB).Platform(r.Context(), siteID, environment, from, to)
 }
 
 func percentChange(current, previous float64) float64 {
@@ -579,36 +572,7 @@ func (s *Server) insightsReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previous, _ := s.platformMetrics(r, siteID, environment, previousFrom, previousTo)
-	type candidate struct {
-		metric, title, recommendation string
-		current, previous             float64
-		badWhenHigher                 bool
-	}
-	candidates := []candidate{
-		{"users", "활성 사용자 변화", "조직·부서별 Adoption을 확인해 변화가 큰 대상을 점검하세요.", float64(current.Users), float64(previous.Users), false},
-		{"events", "이벤트 사용량 변화", "배포와 주요 기능별 이벤트 추세를 비교하세요.", float64(current.Events), float64(previous.Events), false},
-		{"conversions", "전환 변화", "Business Journey에서 이탈이 커진 단계를 확인하세요.", float64(current.Conversions), float64(previous.Conversions), false},
-		{"errors", "사용자 오류 변화", "Experience에서 오류 메시지·페이지·릴리즈 영향을 확인하세요.", float64(current.Errors), float64(previous.Errors), true},
-		{"revenue", "매출 변화", "구매 퍼널과 유입 채널의 전환율을 함께 확인하세요.", current.Revenue, previous.Revenue, false},
-	}
-	insights := []map[string]any{}
-	for _, item := range candidates {
-		change := percentChange(item.current, item.previous)
-		if math.Abs(change) < 10 && item.current != 0 {
-			continue
-		}
-		severity := "info"
-		bad := (item.badWhenHigher && change > 20) || (!item.badWhenHigher && change < -20)
-		if bad {
-			severity = "critical"
-		} else if math.Abs(change) >= 20 {
-			severity = "warning"
-		}
-		insights = append(insights, map[string]any{"metric": item.metric, "title": item.title, "severity": severity, "change_percent": change, "current": item.current, "previous": item.previous, "evidence": fmt.Sprintf("현재 %.2f, 이전 기간 %.2f", item.current, item.previous), "recommendation": item.recommendation})
-	}
-	sort.SliceStable(insights, func(i, j int) bool {
-		return math.Abs(insights[i]["change_percent"].(float64)) > math.Abs(insights[j]["change_percent"].(float64))
-	})
+	insights := insight.RankInsights(current, previous)
 	writeJSON(w, 200, map[string]any{"engine": "offline-rule-v1", "environment": environment, "current": current, "previous": previous, "insights": insights})
 }
 

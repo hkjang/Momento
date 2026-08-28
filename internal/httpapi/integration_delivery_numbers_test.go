@@ -83,9 +83,16 @@ func TestTheDigestCarriesTheNumbersTheScreenShows(t *testing.T) {
 		t.Fatalf("the overview answered without a period: %v", screen)
 	}
 
+	// The digest reports the period under "current", beside the previous period
+	// and the change between them.
+	deliveredCurrent, _ := delivered["current"].(map[string]any)
+	if deliveredCurrent == nil {
+		t.Fatalf("the digest arrived without a current period: %v", delivered)
+	}
+
 	compared := 0
 	for _, measure := range []string{"users", "sessions", "events", "conversions", "revenue"} {
-		sent, sentOK := delivered[measure].(float64)
+		sent, sentOK := deliveredCurrent[measure].(float64)
 		shown, shownOK := current[measure].(float64)
 		if !sentOK {
 			t.Errorf("the digest carries no %s at all: %v", measure, delivered)
@@ -106,7 +113,7 @@ func TestTheDigestCarriesTheNumbersTheScreenShows(t *testing.T) {
 	}
 	// A digest of an empty period would agree with an empty screen, so the
 	// comparison has to be made against numbers that exist.
-	if users, _ := delivered["users"].(float64); users == 0 {
+	if users, _ := deliveredCurrent["users"].(float64); users == 0 {
 		t.Error("the digest reports no visitors at all, so agreeing with the screen proves nothing")
 	}
 	t.Logf("%d measures compared between the digest and the screen", compared)

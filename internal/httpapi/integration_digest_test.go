@@ -274,4 +274,72 @@ func TestTheScheduledDigestsCarryTheWholeReport(t *testing.T) {
 			t.Fatalf("the segment holds %v of %v people, so a delivery that ignored the definition would pass this", delivered, everyone)
 		}
 	})
+
+	t.Run("a summary says how the period compares with the one before it", func(t *testing.T) {
+		// "12,043 users" is not a summary. The reader cannot tell whether that is
+		// the best week of the year or half of last week's, and the overview
+		// screen puts the previous period beside every figure.
+		payload := deliver("overview")
+		data, _ := payload["data"].(map[string]any)
+		current, _ := data["current"].(map[string]any)
+		previous, _ := data["previous"].(map[string]any)
+		change, _ := data["change_percent"].(map[string]any)
+		if current == nil || previous == nil || change == nil {
+			t.Fatalf("the overview digest carries no comparison: %v", data)
+		}
+		if users, _ := current["users"].(float64); users <= 0 {
+			t.Fatalf("the delivered period has %v users, so agreeing with the screen would prove nothing", current["users"])
+		}
+
+		screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/overview?"+window(payload))
+		shownCurrent, _ := screen["current"].(map[string]any)
+		shownPrevious, _ := screen["previous"].(map[string]any)
+		if shownCurrent == nil || shownPrevious == nil {
+			t.Fatalf("the overview screen answered no current/previous: %v", screen)
+		}
+		for _, field := range []string{"users", "new_users", "sessions", "page_views", "events", "conversions", "conversion_users", "conversion_rate", "engagement_rate", "avg_session_duration", "revenue"} {
+			if fmt.Sprint(current[field]) != fmt.Sprint(shownCurrent[field]) {
+				t.Errorf("current %s: the digest says %v and the screen says %v", field, current[field], shownCurrent[field])
+			}
+			if fmt.Sprint(previous[field]) != fmt.Sprint(shownPrevious[field]) {
+				t.Errorf("previous %s: the digest says %v and the screen says %v", field, previous[field], shownPrevious[field])
+			}
+		}
+		// The comparison has to be a comparison: two identical periods would let
+		// a digest that reported the current period twice pass everything above.
+		if fmt.Sprint(current["events"]) == fmt.Sprint(previous["events"]) {
+			t.Fatalf("both periods report %v events, so a digest that sent the same period twice would agree with the screen", current["events"])
+		}
+	})
+
+	t.Run("the insight summary carries the insights", func(t *testing.T) {
+		// It was named "인사이트 요약" and delivered the same five totals the
+		// overview digest sends — no change, no severity, no recommendation.
+		payload := deliver("insights")
+		data, _ := payload["data"].(map[string]any)
+		delivered, ok := data["insights"].([]any)
+		if !ok {
+			t.Fatalf("the insight digest carries no insights, only the totals: %v", data)
+		}
+		screen := f.get(t, "/api/v1/sites/"+f.siteKey+"/insights?"+window(payload))
+		shown, _ := screen["insights"].([]any)
+		if len(shown) == 0 {
+			t.Fatal("the insights screen ranked nothing in this period, so agreement proves nothing")
+		}
+		if len(delivered) != len(shown) {
+			t.Fatalf("the screen ranks %d insights and the digest delivered %d", len(shown), len(delivered))
+		}
+		for index := range shown {
+			shownItem, _ := shown[index].(map[string]any)
+			saidItem, _ := delivered[index].(map[string]any)
+			if shownItem == nil || saidItem == nil {
+				continue
+			}
+			for _, field := range []string{"metric", "title", "severity", "change_percent", "current", "previous", "recommendation"} {
+				if fmt.Sprint(saidItem[field]) != fmt.Sprint(shownItem[field]) {
+					t.Errorf("insight %d %s: the digest says %v and the screen says %v", index, field, saidItem[field], shownItem[field])
+				}
+			}
+		}
+	})
 }

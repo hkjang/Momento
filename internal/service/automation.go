@@ -26,13 +26,9 @@ import (
 // reportWindow returns the period a delivery covers, in the site's calendar and
 // ending at local midnight, so it matches the window the console reads.
 func (a Automation) reportWindow(ctx context.Context, siteID uuid.UUID, days int) (time.Time, time.Time, error) {
-	var timezone string
-	if err := a.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&timezone); err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	location, err := time.LoadLocation(timezone)
+	_, location, err := a.siteLocation(ctx, siteID)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("invalid site timezone %q: %w", timezone, err)
+		return time.Time{}, time.Time{}, err
 	}
 	now := time.Now().In(location)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
@@ -57,6 +53,20 @@ func (a Automation) loadSegment(ctx context.Context, siteID uuid.UUID, id string
 		return segment.Node{}, "", err
 	}
 	return node, name, nil
+}
+
+// siteLocation is the site's calendar. Every period a delivery reports on is
+// read in it, so a week means the site's week.
+func (a Automation) siteLocation(ctx context.Context, siteID uuid.UUID) (string, *time.Location, error) {
+	var timezone string
+	if err := a.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, siteID).Scan(&timezone); err != nil {
+		return "", nil, err
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return timezone, nil, fmt.Errorf("invalid site timezone %q: %w", timezone, err)
+	}
+	return timezone, location, nil
 }
 
 // ErrSkipDelivery lets a report decide that there is nothing worth sending. An
@@ -229,24 +239,46 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 	data := map[string]any{}
 	switch delivery.ReportKind {
 	case "overview", "insights":
-		var users, events, conversions, errors int64
-		var revenue float64
-		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id),count(*),count(*) FILTER(WHERE is_conversion),count(*) FILTER(WHERE event_name=ANY($5)),`+insight.RevenueAmountSQL("")+`::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&users, &events, &conversions, &errors, &revenue)
+		// Both sent the period's absolute totals and nothing else.
+		//
+		// A weekly summary that says "12,043 users" says nothing: the reader
+		// cannot tell whether that is the best week of the year or half of last
+		// week's, and the screen it is named after puts the previous period
+		// beside every figure. And "인사이트 요약" delivered no insights at all —
+		// the same five numbers under a name that promises the findings, which is
+		// the shape of wrong answer nobody notices, because there is nothing in
+		// it to be suspicious of.
+		_, location, tzErr := a.siteLocation(ctx, delivery.SiteID)
+		if tzErr != nil {
+			return nil, tzErr
+		}
+		previousFrom, previousTo := insight.PreviousRange(from, to, location)
+		reporter := insight.New(a.DB)
+		current, err := reporter.Metrics(ctx, delivery.SiteID, environment, from, to)
 		if err != nil {
 			return nil, err
 		}
-		// Sessions come from the sessions table and are counted by when they
-		// started, which is the definition every screen uses. A digest that omits
-		// sessions or counts them differently is a digest of a different report.
-		var sessions, engaged int64
-		if err := a.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE engaged) FROM sessions
-			WHERE site_id=$1 AND environment=$2 AND started_at >= $3 AND started_at < $4`,
-			delivery.SiteID, environment, from, to).Scan(&sessions, &engaged); err != nil {
+		previous, err := reporter.Metrics(ctx, delivery.SiteID, environment, previousFrom, previousTo)
+		if err != nil {
 			return nil, err
 		}
-		data = map[string]any{"users": users, "sessions": sessions, "engaged_sessions": engaged,
-			"events": events, "conversions": conversions, "errors": errors, "revenue": revenue,
-			"from": from, "to": to}
+		data = map[string]any{
+			"current": insight.MetricMap(current), "previous": insight.MetricMap(previous),
+			"change_percent": insight.MetricChange(current, previous),
+			"previous_from":  previousFrom, "previous_to": previousTo,
+			"from": from, "to": to,
+		}
+		if delivery.ReportKind == "insights" {
+			platform, platformErr := reporter.Platform(ctx, delivery.SiteID, environment, from, to)
+			if platformErr != nil {
+				return nil, platformErr
+			}
+			previousPlatform, platformErr := reporter.Platform(ctx, delivery.SiteID, environment, previousFrom, previousTo)
+			if platformErr != nil {
+				return nil, platformErr
+			}
+			data["insights"] = insight.RankInsights(platform, previousPlatform)
+		}
 	case "adoption":
 		// The adoption screen's own numbers. This used to run a separate query that
 		// returned feature events and users, which is the feature intelligence
@@ -296,12 +328,9 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 		totals["users"] = users
 		data = map[string]any{"group_by": group, "rows": rows, "totals": totals}
 	case "anomaly":
-		location := time.UTC
-		var timezone string
-		if a.DB.QueryRow(ctx, `SELECT timezone FROM sites WHERE id=$1`, delivery.SiteID).Scan(&timezone) == nil {
-			if loaded, loadErr := time.LoadLocation(timezone); loadErr == nil {
-				location = loaded
-			}
+		_, location, tzErr := a.siteLocation(ctx, delivery.SiteID)
+		if tzErr != nil {
+			return nil, tzErr
 		}
 		reporter := insight.New(a.DB)
 		report, err := reporter.DetectSiteAnomalies(ctx, delivery.SiteID, environment, location)

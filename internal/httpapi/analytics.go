@@ -156,16 +156,7 @@ func (s *Server) parseDateRange(ctx context.Context, siteID uuid.UUID, fromValue
 }
 
 func previousDateRange(from, to time.Time, location *time.Location) (time.Time, time.Time) {
-	localFrom, localTo := from.In(location), to.In(location)
-	if localFrom.Hour() == 0 && localFrom.Minute() == 0 && localFrom.Second() == 0 && localFrom.Nanosecond() == 0 &&
-		localTo.Hour() == 0 && localTo.Minute() == 0 && localTo.Second() == 0 && localTo.Nanosecond() == 0 {
-		fromDate := time.Date(localFrom.Year(), localFrom.Month(), localFrom.Day(), 0, 0, 0, 0, time.UTC)
-		toDate := time.Date(localTo.Year(), localTo.Month(), localTo.Day(), 0, 0, 0, 0, time.UTC)
-		days := int(toDate.Sub(fromDate) / (24 * time.Hour))
-		return localFrom.AddDate(0, 0, -days).UTC(), from
-	}
-	duration := to.Sub(from)
-	return from.Add(-duration), from
+	return insight.PreviousRange(from, to, location)
 }
 
 func localDateBucketRange(from, to time.Time, location *time.Location) (time.Time, time.Time, bool) {
@@ -219,62 +210,21 @@ func (s *Server) resolveSiteKey(ctx context.Context, key string) (uuid.UUID, err
 	return id, err
 }
 
-type metricSet struct {
-	Users, NewUsers, Sessions, PageViews, Events, Conversions int64
-	ConversionUsers, ConversionSessions                       int64
-	EngagementRate, AvgSessionDuration, UserConversionRate    float64
-	SessionConversionRate, Revenue                            float64
-}
+// The period's figures moved to internal/insight so the scheduled digest reports
+// the same numbers the overview screen shows. These names keep the call sites
+// reading the way they did.
+type metricSet = insight.MetricSet
 
 func (s *Server) metrics(r *http.Request, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
 	return s.metricsContext(r.Context(), siteID, environment, from, to)
 }
 
 func (s *Server) metricsContext(ctx context.Context, siteID uuid.UUID, environment string, from, to time.Time) (metricSet, error) {
-	var m metricSet
-	err := s.DB.QueryRow(ctx, `WITH
-		-- Only the columns the aggregates read. Selecting every column made the
-		-- planner carry both jsonb blobs through a two million row materialisation.
-		period AS (SELECT entity_id entity,event_name,is_conversion,properties FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3),
-		-- New people are those whose first ever visit falls inside the period.
-		-- That needs history, but only history before the period ends, and it is
-		-- read from the daily visitor rollup rather than from every event the site
-		-- has ever collected. insight.FirstSeenCTE says why, and holds the one
-		-- definition this and the insight report both use.
-		new_users AS (
-			SELECT count(*) value FROM (`+insight.FirstSeenCTE("$1", "$4", "$3")+`) firsts
-			WHERE firsts.first_at >= $2
-		)
-		SELECT
-			count(DISTINCT p.entity),
-			(SELECT value FROM new_users),
-			count(*) FILTER(WHERE p.event_name='page_view'),
-			count(*),
-			count(*) FILTER(WHERE p.is_conversion),
-			count(DISTINCT p.entity) FILTER(WHERE p.is_conversion),
-			coalesce(100.0*count(DISTINCT p.entity) FILTER(WHERE p.is_conversion)/nullif(count(DISTINCT p.entity),0),0),
-			`+insight.RevenueAmountSQL("p")+`
-		FROM period p`, siteID, from, to, environment).
-		Scan(&m.Users, &m.NewUsers, &m.PageViews, &m.Events, &m.Conversions, &m.ConversionUsers, &m.UserConversionRate, &m.Revenue)
-	if err != nil {
-		return m, err
-	}
-	// Everything about sessions comes from one place, so the overview and the
-	// insight report cannot disagree about how long a session lasted.
-	sessions, err := s.readSessionMetrics(ctx, siteID, environment, from, to)
-	if err != nil {
-		return m, err
-	}
-	m.Sessions = sessions.Sessions
-	m.ConversionSessions = sessions.Converting
-	m.EngagementRate = sessions.engagementRate()
-	m.AvgSessionDuration = sessions.AverageSeconds
-	m.SessionConversionRate = sessions.conversionRate()
-	return m, nil
+	return insight.New(s.DB).Metrics(ctx, siteID, environment, from, to)
 }
-func metricMap(m metricSet) map[string]any {
-	return map[string]any{"users": m.Users, "new_users": m.NewUsers, "sessions": m.Sessions, "page_views": m.PageViews, "events": m.Events, "engagement_rate": m.EngagementRate, "avg_session_duration": m.AvgSessionDuration, "conversions": m.Conversions, "conversion_users": m.ConversionUsers, "conversion_sessions": m.ConversionSessions, "conversion_rate": m.UserConversionRate, "user_conversion_rate": m.UserConversionRate, "session_conversion_rate": m.SessionConversionRate, "revenue": m.Revenue}
-}
+
+func metricMap(m metricSet) map[string]any { return insight.MetricMap(m) }
+
 func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
