@@ -1048,6 +1048,25 @@ function Quality() {
         수집 계약·중복·지연·Cardinality를 반영한 {environment.toUpperCase()}{" "}
         환경 점수입니다.
       </Alert>
+      {/* A refused identifier and a missing one leave the same empty field, and
+          they need opposite actions: one team has to start identifying people,
+          the other has to stop sending something we will not keep. */}
+      {(data.quality.refused_user_id || 0) > 0 && (
+        <Alert severity="warning" role="status">
+          사용자 ID가 개인정보로 판정되어 <b>{data.quality.refused_user_id}</b>
+          건의 이벤트를 익명으로 저장했습니다. 이 통합은 사용자를 식별하고
+          있지만 이메일·전화번호·주민등록번호처럼 보관할 수 없는 값을 보내고
+          있습니다. 사내 식별자나 가명 식별자로 바꿔야 합니다.
+        </Alert>
+      )}
+      {(data.quality.missing_user_id || 0) > 0 &&
+        !(data.quality.refused_user_id || 0) && (
+          <Alert severity="info" role="status">
+            <b>{data.quality.missing_user_id}</b>건의 이벤트에 사용자 ID가
+            없습니다. 사람 단위 분석이 필요하면 로그인 시점에{" "}
+            <code>analytics.identify()</code>를 호출하세요.
+          </Alert>
+        )}
       <Typography variant="h6">Cardinality Guard</Typography>
       <DataTable
         rows={data.cardinalities}

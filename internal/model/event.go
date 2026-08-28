@@ -61,6 +61,12 @@ type InboxPayload struct {
 	ReceivedUnix   int64          `json:"received_unix"`
 	PrivacyBlocked int            `json:"privacy_blocked,omitempty"`
 	PIIDetected    int            `json:"pii_detected,omitempty"`
+	// UserIDRefused separates an event whose identifier the privacy filter would
+	// not store from one that never carried an identifier at all. Both reach the
+	// durable write with an empty user id and the data quality screen has to tell
+	// a team to start identifying people from a team already doing so with
+	// something we refuse to keep.
+	UserIDRefused bool `json:"user_id_refused,omitempty"`
 }
 
 func (p InboxPayload) JSON() ([]byte, error) { return json.Marshal(p) }

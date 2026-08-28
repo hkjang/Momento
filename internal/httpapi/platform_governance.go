@@ -639,9 +639,9 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	_, location, _ := s.siteTimezone(r.Context(), siteID)
 	dateFrom := from.In(location).Format("2006-01-02")
 	dateTo := to.In(location).Format("2006-01-02")
-	var received, accepted, duplicates, warnings, rejected, late, missingUser, missingFeature, unknownNetwork, piiBlocked, piiDetected, cardinality int64
-	err = s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(late_events),0),coalesce(sum(missing_user_id),0),coalesce(sum(missing_feature),0),coalesce(sum(unknown_network),0),coalesce(sum(pii_blocked),0),coalesce(sum(pii_detected),0),coalesce(sum(cardinality_violations),0)
-		FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date`, siteID, environment, dateFrom, dateTo).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &late, &missingUser, &missingFeature, &unknownNetwork, &piiBlocked, &piiDetected, &cardinality)
+	var received, accepted, duplicates, warnings, rejected, late, missingUser, refusedUser, missingFeature, unknownNetwork, piiBlocked, piiDetected, cardinality int64
+	err = s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(late_events),0),coalesce(sum(missing_user_id),0),coalesce(sum(refused_user_id),0),coalesce(sum(missing_feature),0),coalesce(sum(unknown_network),0),coalesce(sum(pii_blocked),0),coalesce(sum(pii_detected),0),coalesce(sum(cardinality_violations),0)
+		FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date`, siteID, environment, dateFrom, dateTo).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &late, &missingUser, &refusedUser, &missingFeature, &unknownNetwork, &piiBlocked, &piiDetected, &cardinality)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -696,7 +696,7 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"health_score": score, "environment": environment, "collector": map[string]any{"received": received, "accepted": accepted, "pending": pending, "inbox_lag_seconds": inboxLag, "dead_letters": deadLetters}, "quality": map[string]any{"duplicates": duplicates, "warnings": warnings, "rejected": rejected, "late_events": late, "missing_user_id": missingUser, "missing_feature": missingFeature, "unknown_network": unknownNetwork, "pii_blocked": piiBlocked, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "cardinalities": cardinalities, "issues": issues})
+	writeJSON(w, 200, map[string]any{"health_score": score, "environment": environment, "collector": map[string]any{"received": received, "accepted": accepted, "pending": pending, "inbox_lag_seconds": inboxLag, "dead_letters": deadLetters}, "quality": map[string]any{"duplicates": duplicates, "warnings": warnings, "rejected": rejected, "late_events": late, "missing_user_id": missingUser, "refused_user_id": refusedUser, "missing_feature": missingFeature, "unknown_network": unknownNetwork, "pii_blocked": piiBlocked, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "cardinalities": cardinalities, "issues": issues})
 }
 
 func minFloat(a, b float64) float64 {

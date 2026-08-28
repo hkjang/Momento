@@ -193,13 +193,18 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 	var privacy privacyConfig
 	_ = json.Unmarshal(site.PrivacyRaw, &privacy)
 	privacyBlocked := countPrivacyBlocked(req, privacy.BlockedProperties)
+	identifiedBefore := strings.TrimSpace(req.UserID) != ""
 	piiDetected, piiKinds := protectPII(&req, privacy.PIIDetectionMode)
+	// The filter blanks an identifier it will not store, which leaves the event
+	// looking exactly like one that never carried an identifier. It is not the
+	// same problem and it does not get the same counter.
+	userIDRefused := identifiedBefore && strings.TrimSpace(req.UserID) == ""
 	if piiDetected > 0 && privacy.PIIDetectionMode == "reject" {
 		s.recordPIIRejection(ctx, site, req.Environment, req.Events, piiKinds)
 		return 0, errors.New("PII detected by privacy policy")
 	}
 	applyPrivacyBeforeQueue(&req, &clientIP, &userAgent, privacy)
-	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli(), PrivacyBlocked: privacyBlocked, PIIDetected: piiDetected}
+	payload := model.InboxPayload{Request: req, ClientIP: clientIP, Origin: origin, UserAgent: userAgent, ReceivedUnix: time.Now().UnixMilli(), PrivacyBlocked: privacyBlocked, PIIDetected: piiDetected, UserIDRefused: userIDRefused}
 	body, err := payload.JSON()
 	if err != nil {
 		return 0, err
@@ -710,9 +715,13 @@ func recordAcceptedQuality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, p m
 	if p.ReceivedUnix > 0 && time.UnixMilli(p.ReceivedUnix).Sub(eventTime) > time.Hour {
 		late = 1
 	}
-	missingUser, missingFeature, unknownNetwork := int64(0), int64(0), int64(0)
+	missingUser, refusedUser, missingFeature, unknownNetwork := int64(0), int64(0), int64(0), int64(0)
 	if userID == "" {
-		missingUser = 1
+		if p.UserIDRefused {
+			refusedUser = 1
+		} else {
+			missingUser = 1
+		}
 	}
 	if strings.TrimSpace(fmt.Sprint(event.Properties["feature"])) == "" || event.Properties["feature"] == nil {
 		missingFeature = 1
@@ -720,8 +729,8 @@ func recordAcceptedQuality(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, p m
 	if networkName == "External / Unclassified" {
 		unknownNetwork = 1
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,accepted,late_events,missing_user_id,missing_feature,unknown_network,pii_blocked,pii_detected)
-		VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET accepted=data_quality_daily.accepted+1,late_events=data_quality_daily.late_events+excluded.late_events,missing_user_id=data_quality_daily.missing_user_id+excluded.missing_user_id,missing_feature=data_quality_daily.missing_feature+excluded.missing_feature,unknown_network=data_quality_daily.unknown_network+excluded.unknown_network,pii_blocked=data_quality_daily.pii_blocked+excluded.pii_blocked,pii_detected=data_quality_daily.pii_detected+excluded.pii_detected,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name, late, missingUser, missingFeature, unknownNetwork, p.PrivacyBlocked, p.PIIDetected)
+	_, err := tx.Exec(ctx, `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,accepted,late_events,missing_user_id,refused_user_id,missing_feature,unknown_network,pii_blocked,pii_detected)
+		VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(site_id,event_date,environment,event_name) DO UPDATE SET accepted=data_quality_daily.accepted+1,late_events=data_quality_daily.late_events+excluded.late_events,missing_user_id=data_quality_daily.missing_user_id+excluded.missing_user_id,refused_user_id=data_quality_daily.refused_user_id+excluded.refused_user_id,missing_feature=data_quality_daily.missing_feature+excluded.missing_feature,unknown_network=data_quality_daily.unknown_network+excluded.unknown_network,pii_blocked=data_quality_daily.pii_blocked+excluded.pii_blocked,pii_detected=data_quality_daily.pii_detected+excluded.pii_detected,updated_at=now()`, siteID, local.Format("2006-01-02"), p.Request.Environment, event.Name, late, missingUser, refusedUser, missingFeature, unknownNetwork, p.PrivacyBlocked, p.PIIDetected)
 	if err != nil || late == 0 {
 		return err
 	}
