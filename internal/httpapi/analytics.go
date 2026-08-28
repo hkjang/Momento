@@ -480,6 +480,42 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+// usageDimension is one way of cutting the same period, and both the usage
+// screen and the MCP tool that answers the same question cut it. They had a copy
+// each, and the copies had drifted: the tool treated a property present but
+// empty as its own label where the screen folds it into "(미지정)", it did not
+// fall back to the site's service name, and it did not consider element_id when
+// naming a button. An operator reading the screen and an agent reading the tool
+// were given different answers to the same question, in a place where nobody
+// has a chart beside the sentence to notice.
+//
+// The expressions read $1 as the site, which both queries already bind.
+type usageDimension struct {
+	// key names the field on the screen's answer; tool is the dimension an MCP
+	// caller asks for. They differ because both are published interfaces.
+	key, tool, expr string
+	clicksOnly      bool
+}
+
+var usageDimensions = []usageDimension{
+	{key: "networks", tool: "network", expr: "coalesce(network_name,'External / Unclassified')"},
+	{key: "departments", tool: "department", expr: "coalesce(nullif(canonical_user_properties->>'department',''),'(미지정)')"},
+	{key: "organizations", tool: "organization", expr: "coalesce(nullif(canonical_user_properties->>'organization',''),'(미지정)')"},
+	{key: "services", tool: "service", expr: "coalesce(nullif(properties->>'service',''),(SELECT service_name FROM sites WHERE id=$1),'(미지정)')"},
+	{key: "features", tool: "feature", expr: "coalesce(nullif(properties->>'feature',''),'(미지정)')"},
+	{key: "buttons", tool: "button", expr: "coalesce(nullif(properties->>'button',''),nullif(properties->>'element_text',''),nullif(properties->>'element_id',''),'(미지정)')", clicksOnly: true},
+}
+
+// usageDimensionByTool finds the cut an MCP caller asked for.
+func usageDimensionByTool(name string) (usageDimension, bool) {
+	for _, dimension := range usageDimensions {
+		if dimension.tool == name {
+			return dimension, true
+		}
+	}
+	return usageDimension{}, false
+}
+
 func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
@@ -491,8 +527,7 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	type dimension struct{ key, expr string }
-	dims := []dimension{{"networks", "coalesce(network_name,'External / Unclassified')"}, {"departments", "coalesce(nullif(canonical_user_properties->>'department',''),'(미지정)')"}, {"organizations", "coalesce(nullif(canonical_user_properties->>'organization',''),'(미지정)')"}, {"services", "coalesce(nullif(properties->>'service',''),(SELECT service_name FROM sites WHERE id=$1),'(미지정)')"}, {"features", "coalesce(nullif(properties->>'feature',''),'(미지정)')"}, {"buttons", "coalesce(nullif(properties->>'button',''),nullif(properties->>'element_text',''),nullif(properties->>'element_id',''),'(미지정)')"}}
+	dims := usageDimensions
 	// One scan of the period per dimension, and they used to run one after another:
 	// six reads of the same rows, and the screen waited for their sum. They share
 	// nothing, so they now run together under the same ceiling every other report
@@ -506,7 +541,7 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 	for _, d := range dims {
 		steps = append(steps, func(stepCtx context.Context) error {
 			query := `SELECT ` + d.expr + ` label,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`
-			if d.key == "buttons" {
+			if d.clicksOnly {
 				query += ` AND event_name='click'`
 			}
 			query += ` GROUP BY 1 ORDER BY 2 DESC LIMIT 20`

@@ -166,15 +166,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(report, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_internal_usage":
-		dim := stringArg(call.Arguments, "dimension")
-		exprs := map[string]string{"department": "coalesce(canonical_user_properties->>'department','(미지정)')", "organization": "coalesce(canonical_user_properties->>'organization','(미지정)')", "service": "coalesce(properties->>'service','(미지정)')", "feature": "coalesce(properties->>'feature','(미지정)')", "button": "coalesce(properties->>'button',properties->>'element_text','(미지정)')", "network": "coalesce(network_name,'External / Unclassified')"}
-		expr, ok := exprs[dim]
+		// The same cuts the usage screen makes, from the one definition, so an
+		// agent and a reader are not given different answers to one question.
+		dimension, ok := usageDimensionByTool(stringArg(call.Arguments, "dimension"))
 		if !ok {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText("Unsupported dimension", true)))
 			return
 		}
-		sql := `SELECT ` + expr + `,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND environment=$4`
-		if dim == "button" {
+		sql := `SELECT ` + dimension.expr + `,count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND environment=$4`
+		if dimension.clicksOnly {
 			sql += ` AND event_name='click'`
 		}
 		sql += ` GROUP BY 1 ORDER BY 2 DESC LIMIT 20`
