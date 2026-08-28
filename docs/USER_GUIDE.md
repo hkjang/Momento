@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.29.1
+- **문서 버전**: v0.34.6
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 연동, 이벤트 트래킹 규칙, 방문자 인사이트·추적·이상 감지·기여도, 집단 비교 분석, 정기 배달과 BI 내보내기 실전 매뉴얼  
 
@@ -348,6 +348,8 @@ Segment 조건에 사람의 전체 이력을 기준으로 하는 필드를 사�
 숫자 비교(`>=`, `<=`, `=` 등)만 지원합니다. 예를 들어 `entity.sessions >= 3` AND `entity.conversions = 0`은 "세 번 이상 방문했지만 전환하지 않은 사람"이고, `entity.zero_result_searches >= 1` AND `entity.search_clicks = 0`은 "검색했지만 아무것도 찾지 못한 사람"입니다. 막힘 신호 목록은 서버가 고정하므로 Segment 조건에 Event 이름을 직접 넣을 필요가 없습니다.
 
 방문자 인사이트의 `실행 대상`, Frustration과 검색 분석 화면의 `실행 대상`에서 `Segment 만들기`를 누르면 서버가 세어 준 정의가 그대로 저장되어 Query·Funnel·Action에서 재사용됩니다. 기간 기준과 전체 이력 기준의 차이 때문에 인원이 다를 수 있는 경우에는 안내 문구를 함께 표시합니다.
+
+정기 배달에서도 같은 정의를 씁니다. 관리자 → Action의 Scheduled Report에서 `Segment 집계`를 고르면 **저장된 Segment**를 선택할 수 있고, 화면이 쓰는 것과 같은 컴파일러로 평가하므로 중첩 조건과 행동 기반 조건이 그대로 적용됩니다. Event 이름·Feature·부서 입력란은 그 위에 겹쳐 더 좁히는 용도이며, Segment를 고르지 않으면 그 세 조건만으로 집계합니다.
 
 ### 3.7 Segment 비교 Funnel
 

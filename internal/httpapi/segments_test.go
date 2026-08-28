@@ -6,13 +6,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/Momento/internal/segment"
 )
 
 func TestCompileNestedSegment(t *testing.T) {
-	resolver := dimensionResolver{custom: map[string]customDimension{
+	resolver := segment.ResolverFor(uuid.Nil, "", map[string]segment.CustomDimension{
 		"custom.membership": {Name: "membership", PropertyKey: "membership", Scope: "user", DataType: "string"},
 		"custom.price":      {Name: "price", PropertyKey: "price", Scope: "event", DataType: "number"},
-	}}
+	})
 	node := segmentNode{Combinator: "and", Rules: []segmentNode{
 		{Field: "device.type", Operator: "=", Value: "mobile"},
 		{Combinator: "or", Rules: []segmentNode{
@@ -53,7 +54,7 @@ func TestCompileSegmentRejectsInvalidInput(t *testing.T) {
 
 func TestCompileEventExistence(t *testing.T) {
 	args := []any{"site", "from", "to"}
-	sql, err := compileSegment(segmentNode{Field: "event.has", Operator: "=", Value: "purchase"}, dimensionResolver{custom: map[string]customDimension{}}, "e", &args, 0)
+	sql, err := compileSegment(segmentNode{Field: "event.has", Operator: "=", Value: "purchase"}, segment.ResolverFor(uuid.Nil, "", nil), "e", &args, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestBehaviouralSegmentRejectsBadInput(t *testing.T) {
 // scopedResolver is what a request builds. Behavioural aggregates are scoped by
 // site and environment, so a resolver without them cannot compile one.
 func scopedResolver() dimensionResolver {
-	return dimensionResolver{custom: map[string]customDimension{}, siteID: uuid.MustParse("11111111-1111-1111-1111-111111111111"), environment: "prd"}
+	return segment.ResolverFor(uuid.MustParse("11111111-1111-1111-1111-111111111111"), "prd", nil)
 }
 
 func TestBehaviouralSegmentCountsMissingHistoryAsZero(t *testing.T) {

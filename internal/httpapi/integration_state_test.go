@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/insight"
+	"github.com/hkjang/Momento/internal/segment"
 	"github.com/hkjang/Momento/internal/service"
 )
 
@@ -480,7 +481,7 @@ func TestBehaviouralSegmentRefusesToRunWithoutAScope(t *testing.T) {
 	t.Parallel()
 	args := []any{}
 	_, err := compileSegment(segmentNode{Field: "entity.sessions", Operator: ">=", Value: 2.0},
-		dimensionResolver{custom: map[string]customDimension{}}, "e", &args, 0)
+		segment.ResolverFor(uuid.Nil, "", nil), "e", &args, 0)
 	if err == nil {
 		t.Fatal("an unscoped resolver compiled a behavioural aggregate instead of failing")
 	}

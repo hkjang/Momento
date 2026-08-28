@@ -47,6 +47,25 @@ test("Segment 조건은 입력된 것만 넣는다", () => {
   });
 });
 
+test("저장된 Segment를 고르면 정의가 그 Segment를 가리킨다", () => {
+  // 이것이 없던 동안 "Segment 집계"는 event/feature/department 세 속성만 뜻했다.
+  // Segment 화면에서 만든 중첩 조건이나 행동 규칙은 배달할 방법이 없었고,
+  // 같은 낱말이 문에 따라 다른 사람들을 가리켰다.
+  assert.deepEqual(
+    buildScheduleDefinition("segment", { ...form, segmentId: "  seg-1  " }),
+    { environment: "stg", days: 30, segment_id: "seg-1" },
+  );
+  // 속성 조건은 Segment 위에 겹쳐서 좁힌다.
+  assert.deepEqual(
+    buildScheduleDefinition("segment", { ...form, segmentId: "seg-1", feature: "검색" }),
+    { environment: "stg", days: 30, segment_id: "seg-1", feature: "검색" },
+  );
+  assert.match(
+    describeSchedule("segment", { ...form, segmentId: "seg-1", segmentName: "반복 미전환" }, 1440),
+    /Segment 반복 미전환 · 추가 조건 없음$/,
+  );
+});
+
 test("종류별로 필요한 입력이 무엇인지 구분한다", () => {
   assert.equal(kindUsesRange("anomaly"), false);
   assert.equal(kindUsesRange("visitor_insight"), true);

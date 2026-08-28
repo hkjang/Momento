@@ -756,7 +756,7 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	groups := []string{}
 	columns := []string{}
 	for _, d := range in.Dimensions {
-		expr, err := resolver.expression(d, "e")
+		expr, err := resolver.Expression(d, "e")
 		if err != nil {
 			writeError(w, 400, "INVALID_DIMENSION", err.Error())
 			return

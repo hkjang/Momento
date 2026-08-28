@@ -11,12 +11,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/insight"
 	"github.com/hkjang/Momento/internal/secret"
+	"github.com/hkjang/Momento/internal/segment"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -35,6 +37,26 @@ func (a Automation) reportWindow(ctx context.Context, siteID uuid.UUID, days int
 	now := time.Now().In(location)
 	to := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location).AddDate(0, 0, 1)
 	return to.AddDate(0, 0, -days).UTC(), to.UTC(), nil
+}
+
+// loadSegment reads a saved segment's definition for an unattended delivery.
+// There is no principal here: the schedule was created by somebody who could see
+// the segment, and the site scope is what keeps it from reaching another site's.
+func (a Automation) loadSegment(ctx context.Context, siteID uuid.UUID, id string) (segment.Node, string, error) {
+	segmentID, err := uuid.Parse(id)
+	if err != nil {
+		return segment.Node{}, "", fmt.Errorf("invalid segment id %q", id)
+	}
+	var raw []byte
+	var name string
+	if err := a.DB.QueryRow(ctx, `SELECT definition,name FROM segments WHERE id=$1 AND site_id=$2`, segmentID, siteID).Scan(&raw, &name); err != nil {
+		return segment.Node{}, "", fmt.Errorf("segment %s not found on this site", id)
+	}
+	var node segment.Node
+	if err := json.Unmarshal(raw, &node); err != nil {
+		return segment.Node{}, "", err
+	}
+	return node, name, nil
 }
 
 // ErrSkipDelivery lets a report decide that there is nothing worth sending. An
@@ -316,17 +338,54 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 		}
 		data = report
 	case "segment":
+		// "Segment 집계" used to mean three properties — an event name, a feature
+		// and a department — and nothing else. The console's Segment builder makes
+		// nested conditions, behavioural aggregates and friction rules, and none of
+		// it could be delivered: the compiler lived in the HTTP package and the
+		// scheduler could not reach it. So the same word named two different
+		// populations depending on which door you came through, and the product's
+		// "Segment → Action" was the one meaning that did not work.
+		//
+		// A definition that names a saved segment is now evaluated with the same
+		// compiler the screens use. The three property filters stay, because
+		// existing schedules use them and they are a legitimate way to ask a
+		// narrow question without saving a segment first.
 		eventName, _ := definition["event_name"].(string)
 		feature, _ := definition["feature"].(string)
 		department, _ := definition["department"].(string)
+		segmentID, _ := definition["segment_id"].(string)
+		args := []any{delivery.SiteID, from, to, environment, eventName, feature, department}
+		predicate := ""
+		segmentName := ""
+		if segmentID != "" {
+			node, name, loadErr := a.loadSegment(ctx, delivery.SiteID, segmentID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			segmentName = name
+			resolver, resolverErr := segment.NewResolver(ctx, a.DB, delivery.SiteID, environment)
+			if resolverErr != nil {
+				return nil, resolverErr
+			}
+			compiled, compileErr := segment.Compile(node, resolver, "e", &args, 0)
+			if compileErr != nil {
+				return nil, compileErr
+			}
+			predicate = " AND (" + compiled + ")"
+		}
+		where := `FROM analytics_events e WHERE e.site_id=$1 AND e.environment=$4 AND e.event_timestamp >= $2 AND e.event_timestamp < $3
+			AND ($5='' OR e.event_name=$5) AND ($6='' OR e.properties->>'feature'=$6) AND ($7='' OR e.canonical_user_properties->>'department'=$7)` + predicate
 		var count int64
-		err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($5='' OR event_name=$5) AND ($6='' OR properties->>'feature'=$6) AND ($7='' OR canonical_user_properties->>'department'=$7)`, delivery.SiteID, from, to, environment, eventName, feature, department).Scan(&count)
-		if err != nil {
+		if err := a.DB.QueryRow(ctx, `SELECT count(DISTINCT e.entity_id) `+where, args...).Scan(&count); err != nil {
 			return nil, err
 		}
 		data = map[string]any{"matched_entities": count, "event_name": eventName, "feature": feature, "department": department}
+		if segmentID != "" {
+			data["segment_id"] = segmentID
+			data["segment_name"] = segmentName
+		}
 		if config.MaxEntityIDs > 0 {
-			rows, queryErr := a.DB.Query(ctx, `SELECT DISTINCT entity_id FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($5='' OR event_name=$5) AND ($6='' OR properties->>'feature'=$6) AND ($7='' OR canonical_user_properties->>'department'=$7) LIMIT $8`, delivery.SiteID, from, to, environment, eventName, feature, department, config.MaxEntityIDs)
+			rows, queryErr := a.DB.Query(ctx, `SELECT DISTINCT e.entity_id `+where+` LIMIT $`+strconv.Itoa(len(args)+1), append(args, config.MaxEntityIDs)...)
 			if queryErr != nil {
 				return nil, queryErr
 			}

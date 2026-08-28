@@ -219,4 +219,59 @@ func TestTheScheduledDigestsCarryTheWholeReport(t *testing.T) {
 			t.Fatal("nobody in this window had an error, so the impact figures being compared are all zero")
 		}
 	})
+
+	t.Run("a segment delivery means the segment the console built", func(t *testing.T) {
+		// The console's Segment builder makes nested conditions and behavioural
+		// aggregates. "Segment 집계" delivered an event name, a feature and a
+		// department — a different population under the same word, and the one
+		// the product's "Segment → Action" line is about.
+		report := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/scheduled-reports",
+			fmt.Sprintf(`{"channel_id":"%s","name":"세그먼트 배달","report_kind":"segment","interval_minutes":1440,"definition":{"environment":"prd","days":90,"segment_id":"%s"},"enabled":true}`, channelID, f.segmentID))
+		id, _ := report["id"].(string)
+		if err := automation.RunByID(ctx, uuid.MustParse(id)); err != nil {
+			t.Fatalf("segment delivery: %v", err)
+		}
+		var payload map[string]any
+		select {
+		case payload = <-received:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the segment digest never arrived")
+		}
+		data, _ := payload["data"].(map[string]any)
+		if data["segment_name"] == nil {
+			t.Fatalf("the delivery does not say which segment it evaluated: %v", data)
+		}
+		delivered, _ := data["matched_entities"].(float64)
+		if delivered <= 0 {
+			t.Fatalf("the segment matched %v people, so agreeing with the console would prove nothing", data["matched_entities"])
+		}
+
+		// The same segment, through the query builder the console uses.
+		from, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(payload["from"]))
+		to, _ := time.Parse(time.RFC3339Nano, fmt.Sprint(payload["to"]))
+		answer := f.do(t, http.MethodPost, "/api/v1/query", fmt.Sprintf(
+			`{"site_id":%q,"environment":"prd","segment_id":%q,"date_range":{"from":%q,"to":%q},"dimensions":[],"metrics":["users"],"limit":1}`,
+			f.siteKey, f.segmentID, from.In(location).Format("2006-01-02"), to.In(location).Add(-time.Second).Format("2006-01-02")))
+		rows, _ := answer["rows"].([]any)
+		if len(rows) == 0 {
+			t.Fatalf("the query builder answered no rows for the same segment: %v", answer)
+		}
+		row, _ := rows[0].(map[string]any)
+		shown, _ := row["users"].(float64)
+		if shown != delivered {
+			t.Errorf("the delivery says %v people are in the segment and the console says %v — the same saved segment naming two populations is the defect this delivery kind had by construction",
+				delivered, shown)
+		}
+
+		// And the whole population is not the answer: a segment that selects
+		// everybody would agree with a delivery that ignores the definition.
+		all := f.do(t, http.MethodPost, "/api/v1/query", fmt.Sprintf(
+			`{"site_id":%q,"environment":"prd","date_range":{"from":%q,"to":%q},"dimensions":[],"metrics":["users"],"limit":1}`,
+			f.siteKey, from.In(location).Format("2006-01-02"), to.In(location).Add(-time.Second).Format("2006-01-02")))
+		allRows, _ := all["rows"].([]any)
+		allRow, _ := allRows[0].(map[string]any)
+		if everyone, _ := allRow["users"].(float64); everyone <= delivered {
+			t.Fatalf("the segment holds %v of %v people, so a delivery that ignored the definition would pass this", delivered, everyone)
+		}
+	})
 }

@@ -17,6 +17,13 @@ export interface ScheduleForm {
   days: number;
   notifyOn: string[];
   alwaysSend: boolean;
+  /**
+   * A saved Segment, evaluated with the same compiler the screens use. Before
+   * this existed, "Segment 집계" could only mean the three property filters
+   * below — so a Segment built in the Segment screen, with nested conditions or
+   * behavioural rules, was the one thing a Segment delivery could not send.
+   */
+  segmentId: string;
   eventName: string;
   feature: string;
   department: string;
@@ -38,6 +45,7 @@ export const defaultScheduleForm: ScheduleForm = {
   days: 7,
   notifyOn: ["new", "recovered"],
   alwaysSend: false,
+  segmentId: "",
   eventName: "",
   feature: "",
   department: "",
@@ -70,10 +78,13 @@ export function buildScheduleDefinition(
   const definition: Record<string, unknown> = { environment: form.environment };
   if (kindUsesRange(kind)) definition.days = form.days;
   if (kindUsesAlertState(kind)) {
-    definition.notify_on = form.notifyOn.length ? form.notifyOn : ["new", "recovered"];
+    definition.notify_on = form.notifyOn.length
+      ? form.notifyOn
+      : ["new", "recovered"];
     if (form.alwaysSend) definition.always_send = true;
   }
   if (kindUsesSegmentFilters(kind)) {
+    if (form.segmentId.trim()) definition.segment_id = form.segmentId.trim();
     if (form.eventName.trim()) definition.event_name = form.eventName.trim();
     if (form.feature.trim()) definition.feature = form.feature.trim();
     if (form.department.trim()) definition.department = form.department.trim();
@@ -91,13 +102,16 @@ export const intervalPresets = [
 /** describeSchedule states in one line what will be delivered and how often. */
 export function describeSchedule(
   kind: ScheduleKind,
-  form: ScheduleForm,
+  form: ScheduleForm & { segmentName?: string },
   intervalMinutes: number,
 ): string {
   const cadence =
-    intervalPresets.find((preset) => preset.minutes === intervalMinutes)?.label ||
-    `${intervalMinutes}분마다`;
-  const parts = [`${cadence} ${scheduleKindLabel[kind]}`, form.environment.toUpperCase()];
+    intervalPresets.find((preset) => preset.minutes === intervalMinutes)
+      ?.label || `${intervalMinutes}분마다`;
+  const parts = [
+    `${cadence} ${scheduleKindLabel[kind]}`,
+    form.environment.toUpperCase(),
+  ];
   if (kindUsesRange(kind)) parts.push(`최근 ${form.days}일`);
   if (kindUsesAlertState(kind)) {
     parts.push(
@@ -107,8 +121,19 @@ export function describeSchedule(
     );
   }
   if (kindUsesSegmentFilters(kind)) {
-    const filters = [form.eventName, form.feature, form.department].filter(Boolean);
-    parts.push(filters.length ? `조건 ${filters.join(" / ")}` : "조건 없음");
+    const filters = [form.eventName, form.feature, form.department].filter(
+      Boolean,
+    );
+    // The saved Segment is named first because it is the whole definition; the
+    // property filters narrow whatever it selected.
+    if (form.segmentName) parts.push(`Segment ${form.segmentName}`);
+    parts.push(
+      filters.length
+        ? `조건 ${filters.join(" / ")}`
+        : form.segmentName
+          ? "추가 조건 없음"
+          : "조건 없음",
+    );
   }
   return parts.join(" · ");
 }
