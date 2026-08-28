@@ -505,3 +505,59 @@ test("in-page windows survive the system clock moving backwards", async () => {
     "the second search was dropped as a duplicate keystroke",
   );
 });
+
+test("한 페이지가 보고하는 신호에는 상한이 있고, 그 상한은 페이지마다 다시 열린다", async () => {
+  // 신호 보고에 상한을 둔 이유는 코드에 적혀 있습니다: "렌더 루프에 빠진
+  // 페이지가 수천 개의 이벤트가 되어서는 안 된다." 그런데 그 상한도, 그것이
+  // 라우트 변경마다 다시 열린다는 것도 검사된 적이 없었습니다.
+  //
+  // 둘 다 필요합니다. 상한이 없으면 망가진 페이지 하나가 그 사람의 하루치
+  // 데이터를 덮어씁니다. 다시 열리지 않으면 상한은 페이지당이 아니라 세션당이
+  // 되고, 긴 단일 페이지 세션은 스무 번째 신호 이후 남은 방문 내내 조용해집니다
+  // — 그리고 그 침묵은 "막힘이 없었다"로 읽힙니다.
+  const { deliveries } = harness();
+  const tracker = start();
+
+  // 서로 다른 요소를 계속 눌러 rage click을 상한보다 많이 만듭니다.
+  const rage = async (id) => {
+    const button = el("button", { id });
+    harnessAttach(button);
+    for (let i = 0; i < 4; i += 1) dispatch("click", { target: button });
+    await wait(1300);
+  };
+  for (let i = 0; i < 25; i += 1) await rage(`btn-${i}`);
+
+  // 상한은 신호 종류별이 아니라 페이지 전체에 걸립니다. 클릭 한 번이 rage와
+  // dead 양쪽으로 보고될 수 있으므로, 세는 것은 신호의 총수입니다.
+  const signalNames = [
+    "rage_click",
+    "dead_click",
+    "rapid_back",
+    "form_retry",
+    "slow_interaction",
+    "error_after_click",
+    "repeated_search",
+  ];
+  const first = (await events(tracker, deliveries)).filter((event) =>
+    signalNames.includes(event.name),
+  );
+  assert.equal(
+    first.length,
+    20,
+    `한 페이지에서 신호 ${first.length}개가 나갔습니다: 상한이 상한이 아닙니다`,
+  );
+
+  // 라우트가 바뀌면 다음 페이지는 다시 보고할 수 있어야 합니다.
+  deliveries.length = 0;
+  history.pushState({}, "", "https://service.internal/page/capped");
+  await wait(50);
+  await rage("btn-after-route");
+
+  const second = (await events(tracker, deliveries)).filter((event) =>
+    signalNames.includes(event.name),
+  );
+  assert.ok(
+    second.length > 0,
+    "라우트가 바뀐 뒤에도 신호가 나가지 않습니다: 상한이 페이지당이 아니라 세션당이 되어, 긴 방문의 나머지가 통째로 조용해집니다",
+  );
+});
