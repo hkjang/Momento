@@ -1,10 +1,11 @@
 import { Suspense, lazy } from "react";
-import { Box, CircularProgress } from "@mui/material";
+import { Box, Button, Card, CircularProgress, Typography } from "@mui/material";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./contexts/AuthContext";
 import { SiteProvider } from "./contexts/SiteContext";
 import LoginPage from "./pages/LoginPage";
 import AppShell from "./components/AppShell";
+import { ErrorState } from "./components/States";
 
 // Every screen used to be part of the first download, so signing in cost the
 // whole console — the charting library included — before the landing screen
@@ -33,11 +34,43 @@ const EnterpriseAnalyticsPage = lazy(
 const EnterpriseAdminPage = lazy(() => import("./pages/EnterpriseAdminPage"));
 
 export default function App() {
-  const { user, loading } = useAuth();
+  const { user, loading, sessionError, refresh } = useAuth();
   if (loading)
     return (
       <Box sx={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
         <CircularProgress />
+      </Box>
+    );
+  // Not signed in and could not tell are different answers. Showing the login
+  // form for the second sends somebody with a valid session to a form that will
+  // fail the same way, and says nothing about why.
+  if (!user && sessionError)
+    return (
+      <Box
+        sx={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          p: 3,
+        }}
+      >
+        <Card sx={{ p: 4, maxWidth: 520, textAlign: "center" }}>
+          <Typography variant="h6" gutterBottom>
+            로그인 상태를 확인하지 못했습니다
+          </Typography>
+          <Typography color="text.secondary" mb={2}>
+            로그아웃된 것이 아니라 서버에 닿지 못한 것입니다. 연결을 확인한 뒤
+            다시 시도하세요.
+          </Typography>
+          <ErrorState error={sessionError} />
+          <Button
+            variant="contained"
+            sx={{ mt: 2 }}
+            onClick={() => void refresh()}
+          >
+            다시 확인
+          </Button>
+        </Card>
       </Box>
     );
   if (!user) return <LoginPage />;
