@@ -50,6 +50,33 @@ func TestVersionIsAReleaseVersion(t *testing.T) {
 // that was not the service's. Each build path is now required either to pass a
 // version through or to leave the declared one alone — never to substitute a
 // placeholder for it.
+// The service names itself in two shapes and they are not interchangeable: an
+// image is a repository and a tag, an archive is one word. An operator meets
+// both — the file they carry into a closed network and the name they run — and
+// the offline guide prints them next to each other, so a build path that named
+// either differently would be handing out instructions that do not work.
+func TestTheImageAndTheArchiveAreNamedTheAgreedWay(t *testing.T) {
+	root := repoRoot(t)
+	for _, expect := range []struct {
+		file, want, why string
+	}{
+		{"Makefile", "IMAGE := momento:v$(RELEASE_VERSION)", "the image is repository:tag"},
+		{"Makefile", "ARCHIVE_NAME := momento-v$(RELEASE_VERSION)", "the archive is one word"},
+		{".github/workflows/release.yml", `-t "momento:${RELEASE_TAG}"`, "the released image is repository:tag"},
+		{".github/workflows/release.yml", `"momento-${RELEASE_TAG}.tar.gz"`, "the published archive is one word"},
+		{"docs/OFFLINE.md", "momento:v<version>", "the guide tells an operator to run the image by its tag"},
+		{"compose.yml", "image: momento:v" + Version, "the compose image carries the version it is built from"},
+	} {
+		body, err := os.ReadFile(filepath.Join(root, expect.file))
+		if err != nil {
+			t.Fatalf("read %s: %v", expect.file, err)
+		}
+		if !strings.Contains(string(body), expect.want) {
+			t.Errorf("%s no longer contains %q, so %s is no longer true", expect.file, expect.want, expect.why)
+		}
+	}
+}
+
 func TestEveryBuildStampsTheVersion(t *testing.T) {
 	root := repoRoot(t)
 	for file, forbidden := range map[string][]string{

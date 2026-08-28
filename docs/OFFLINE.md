@@ -4,7 +4,9 @@
 
 릴리스 자산에는 실행에 필요한 Momento 서비스 이미지 레이어가 모두 포함됩니다. 대상 서버에 Docker Engine과 접근 가능한 PostgreSQL 15 이상이 있어야 합니다.
 
-1. 인터넷 연결이 가능한 구간에서 GitHub Release의 `momento-v<version>.tar.gz`와 `.sha256`을 내려받습니다. 예: `momento-v0.21.0.tar.gz`.
+1. 인터넷 연결이 가능한 구간에서 GitHub Release의 `momento-v<version>.tar.gz`와 `.sha256`을 내려받습니다. 예: `momento-v0.34.2.tar.gz`.
+
+   아카이브 이름과 그 안의 이미지 이름은 형태가 다릅니다. 파일은 한 단어라 `momento-v<version>.tar.gz`이고, 이미지는 저장소와 태그라 `momento:v<version>`입니다. `docker load`가 출력하는 이름이 아래 `docker run`에 쓰는 이름입니다.
 2. 보안 반입 절차 후 checksum을 확인합니다.
 
 ```bash
@@ -23,7 +25,7 @@ docker run -d --name momento --restart unless-stopped \
   -e MOMENTO_BOOTSTRAP_ADMIN='admin@example.com' \
   -e MOMENTO_BOOTSTRAP_ADMIN_PASSWORD='a-long-random-bootstrap-password' \
   -e MOMENTO_ENCRYPTION_KEY='a-long-random-encryption-key' \
-  momento-v<version>
+  momento:v<version>
 ```
 
 `MOMENTO_ENCRYPTION_KEY`는 발급한 API key와 Tracking Key를 암호화해 저장하므로 컨테이너를 교체하거나 재기동해도 키를 다시 발급할 필요가 없습니다. 값은 비밀 관리 체계에 보관하고 컨테이너 교체 시 동일하게 주입하십시오. 값을 잃으면 암호화 저장된 키는 복구할 수 없고 회전해야 합니다.

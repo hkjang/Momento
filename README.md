@@ -106,10 +106,10 @@ export MOMENTO_TEST_POSTGRES_DSN='postgres://postgres:test@127.0.0.1:5432/moment
 go test ./... && go vet ./...
 cd sdk && npm install && npm run typecheck && npm run build
 cd ../web && npm install && npm run lint && npm test && npm run build
-docker build -t momento:dev .
+make docker            # momento:v<version> 이미지를 만듭니다
 ```
 
-릴리스는 `v*` tag push 시 GitHub Actions가 `momento-v<version>` 이미지를 `momento-v<version>.tar.gz`로 내보내 Release에 첨부합니다. 예를 들어 `v0.21.0` 태그는 `momento-v0.21.0.tar.gz`를 생성합니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
+릴리스는 `v*` tag push 시 GitHub Actions가 `momento:v<version>` 이미지를 만들어 `momento-v<version>.tar.gz`로 내보내고 Release에 첨부합니다. 이미지는 저장소와 태그(`momento:v0.34.2`), 아카이브는 한 단어(`momento-v0.34.2.tar.gz`)입니다. 소스 번들 또는 온라인 설치 스크립트는 별도 릴리스 자산에 포함하지 않습니다.
 
 ## License
 

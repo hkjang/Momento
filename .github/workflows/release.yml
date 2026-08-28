@@ -41,16 +41,19 @@ jobs:
       # running; a commit from another branch is worse than none.
       - name: Read the commit being released
         run: echo "RELEASE_COMMIT=$(git rev-parse --short=12 HEAD)" >> "$GITHUB_ENV"
+      # The image is named repository:tag and the archive is one word — the two
+      # shapes an operator meets, kept deliberately parallel: momento:v0.34.2
+      # loads out of momento-v0.34.2.tar.gz.
       - name: Build service image
         run: |
           docker build \
             --build-arg VERSION="${RELEASE_TAG#v}" \
             --build-arg COMMIT="${RELEASE_COMMIT}" \
             --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            -t "momento-${RELEASE_TAG}" .
+            -t "momento:${RELEASE_TAG}" .
       - name: Export offline image only
         run: |
-          docker save "momento-${RELEASE_TAG}" | gzip -9 > "momento-${RELEASE_TAG}.tar.gz"
+          docker save "momento:${RELEASE_TAG}" | gzip -9 > "momento-${RELEASE_TAG}.tar.gz"
           sha256sum "momento-${RELEASE_TAG}.tar.gz" > "momento-${RELEASE_TAG}.tar.gz.sha256"
       # The artifact is the product for an offline deployment, and until now
       # nothing had ever loaded one and started it. This runs the archive that is
@@ -61,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           # Loading from the archive is the point: it proves what a user receives.
-          docker image rm "momento-${RELEASE_TAG}" >/dev/null 2>&1 || true
+          docker image rm "momento:${RELEASE_TAG}" >/dev/null 2>&1 || true
           gzip -dc "momento-${RELEASE_TAG}.tar.gz" | docker load
           sha256sum -c "momento-${RELEASE_TAG}.tar.gz.sha256"
 
@@ -78,7 +81,7 @@ jobs:
             -e MOMENTO_BOOTSTRAP_ADMIN='admin@example.com' \
             -e MOMENTO_BOOTSTRAP_ADMIN_PASSWORD='smoke-test-password-long-enough' \
             -e MOMENTO_ENCRYPTION_KEY="$(head -c 32 /dev/urandom | base64)" \
-            "momento-${RELEASE_TAG}"
+            "momento:${RELEASE_TAG}"
 
           # Ready means the migrations ran and the database is reachable, which is
           # the part an operator cannot verify from the outside.
