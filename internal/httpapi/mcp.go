@@ -301,26 +301,41 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(map[string]any{"metric": metric, "label": label, "value": value, "format": format, "unit": unit, "version": version}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_retention":
-		environment := stringArgDefault(call.Arguments, "environment", "prd")
-		cohortEvent := stringArg(call.Arguments, "cohort_event")
-		returnEvent := stringArg(call.Arguments, "return_event")
-		timezone, _, _ := s.siteTimezone(r.Context(), siteID)
-		rows, err := s.DB.Query(r.Context(), `WITH candidates AS (SELECT entity_id,min(date_trunc('week',event_timestamp AT TIME ZONE $5)::date) cohort_date FROM analytics_events WHERE site_id=$1 AND environment=$4 AND ($6='' OR event_name=$6) GROUP BY entity_id), cohorts AS (SELECT * FROM candidates WHERE cohort_date>=($2 AT TIME ZONE $5)::date AND cohort_date<($3 AT TIME ZONE $5)::date), activity AS (SELECT DISTINCT entity_id,date_trunc('week',event_timestamp AT TIME ZONE $5)::date activity_date FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND ($7='' OR event_name=$7)) SELECT c.cohort_date,((a.activity_date-c.cohort_date)/7) period,count(DISTINCT c.entity_id),(SELECT count(*) FROM cohorts x WHERE x.cohort_date=c.cohort_date) size FROM cohorts c JOIN activity a ON a.entity_id=c.entity_id AND a.activity_date>=c.cohort_date GROUP BY 1,2 ORDER BY 1,2`, siteID, from, to, environment, timezone, cohortEvent, returnEvent)
+		// This ran its own copy of the cohort SQL and answered a flat list of
+		// (cohort, week, retained) rows. Two things were wrong with that. The
+		// query was a second definition of retention that nothing held to the
+		// screen's, and the rows carried no notion of maturity: a cohort that
+		// started three days before the window closed appears with nothing in
+		// week 1, and an agent averaging the rows reads that as a cohort that
+		// did not come back rather than one that has not had the chance to.
+		//
+		// The screen answers from runCohortGrid and pools the curve with
+		// cohortMaturity applied. Both come from there now.
+		timezone, _, err := s.siteTimezone(r.Context(), siteID)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
 		}
-		defer rows.Close()
-		out := []map[string]any{}
-		for rows.Next() {
-			var cohort time.Time
-			var period int
-			var retained, size int64
-			if rows.Scan(&cohort, &period, &retained, &size) == nil {
-				out = append(out, map[string]any{"cohort": cohort.Format("2006-01-02"), "week": period, "users": retained, "size": size, "retention_rate": 100 * float64(retained) / float64(size)})
-			}
+		params := cohortParams{
+			From: from, To: to, Environment: stringArgDefault(call.Arguments, "environment", "prd"),
+			Timezone: timezone, Granularity: "week", Periods: 12,
+			CohortEvent: stringArg(call.Arguments, "cohort_event"),
+			ReturnEvent: stringArg(call.Arguments, "return_event"),
 		}
-		body, _ := json.MarshalIndent(out, "", "  ")
+		resolver, err := s.newDimensionResolver(r.Context(), siteID, params.Environment)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		grid, err := s.runCohortGrid(r.Context(), siteID, params, resolver, nil)
+		if err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			return
+		}
+		users, curve := pooledRetentionCurve(grid, params.Periods, to, params.Granularity)
+		body, _ := json.MarshalIndent(map[string]any{
+			"granularity": "week", "cohorts": grid, "cohort_users": users, "curve": curve,
+		}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_feature_adoption":
 		// The adoption screen's own numbers. This tool used to run its own query and
@@ -443,20 +458,14 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(map[string]any{"signals": out, "impact": impact, "impact_caveat": frictionImpactCaveat}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "get_metric_goals":
-		rows, err := s.DB.Query(r.Context(), `SELECT g.name,g.metric_name,g.target_value,g.comparator,g.period,g.environment,g.organization,g.department,g.owner,g.active FROM metric_goals g WHERE g.site_id=$1 ORDER BY g.active DESC,g.name`, siteID)
+		// Offered as "목표와 현재 달성 상태". It used to list the goal rows —
+		// target, comparator, owner — and nothing about attainment, so an agent
+		// asked whether a goal was being met could only repeat the goal. The
+		// goals screen evaluates each one; this answers from the same place.
+		out, err := s.metricGoalEvaluations(r, siteID)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
-		}
-		defer rows.Close()
-		out := []map[string]any{}
-		for rows.Next() {
-			var name, metric, comparator, period, environment, org, dept, owner string
-			var target float64
-			var active bool
-			if rows.Scan(&name, &metric, &target, &comparator, &period, &environment, &org, &dept, &owner, &active) == nil {
-				out = append(out, map[string]any{"name": name, "metric": metric, "target": target, "comparator": comparator, "period": period, "environment": environment, "organization": org, "department": dept, "owner": owner, "active": active})
-			}
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))

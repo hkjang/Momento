@@ -279,3 +279,174 @@ func TestTheMCPToolsAndTheScreensAgreeOnNumbersThatExist(t *testing.T) {
 		[]string{"revenue", "refunds", "net_revenue", "transactions", "buyers", "average_order_value", "purchase_conversion_rate"},
 		"revenue")
 }
+
+// get_metric_goals is offered to an agent as "목표와 현재 달성 상태" — the goals
+// and how they are currently doing. It ran its own SELECT over metric_goals and
+// answered the definitions: name, target, comparator, owner. Nothing in it said
+// where the metric actually stood, so an agent asked "are we meeting the goal?"
+// could only read the goal back.
+//
+// The goals screen evaluates each one against the period it covers. This holds
+// the tool to the same answer, and refuses to run unless the evaluation produced
+// a measurement — comparing two absent numbers is how a tool that answers
+// nothing passes for a tool that agrees.
+func TestTheGoalToolReportsAttainmentAndNotJustTheTarget(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	// A visit inside the current period, so the goal's metric has something to
+	// measure and "achieved" is a judgement rather than a default.
+	f.postCollect(t, f.siteKey, "goal-session", "goal-visitor", "https://portal.internal/goals",
+		[]string{fmt.Sprintf(`{"id":%q,"name":"click","timestamp":%d,"properties":{},"contract_version":1}`,
+			uuid.NewString(), time.Now().UnixMilli())})
+	if err := (service.Worker{DB: pool}).ProcessPending(ctx); err != nil {
+		t.Fatalf("drain the inbox: %v", err)
+	}
+
+	shownRows, _ := f.get(t, "/api/v1/sites/"+f.siteKey+"/metric-goals/evaluate")["list"].([]any)
+	if len(shownRows) == 0 {
+		t.Fatal("the goals screen evaluated nothing, so the tool cannot be held to it")
+	}
+	byName := map[string]map[string]any{}
+	measured := false
+	for _, row := range shownRows {
+		shown, _ := row.(map[string]any)
+		if shown == nil {
+			continue
+		}
+		byName[fmt.Sprint(shown["name"])] = shown
+		if value, _ := shown["value"].(float64); value > 0 {
+			measured = true
+		}
+	}
+	if !measured {
+		t.Fatal("every goal evaluated to 0, so a tool that reported nothing would agree with the screen")
+	}
+
+	answered := f.callTool(t, "get_metric_goals", map[string]any{"site_id": f.siteKey})
+	if len(answered) != len(shownRows) {
+		t.Fatalf("the screen evaluates %d goals and the tool answers %d", len(shownRows), len(answered))
+	}
+	for _, row := range answered {
+		said, _ := row.(map[string]any)
+		if said == nil {
+			continue
+		}
+		shown, ok := byName[fmt.Sprint(said["name"])]
+		if !ok {
+			t.Errorf("the tool reports a goal named %v that the screen does not evaluate", said["name"])
+			continue
+		}
+		// value and achieved are the two the description promises; the rest are
+		// what an agent needs to say anything useful about the gap.
+		for _, field := range []string{"value", "target_value", "achieved", "progress_percent", "comparator", "period", "metric_name"} {
+			value, valueOK := said[field]
+			expected, expectedOK := shown[field]
+			if !expectedOK {
+				t.Errorf("%v: the screen does not report %s, so the comparison is meaningless", said["name"], field)
+				continue
+			}
+			if !valueOK {
+				t.Errorf("%v: the tool does not report %s — it was asked for 달성 상태 and answered with the goal", said["name"], field)
+				continue
+			}
+			if fmt.Sprint(value) != fmt.Sprint(expected) {
+				t.Errorf("%v %s: the tool says %v and the screen says %v", said["name"], field, value, expected)
+			}
+		}
+	}
+}
+
+// analyze_retention carried its own copy of the cohort SQL. A copy agrees with
+// the original until one of them is edited, and this one had already drifted in
+// the way that matters most: it answered raw (cohort, week, retained) rows with
+// no maturity, so a cohort that started days before the window closed reads as a
+// cohort that did not come back. The screen pools the curve with cohortMaturity
+// applied. This holds the tool to that curve, cell by cell.
+func TestTheRetentionToolAnswersTheCohortScreensCurve(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	// Ninety days: the seeded cohorts start further back than a month, and a
+	// window with no cohort in it is a window where both sides answer nothing.
+	from, today := f.siteDates(t, 90)
+	args := map[string]any{"site_id": f.siteKey, "from": from, "to": today, "environment": "prd"}
+	cohort := "/api/v1/sites/" + f.siteKey + "/cohort?from=" + from + "&to=" + today + "&granularity=week&periods=12"
+
+	tool := f.toolObject(t, "analyze_retention", args)
+	screen := f.get(t, cohort)
+
+	shownGrid, _ := screen["cohorts"].([]any)
+	saidGrid, _ := tool["cohorts"].([]any)
+	if len(shownGrid) == 0 {
+		t.Fatal("the cohort screen has no cohorts in this period, so agreement would prove nothing")
+	}
+	if len(saidGrid) != len(shownGrid) {
+		t.Fatalf("the screen has %d cohorts and the tool %d", len(shownGrid), len(saidGrid))
+	}
+	retained := 0.0
+	for index := range shownGrid {
+		shown, _ := shownGrid[index].(map[string]any)
+		said, _ := saidGrid[index].(map[string]any)
+		if shown == nil || said == nil {
+			continue
+		}
+		for _, field := range []string{"cohort", "size"} {
+			if fmt.Sprint(said[field]) != fmt.Sprint(shown[field]) {
+				t.Errorf("cohort %d %s: the tool says %v and the screen says %v", index, field, said[field], shown[field])
+			}
+		}
+		shownPeriods, _ := shown["periods"].([]any)
+		saidPeriods, _ := said["periods"].([]any)
+		if len(saidPeriods) != len(shownPeriods) {
+			t.Errorf("cohort %v: the screen reports %d periods and the tool %d — a period the tool omits reads as a period nobody returned in",
+				shown["cohort"], len(shownPeriods), len(saidPeriods))
+			continue
+		}
+		for period := range shownPeriods {
+			shownCell, _ := shownPeriods[period].(map[string]any)
+			saidCell, _ := saidPeriods[period].(map[string]any)
+			if shownCell == nil || saidCell == nil {
+				continue
+			}
+			for _, field := range []string{"users", "retention_rate"} {
+				if fmt.Sprint(saidCell[field]) != fmt.Sprint(shownCell[field]) {
+					t.Errorf("cohort %v week %d %s: the tool says %v and the screen says %v",
+						shown["cohort"], period, field, saidCell[field], shownCell[field])
+				}
+			}
+			if period > 0 {
+				if users, _ := shownCell["users"].(float64); users > 0 {
+					retained += users
+				}
+			}
+		}
+	}
+	if retained == 0 {
+		t.Fatal("nobody returned after week 0 in this period, so the retention numbers being compared are all zero")
+	}
+
+	// The pooled curve is what an agent quotes. It is the part that applies
+	// maturity, and it did not exist in the tool's answer at all.
+	// The screen pools the curve only when it is asked to compare, and the
+	// baseline entry is the same population the tool answers for.
+	shownCurves, _ := f.get(t, cohort+"&segment_ids="+f.segmentID)["curves"].([]any)
+	if len(shownCurves) == 0 {
+		t.Fatal("the screen answered no baseline curve, so the tool's curve is held to nothing")
+	}
+	baseline, _ := shownCurves[0].(map[string]any)
+	shownCurve, _ := baseline["periods"].([]any)
+	saidCurve, _ := tool["curve"].([]any)
+	if len(saidCurve) != len(shownCurve) {
+		t.Fatalf("the screen's pooled curve has %d periods and the tool's %d", len(shownCurve), len(saidCurve))
+	}
+	for period := range shownCurve {
+		shownCell, _ := shownCurve[period].(map[string]any)
+		saidCell, _ := saidCurve[period].(map[string]any)
+		for _, field := range []string{"users", "cohort_users", "retention_rate"} {
+			if fmt.Sprint(saidCell[field]) != fmt.Sprint(shownCell[field]) {
+				t.Errorf("pooled week %d %s: the tool says %v and the screen says %v", period, field, saidCell[field], shownCell[field])
+			}
+		}
+	}
+}

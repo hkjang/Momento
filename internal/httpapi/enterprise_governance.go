@@ -134,24 +134,25 @@ func optionalISODate(value *string) (*time.Time, error) {
 	return &parsed, nil
 }
 
-func (s *Server) evaluateMetricGoals(w http.ResponseWriter, r *http.Request) {
-	siteID, err := s.resolveSite(r, "siteID")
-	if err != nil {
-		writeError(w, 404, "UNKNOWN_SITE", "site not found")
-		return
-	}
+// metricGoalEvaluations answers what the goals screen shows: every active goal
+// with the value it currently has, whether that meets the target, and where the
+// period is heading.
+//
+// The MCP tool that offers "목표와 현재 달성 상태" listed the goal rows and
+// stopped there — it returned targets and no achievement at all, so an agent
+// asked whether the goals were being met answered with the goals. Evaluating is
+// the work; both callers do it the same way now.
+func (s *Server) metricGoalEvaluations(r *http.Request, siteID uuid.UUID) ([]map[string]any, error) {
 	_, location, err := s.siteTimezone(r.Context(), siteID)
 	if err != nil {
-		writeError(w, 500, "TIMEZONE_FAILED", err.Error())
-		return
+		return nil, err
 	}
 	now := time.Now().In(location)
 	rows, err := s.DB.Query(r.Context(), `SELECT g.id,g.name,g.metric_name,g.target_value,g.comparator,g.period,g.environment,g.organization,g.department,m.definition,m.format
 		FROM metric_goals g JOIN semantic_metrics m ON m.site_id=g.site_id AND m.name=g.metric_name AND m.status='active'
 		WHERE g.site_id=$1 AND g.active AND (g.starts_on IS NULL OR g.starts_on<=$2::date) AND (g.ends_on IS NULL OR g.ends_on>=$2::date) ORDER BY g.name`, siteID, now.Format("2006-01-02"))
 	if err != nil {
-		writeError(w, 500, "QUERY_FAILED", err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	out := []map[string]any{}
@@ -196,6 +197,20 @@ func (s *Server) evaluateMetricGoals(w http.ResponseWriter, r *http.Request) {
 			row[key] = item
 		}
 		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func (s *Server) evaluateMetricGoals(w http.ResponseWriter, r *http.Request) {
+	siteID, err := s.resolveSite(r, "siteID")
+	if err != nil {
+		writeError(w, 404, "UNKNOWN_SITE", "site not found")
+		return
+	}
+	out, err := s.metricGoalEvaluations(r, siteID)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
