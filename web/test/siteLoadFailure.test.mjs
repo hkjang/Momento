@@ -53,3 +53,26 @@ test("사이트 목록 읽기 실패는 기록되고, 목록이 비어 있는 �
   assert.match(states, /분석할 사이트가 없습니다/);
   assert.match(states, /사이트 만들기/);
 });
+
+test("환경 목록은 사이트에만 매이고, 늦게 온 응답이 이기지 않는다", () => {
+  const context = source("contexts/SiteContext.tsx");
+  const effect = context.slice(context.indexOf("/environments`"));
+
+  // 사이트만 의존성이어야 한다. 선택된 환경이 의존성이면 prd↔stg를 오갈 때마다
+  // 아무것도 새로 배우지 못하는 요청이 한 번씩 나갑니다.
+  const deps = /\}, \[([^\]]*)\]\);/.exec(effect);
+  assert.ok(deps, "환경 목록 effect의 의존성 배열을 찾지 못했다");
+  assert.equal(
+    deps[1].trim(),
+    "siteID",
+    `환경 목록 effect의 의존성이 [${deps[1].trim()}]이다: 사이트 외의 것이 들어가면 그때마다 목록을 다시 가져온다`,
+  );
+
+  // 그리고 취소가 있어야 한다. 사이트를 빠르게 바꾸면 두 읽기가 동시에 날고,
+  // 느린 쪽이 이기면 **이전 사이트의 환경 목록이 새 사이트 이름 아래** 남습니다.
+  assert.match(
+    effect,
+    /return \(\) => \{/,
+    "환경 목록 effect에 정리 함수가 없다: 늦게 도착한 이전 사이트의 응답이 현재 사이트의 목록을 덮어쓴다",
+  );
+});

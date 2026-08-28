@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -41,6 +42,10 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   );
   const [environments, setEnvironments] = useState<SiteEnvironment[]>([]);
   const [loadError, setLoadError] = useState<unknown>(null);
+  // The selected environment as the environments effect needs to read it, without
+  // being a reason for that effect to run again.
+  const environmentRef = useRef(environment);
+  environmentRef.current = environment;
   const refresh = useCallback(async () => {
     let next: Site[];
     try {
@@ -71,16 +76,29 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
   const site = sites.find((s) => s.site_id === selected) || sites[0] || null;
   const siteID = site?.site_id;
+  // The environment list belongs to the site, and only to the site.
+  //
+  // This used to depend on the selected environment as well, and set it, so
+  // every switch between prd and stg fetched the list again to learn nothing.
+  // The current value is read through a ref instead, which is what it is for: an
+  // input to the effect that must not restart it.
+  //
+  // It also had no cancellation. Switching sites quickly leaves two reads in
+  // flight and the slower one wins, so the selector could end up offering the
+  // previous site's environments under the new site's name — the same shape as
+  // the query keys that did not carry the environment, arriving one layer down.
   useEffect(() => {
     if (!siteID) {
       setEnvironments([]);
       return;
     }
+    let current = true;
     get<SiteEnvironment[]>(`/api/v1/sites/${siteID}/environments`)
       .then((items) => {
+        if (!current) return;
         const active = items.filter((item) => item.active);
         setEnvironments(active);
-        if (!active.some((item) => item.name === environment)) {
+        if (!active.some((item) => item.name === environmentRef.current)) {
           const next =
             active.find((item) => item.name === "prd")?.name ||
             active[0]?.name ||
@@ -92,8 +110,13 @@ export function SiteProvider({ children }: { children: ReactNode }) {
       // A site always has at least one environment, so failing to read them is a
       // failure rather than an empty answer. The selector keeps what it had and
       // the shell reports it, instead of silently offering nothing to choose.
-      .catch(setLoadError);
-  }, [siteID, environment]);
+      .catch((error) => {
+        if (current) setLoadError(error);
+      });
+    return () => {
+      current = false;
+    };
+  }, [siteID]);
   const value = useMemo(
     () => ({
       sites,
