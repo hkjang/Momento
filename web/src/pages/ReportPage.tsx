@@ -70,7 +70,11 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
       ),
     },
     { key: "conversions", label: "전환", align: "right" },
-    { key: "landing_page", label: "시작 페이지", format: (v) => String(v || "—") },
+    {
+      key: "landing_page",
+      label: "시작 페이지",
+      format: (v) => String(v || "—"),
+    },
     { key: "exit_page", label: "종료 페이지", format: (v) => String(v || "—") },
     { key: "source", label: "소스", format: (v) => String(v || "direct") },
     { key: "device_type", label: "기기", format: (v) => String(v || "—") },
@@ -166,6 +170,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
       setDays={setDays}
       environment={environment}
       timezone={site.timezone}
+      maxExactDays={site.max_exact_days}
       updatedAt={q.dataUpdatedAt}
       refreshing={q.isFetching}
       refresh={() => void q.refetch()}

@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import { allowedRanges } from "./queryError";
 import { useDelayedBusy } from "./useDelayedBusy";
 
 export default function AnalysisToolbar({
@@ -20,6 +21,7 @@ export default function AnalysisToolbar({
   refreshing,
   refresh,
   comparePrevious = false,
+  maxExactDays,
 }: {
   days: number;
   setDays(days: number): void;
@@ -29,10 +31,20 @@ export default function AnalysisToolbar({
   refreshing: boolean;
   refresh(): void;
   comparePrevious?: boolean;
+  /**
+   * The site's policy limit. This control offered 7, 30 and 90 days whatever the
+   * site allowed, and the server's own comment said the console "builds its
+   * period options from this, so it never offers a range the site's policy will
+   * refuse" — which was true of RangeSelect and not of this, the control the
+   * overview and the visitor insight screens use. On a site limited to 14 days
+   * the dropdown offered two periods that answer RANGE_EXCEEDS_POLICY.
+   */
+  maxExactDays?: number;
 }) {
   // The screen keeps the previous numbers while the next ones load, so without
   // this the only sign anything was happening was a disabled button.
   const busy = useDelayedBusy(refreshing);
+  const available = allowedRanges([7, 30, 90], maxExactDays);
   return (
     <Card variant="outlined" sx={{ px: 2, py: 1.4, position: "relative" }}>
       {busy && (
@@ -54,9 +66,11 @@ export default function AnalysisToolbar({
           onChange={(event) => setDays(Number(event.target.value))}
           sx={{ minWidth: 140 }}
         >
-          <MenuItem value={7}>최근 7일</MenuItem>
-          <MenuItem value={30}>최근 30일</MenuItem>
-          <MenuItem value={90}>최근 90일</MenuItem>
+          {available.map((option) => (
+            <MenuItem key={option} value={option}>
+              {`최근 ${option}일`}
+            </MenuItem>
+          ))}
         </TextField>
         <Chip
           size="small"

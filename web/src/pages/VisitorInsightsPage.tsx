@@ -125,6 +125,7 @@ export default function VisitorInsightsPage() {
       setDays={setDays}
       environment={environment}
       timezone={site.timezone}
+      maxExactDays={site.max_exact_days}
       updatedAt={q.dataUpdatedAt}
       refreshing={q.isFetching}
       refresh={() => void q.refetch()}
