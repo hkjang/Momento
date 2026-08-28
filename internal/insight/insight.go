@@ -847,9 +847,16 @@ func (rep Reporter) insightChannelSources(ctx context.Context, siteID uuid.UUID,
 			return rows.Err()
 		},
 		func(stepCtx context.Context) error {
-			rows, err := rep.DB.Query(stepCtx, `SELECT `+grain+`,count(DISTINCT entity_id)
-				FROM analytics_events
-				WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+			// Grouped by the channel and the person first, then counted. The
+			// current period's read needs two different distinct keys and cannot
+			// be folded this way; this one counts people only, so it can.
+			rows, err := rep.DB.Query(stepCtx, `SELECT source,medium,has_referrer,internal,count(*)
+				FROM (
+					SELECT `+grain+`,entity_id
+					FROM analytics_events
+					WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3
+					GROUP BY 1,2,3,4,5
+				) per_person(source,medium,has_referrer,internal,entity_id)
 				GROUP BY 1,2,3,4`, siteID, previousFrom, from, environment)
 			if err != nil {
 				return err
