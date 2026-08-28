@@ -350,14 +350,16 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(rows, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_experience":
-		var errors, affected int64
-		var lcp, inp, cls float64
-		err := s.DB.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE event_name=ANY($5)),count(DISTINCT entity_id) FILTER(WHERE event_name=ANY($5)),coalesce(percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric) FILTER(WHERE event_name='web_vital' AND properties->>'metric'='LCP' AND coalesce(properties->>'value','')~'^[0-9]+(\.[0-9]+)?$'),0)::double precision,coalesce(percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric) FILTER(WHERE event_name='web_vital' AND properties->>'metric'='INP' AND coalesce(properties->>'value','')~'^[0-9]+(\.[0-9]+)?$'),0)::double precision,coalesce(percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric) FILTER(WHERE event_name='web_vital' AND properties->>'metric'='CLS' AND coalesce(properties->>'value','')~'^[0-9]+(\.[0-9]+)?$'),0)::double precision FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, stringArgDefault(call.Arguments, "environment", "prd"), []string{"error", "resource_error"}).Scan(&errors, &affected, &lcp, &inp, &cls)
+		// The vitals and the error counts were this tool's own query, and it
+		// stopped there — no conversion impact, which is the number that says
+		// whether the errors mattered. One definition now, shared with the
+		// screen's impact block and the scheduled digest.
+		summary, err := insight.New(s.DB).Experience(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to)
 		if err != nil {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
 			return
 		}
-		body, _ := json.MarshalIndent(map[string]any{"errors": errors, "affected_users": affected, "p75": map[string]float64{"LCP": lcp, "INP": inp, "CLS": cls}}, "", "  ")
+		body, _ := json.MarshalIndent(summary, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "analyze_ai_operations":
 		// The same rows the AI operations screen shows, from the one definition:

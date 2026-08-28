@@ -137,7 +137,11 @@ func TestEveryRevenueExpressionAcceptsBothPropertyNames(t *testing.T) {
 	if revenue < 1 {
 		t.Fatalf("found no revenue expression, so the pattern no longer matches the source")
 	}
-	if vitals < 8 {
+	// The vitals floor fell from eight to six when the three per-metric copies of
+	// the p75 expression in the MCP tool became one insight.vitalP75 call. It is
+	// a canary for the pattern matching nothing at all, not a target: fewer reads
+	// because there are fewer copies is the direction this should move in.
+	if vitals < 6 {
 		t.Fatalf("found only %d web vital expressions, so the pattern no longer matches the source", vitals)
 	}
 	t.Logf("checked %d revenue expressions and %d web vital reads across %d files", revenue, vitals, len(files))

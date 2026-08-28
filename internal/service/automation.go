@@ -236,19 +236,43 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 		}
 		data = map[string]any{"features": rows, "from": from, "to": to}
 	case "experience":
-		var errors, affected int64
-		err := a.DB.QueryRow(ctx, `SELECT count(*),count(DISTINCT entity_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5)`, delivery.SiteID, from, to, environment, []string{"error", "resource_error"}).Scan(&errors, &affected)
+		// An error count and an affected-user count, delivered under the name of
+		// the screen whose subject is Web Vitals — the digest carried no vitals
+		// at all, and nothing about what the errors did to conversion. An error
+		// count on its own does not say whether it mattered, and a mailed report
+		// has no screen beside it to be checked against.
+		summary, err := insight.New(a.DB).Experience(ctx, delivery.SiteID, environment, from, to)
 		if err != nil {
 			return nil, err
 		}
-		data = map[string]any{"errors": errors, "affected_users": affected}
+		data = map[string]any{"p75": summary.P75, "errors": summary.Errors, "affected_users": summary.AffectedUsers,
+			"users": summary.Users, "error_users": summary.ErrorUsers,
+			"error_user_conversion_rate": summary.ErrorUserConversionRate,
+			"clean_user_conversion_rate": summary.CleanUserConversionRate,
+			"conversion_rate_delta":      summary.ConversionRateDelta}
 	case "ai":
-		var calls, users, inputTokens, outputTokens int64
-		err := a.DB.QueryRow(ctx, `SELECT count(*),count(DISTINCT entity_id),coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','')~'^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','')~'^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5)`, delivery.SiteID, from, to, environment, []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"}).Scan(&calls, &users, &inputTokens, &outputTokens)
+		// This counted calls, users and the two token sums, which is what the AI
+		// screen's query used to stop at before v0.34.3 and what the MCP tool
+		// stopped at until it was fixed. The digest was the third copy, and the
+		// one nobody can check: a mailed report has no chart beside it. Whoever
+		// subscribes to a weekly AI digest is asking what it cost and whether it
+		// worked, and the digest carried neither.
+		group := insight.AIOperationDimension("")
+		if value, ok := definition["group_by"].(string); ok {
+			group = insight.AIOperationDimension(value)
+		}
+		reporter := insight.New(a.DB)
+		rows, err := reporter.AIOperations(ctx, delivery.SiteID, environment, group, from, to)
 		if err != nil {
 			return nil, err
 		}
-		data = map[string]any{"calls": calls, "users": users, "input_tokens": inputTokens, "output_tokens": outputTokens}
+		users, err := reporter.AIOperationUsers(ctx, delivery.SiteID, environment, from, to)
+		if err != nil {
+			return nil, err
+		}
+		totals := insight.AIOperationTotals(rows)
+		totals["users"] = users
+		data = map[string]any{"group_by": group, "rows": rows, "totals": totals}
 	case "anomaly":
 		location := time.UTC
 		var timezone string

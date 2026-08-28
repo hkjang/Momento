@@ -360,8 +360,8 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 	baseCtx, cancelBase := s.analyticalContext(r)
 	defer cancelBase()
 	var vitals, errorsOut, releases []map[string]any
-	var allUsers, errorUsers, conversionsWithError, conversionsWithoutError int64
-	errorEvents := []string{"error", "resource_error"}
+	var summary insight.ExperienceSummary
+	errorEvents := insight.ErrorEvents
 	if err := insight.RunParallel(baseCtx, insight.QueryConcurrency,
 		func(ctx context.Context) error {
 			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'metric','unknown'),coalesce(page_url,'(unknown)'),count(*),avg((properties->>'value')::numeric)::double precision,percentile_disc(.75) WITHIN GROUP(ORDER BY (properties->>'value')::numeric)::double precision,count(*) FILTER(WHERE properties->>'rating'='good')
@@ -398,9 +398,12 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		func(ctx context.Context) error {
-			return s.DB.QueryRow(ctx, `WITH entity AS (SELECT entity_id,bool_or(event_name=ANY($5)) has_error,bool_or(is_conversion) converted FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 GROUP BY entity_id)
-				SELECT count(*),count(*) FILTER(WHERE has_error),count(*) FILTER(WHERE has_error AND converted),count(*) FILTER(WHERE NOT has_error AND converted) FROM entity`, siteID, from, to, environment, errorEvents).
-				Scan(&allUsers, &errorUsers, &conversionsWithError, &conversionsWithoutError)
+			// The impact block, the MCP tool and the scheduled digest all state
+			// what errors did to conversion; insight.Experience is where that is
+			// worked out.
+			value, err := insight.New(s.DB).ExperienceImpact(ctx, siteID, environment, from, to)
+			summary = value
+			return err
 		},
 		func(ctx context.Context) error {
 			rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>'release_version',properties->>'app_version','(not set)'),count(*),count(DISTINCT entity_id),count(*) FILTER(WHERE event_name=ANY($5)),100.0*count(DISTINCT entity_id) FILTER(WHERE is_conversion)/nullif(count(DISTINCT entity_id),0),max(event_timestamp)
@@ -421,18 +424,10 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, err)
 		return
 	}
-	errorRate, cleanRate := float64(0), float64(0)
-	if errorUsers > 0 {
-		errorRate = float64(conversionsWithError) * 100 / float64(errorUsers)
-	}
-	if allUsers-errorUsers > 0 {
-		cleanRate = float64(conversionsWithoutError) * 100 / float64(allUsers-errorUsers)
-	}
-	conversionDelta := float64(0)
-	if errorUsers > 0 && allUsers-errorUsers > 0 {
-		conversionDelta = errorRate - cleanRate
-	}
-	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases, "impact": map[string]any{"users": allUsers, "error_users": errorUsers, "error_user_conversion_rate": errorRate, "clean_user_conversion_rate": cleanRate, "conversion_rate_delta": conversionDelta}}
+	response := map[string]any{"environment": environment, "vitals": vitals, "errors": errorsOut, "releases": releases,
+		"impact": map[string]any{"users": summary.Users, "error_users": summary.ErrorUsers,
+			"error_user_conversion_rate": summary.ErrorUserConversionRate, "clean_user_conversion_rate": summary.CleanUserConversionRate,
+			"conversion_rate_delta": summary.ConversionRateDelta}}
 	// Optional cohort comparison: the same measurements per segment, so a site wide
 	// p75 stops hiding the group that is actually slow.
 	compare := []string{}
@@ -513,39 +508,14 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 // report with no cost in it, and no success rate either, while the screen beside
 // it had both. One definition now, so the two cannot answer differently or
 // answer different amounts.
+// aiOperationRows is the AI operations report. The query lives in insight
+// because the screen, the MCP tool and the scheduled digest all ask for it.
 func (s *Server) aiOperationRows(ctx context.Context, siteID uuid.UUID, environment, group string, from, to time.Time) ([]map[string]any, error) {
-	rows, err := s.DB.Query(ctx, `SELECT coalesce(properties->>$5,'(not set)'),count(*),count(DISTINCT entity_id),100.0*count(*) FILTER(WHERE lower(coalesce(properties->>'success','true')) IN ('true','1'))/nullif(count(*),0),coalesce(avg(CASE WHEN coalesce(properties->>'latency_ms','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'latency_ms')::numeric END),0)::double precision,coalesce(sum(CASE WHEN coalesce(properties->>'input_tokens','') ~ '^[0-9]+$' THEN (properties->>'input_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'output_tokens','') ~ '^[0-9]+$' THEN (properties->>'output_tokens')::bigint ELSE 0 END),0),coalesce(sum(CASE WHEN coalesce(properties->>'cost','') ~ '^[0-9]+(\.[0-9]+)?$' THEN (properties->>'cost')::numeric ELSE 0 END),0)::double precision,count(*) FILTER(WHERE lower(coalesce(properties->>'fallback_model','')) NOT IN ('','false'))
-		FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($6) GROUP BY 1 ORDER BY 2 DESC LIMIT 200`,
-		siteID, from, to, environment, group, aiOperationEvents)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var label string
-		var calls, users, inputTokens, outputTokens, fallbacks int64
-		var successRate, latency, cost float64
-		if rows.Scan(&label, &calls, &users, &successRate, &latency, &inputTokens, &outputTokens, &cost, &fallbacks) != nil {
-			continue
-		}
-		out = append(out, map[string]any{"label": label, "calls": calls, "users": users, "success_rate": successRate,
-			"average_latency_ms": latency, "input_tokens": inputTokens, "output_tokens": outputTokens, "cost": cost, "fallbacks": fallbacks})
-	}
-	return out, rows.Err()
+	return insight.New(s.DB).AIOperations(ctx, siteID, environment, group, from, to)
 }
-
-// aiOperationEvents are the events an application sends for its model, agent and
-// tool calls. None of them is collected automatically.
-var aiOperationEvents = []string{"ai_prompt", "ai_response", "ai_tool_call", "ai_agent_run", "ai_mcp_call", "ai_model_call"}
 
 // aiOperationDimension is the cut the caller asked for, or the default.
-func aiOperationDimension(group string) string {
-	if map[string]bool{"model": true, "provider": true, "agent": true, "mcp_server": true, "tool": true}[group] {
-		return group
-	}
-	return "model"
-}
+func aiOperationDimension(group string) string { return insight.AIOperationDimension(group) }
 
 func (s *Server) aiAnalyticsReport(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
