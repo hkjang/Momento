@@ -55,6 +55,11 @@ func historicalSeed(orgID, workspaceID, userID, siteID uuid.UUID, channelID uuid
 		{since: "008_platformization.sql", name: "scheduled report", sql: `INSERT INTO scheduled_reports(site_id,channel_id,name,report_kind,interval_minutes) VALUES($1,$2,'daily overview','overview',1440)`, args: []any{siteID, channelID}},
 		{since: "008_platformization.sql", name: "saved report", sql: `INSERT INTO saved_reports(site_id,kind,name,definition) VALUES($1,'overview','saved by an older release','{}'::jsonb)`, args: []any{siteID}},
 		{since: "008_platformization.sql", name: "segment", sql: `INSERT INTO segments(site_id,name,definition) VALUES($1,'returning','{"combinator":"and","rules":[]}'::jsonb)`, args: []any{siteID}},
+		// The quality counters are the table a later migration added a column to,
+		// and until this row existed that migration was only ever applied to an
+		// empty one — which is exactly the case this test exists to distrust.
+		{since: "008_platformization.sql", name: "quality counters", sql: `INSERT INTO data_quality_daily(site_id,event_date,environment,event_name,received,accepted,missing_user_id)
+			VALUES($1,current_date-1,'prd','page_view',120,118,17)`, args: []any{siteID}},
 		{since: "012_anomaly_state.sql", name: "anomaly alert", sql: `INSERT INTO anomaly_alerts(site_id,environment,metric,severity,first_detected_on,last_detected_on) VALUES($1,'prd','users','warning',current_date-1,current_date)`, args: []any{siteID}},
 	}
 }
@@ -201,6 +206,22 @@ func TestUpgradeFromEveryHistoricalSchemaWithData(t *testing.T) {
 			eventsAfter, sessionsAfter := countRows("after the upgrade")
 			if eventsAfter != events || sessionsAfter != sessions {
 				t.Fatalf("upgrading from %s changed the data: events %d -> %d, sessions %d -> %d", from, events, eventsAfter, sessions, sessionsAfter)
+			}
+
+			// A counter column added later has to arrive at its default over rows
+			// that predate it, and must not disturb what those rows already held.
+			// An ADD COLUMN NOT NULL DEFAULT is only free because PostgreSQL
+			// stores the default in the catalogue; asserting the value is how this
+			// stays true of whatever a later migration writes instead.
+			if from >= "008_platformization.sql" {
+				var missing, refused int64
+				if err := pool.QueryRow(ctx, `SELECT missing_user_id,refused_user_id FROM data_quality_daily WHERE site_id=$1`, siteID).
+					Scan(&missing, &refused); err != nil {
+					t.Fatalf("quality counters after upgrading from %s: %v", from, err)
+				}
+				if missing != 17 || refused != 0 {
+					t.Fatalf("upgrading from %s left the quality counters at missing=%d refused=%d, want 17 and 0", from, missing, refused)
+				}
 			}
 
 			// The view the whole read path is built on has to resolve against rows
