@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/insight"
+	segmentpkg "github.com/hkjang/Momento/internal/segment"
 )
 
 // Retention answers whether people come back. A single pooled curve says "38% return
@@ -47,14 +48,19 @@ func (s *Server) runCohortGrid(ctx context.Context, siteID uuid.UUID, params coh
 	_, bucket, offset := cohortBuckets(params.Granularity)
 	args := []any{siteID, params.From, params.To, params.Environment, params.Timezone, params.CohortEvent, params.ReturnEvent, params.Periods - 1}
 	predicate := ""
+	segmentCTEs := []string{}
 	if segment != nil {
-		part, err := compileSegment(*segment, resolver, "e", &args, 0)
+		// The same predicate scopes both the cohort definition and the return
+		// activity, so a segment never retains people it never counted — which
+		// means a behavioural aggregate written inline is the same uncorrelated
+		// subquery twice in one statement, and PostgreSQL runs it twice. Lifted
+		// into a CTE it runs once.
+		part, ctes, err := segmentpkg.CompileHoisted(*segment, resolver, "e", &args, 0, "segment_member_")
 		if err != nil {
 			return nil, err
 		}
-		// The same predicate scopes both the cohort definition and the return
-		// activity, so a segment never retains people it never counted.
 		predicate = " AND (" + part + ")"
+		segmentCTEs = ctes
 	}
 	// Where a cohort comes from.
 	//
@@ -88,7 +94,11 @@ func (s *Server) runCohortGrid(ctx context.Context, siteID uuid.UUID, params coh
 		candidates = `SELECT firsts.entity_id,` + firstAt + ` cohort_date FROM (` +
 			insight.FirstSeenCTE("$1", "$4", "$3") + `) firsts WHERE $6=''`
 	}
-	query := `WITH cohort_candidates AS (
+	with := "WITH "
+	if len(segmentCTEs) > 0 {
+		with += strings.Join(segmentCTEs, ",\n\t") + ",\n\t"
+	}
+	query := with + `cohort_candidates AS (
 		` + candidates + `
 	), cohorts AS (
 		SELECT entity_id,cohort_date FROM cohort_candidates WHERE cohort_date >= ($2 AT TIME ZONE $5)::date AND cohort_date < ($3 AT TIME ZONE $5)::date

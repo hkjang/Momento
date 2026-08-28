@@ -139,7 +139,47 @@ func (r Resolver) Expression(field, alias string) (string, error) {
 	}
 }
 
+// hoist collects the person-level aggregate subqueries a compilation produced so
+// the caller can lift them into named CTEs.
+//
+// Those subqueries are uncorrelated: they read the site and environment from the
+// resolver and group by the person, and nothing in them refers to the row being
+// filtered. So the same aggregate written twice in one query is the same work
+// done twice, and PostgreSQL does not notice — the cohort grid applies a segment
+// to both the cohort definition and the return activity, and paid for it twice.
+//
+// Only these are lifted. event.has compiles to a correlated EXISTS against the
+// outer row and cannot move.
+type hoist struct{ ctes []string }
+
+// Compile turns a segment definition into a SQL predicate with the aggregate
+// subqueries written inline.
 func Compile(node Node, resolver Resolver, alias string, args *[]any, depth int) (string, error) {
+	predicate, _, err := CompileHoisted(node, resolver, alias, args, depth, "")
+	return predicate, err
+}
+
+// CompileHoisted compiles the same predicate but lifts each person-level
+// aggregate into a named CTE, returning the WITH entries for the caller to place
+// in front of its own query. prefix names them, so two segments compiled into one
+// statement cannot collide.
+//
+// The predicate is identical either way — a CTE reference in place of the same
+// uncorrelated subquery — so a caller that has no use for the entries can keep
+// calling Compile.
+func CompileHoisted(node Node, resolver Resolver, alias string, args *[]any, depth int, prefix string) (string, []string, error) {
+	var collector *hoist
+	if prefix != "" {
+		collector = &hoist{}
+	}
+	predicate, err := compile(node, resolver, alias, args, depth, collector, prefix)
+	if collector == nil {
+		return predicate, nil, err
+	}
+	return predicate, collector.ctes, err
+}
+
+func compile(node Node, resolver Resolver, alias string, args *[]any, depth int, collector *hoist, prefix string) (string, error) {
 	if depth > 5 {
 		return "", fmt.Errorf("segment nesting is limited to 5 levels")
 	}
@@ -156,7 +196,7 @@ func Compile(node Node, resolver Resolver, alias string, args *[]any, depth int)
 		}
 		parts := make([]string, 0, len(node.Rules))
 		for _, rule := range node.Rules {
-			part, err := Compile(rule, resolver, alias, args, depth+1)
+			part, err := compile(rule, resolver, alias, args, depth+1, collector, prefix)
 			if err != nil {
 				return "", err
 			}
@@ -168,7 +208,7 @@ func Compile(node Node, resolver Resolver, alias string, args *[]any, depth int)
 		return compileEventExistence(node, alias, args)
 	}
 	if expression, ok := entityAggregateSQL[node.Field]; ok {
-		return compileEntityAggregate(node, resolver, expression, alias, args)
+		return compileEntityAggregate(node, resolver, expression, alias, args, collector, prefix)
 	}
 	expr, err := resolver.Expression(node.Field, alias)
 	if err != nil {
@@ -256,7 +296,7 @@ var entityAggregateSQL = map[string]string{
 // The subquery has no time bound because these fields are defined over a
 // person's whole history; the site and environment come from the resolver so the
 // subquery stays constant.
-func compileEntityAggregate(node Node, resolver Resolver, expression, alias string, args *[]any) (string, error) {
+func compileEntityAggregate(node Node, resolver Resolver, expression, alias string, args *[]any, collector *hoist, prefix string) (string, error) {
 	switch node.Operator {
 	case "=", "!=", ">", ">=", "<", "<=":
 	default:
@@ -279,9 +319,15 @@ func compileEntityAggregate(node Node, resolver Resolver, expression, alias stri
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return alias + ".entity_id IN (SELECT segment_entity.entity_id FROM analytics_events segment_entity" +
+	membership := "SELECT segment_entity.entity_id FROM analytics_events segment_entity" +
 		" WHERE segment_entity.site_id=" + sitePlaceholder + " AND segment_entity.environment=" + environmentPlaceholder +
-		" GROUP BY segment_entity.entity_id HAVING coalesce(" + expression + ",0) " + operator + " " + valuePlaceholder + ")", nil
+		" GROUP BY segment_entity.entity_id HAVING coalesce(" + expression + ",0) " + operator + " " + valuePlaceholder
+	if collector == nil {
+		return alias + ".entity_id IN (" + membership + ")", nil
+	}
+	name := prefix + strconv.Itoa(len(collector.ctes)+1)
+	collector.ctes = append(collector.ctes, name+" AS MATERIALIZED ("+membership+")")
+	return alias + ".entity_id IN (SELECT entity_id FROM " + name + ")", nil
 }
 
 func compileEventExistence(node Node, alias string, args *[]any) (string, error) {
