@@ -2180,7 +2180,8 @@ func TestSiteAdministrationIsConfinedToTheOwningWorkspace(t *testing.T) {
 		t.Fatalf("grant the admin their workspace: %v", err)
 	}
 	token := "mom_sess_wsadmin"
-	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour') ON CONFLICT DO NOTHING`, adminID, auth.HashToken(token)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour')
+		ON CONFLICT(token_hash) DO UPDATE SET user_id=excluded.user_id,expires_at=excluded.expires_at`, adminID, auth.HashToken(token)); err != nil {
 		t.Fatalf("create the admin session: %v", err)
 	}
 
@@ -2268,7 +2269,13 @@ func TestRoleGrantsCannotExceedTheCallersOwnAuthority(t *testing.T) {
 	}
 	session := func(id uuid.UUID, token string) string {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour') ON CONFLICT DO NOTHING`, id, auth.HashToken(token)); err != nil {
+		// The token is a fixed string, so its hash is the same on every run and
+		// the row can already exist from a previous one. DO NOTHING left that row
+		// in place: an hour later it is expired, this helper reports success, and
+		// the test fails with "invalid session" on a request that has nothing to
+		// do with sessions. Refreshing it is what a function called session means.
+		if _, err := pool.Exec(ctx, `INSERT INTO user_sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+interval '1 hour')
+			ON CONFLICT(token_hash) DO UPDATE SET user_id=excluded.user_id,expires_at=excluded.expires_at`, id, auth.HashToken(token)); err != nil {
 			t.Fatalf("create a session: %v", err)
 		}
 		return token

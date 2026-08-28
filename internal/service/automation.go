@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -433,13 +432,13 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 	}
 	payload := map[string]any{"source": "Momento", "report_id": delivery.ReportID, "site_id": delivery.SiteKey, "name": delivery.Name, "kind": delivery.ReportKind, "environment": environment, "from": from, "to": to, "generated_at": time.Now().UTC(), "data": data}
 	if delivery.ChannelType == "confluence" {
-		raw, _ := json.MarshalIndent(payload, "", "  ")
 		title, _ := definition["page_title"].(string)
 		spaceKey, _ := definition["space_key"].(string)
 		if title == "" {
 			title = "Momento - " + delivery.Name + " - " + time.Now().Format("2006-01-02")
 		}
-		payload = map[string]any{"type": "page", "title": title, "space": map[string]any{"key": spaceKey}, "body": map[string]any{"storage": map[string]any{"value": "<h2>Momento Analytics</h2><pre>" + html.EscapeString(string(raw)) + "</pre>", "representation": "storage"}}}
+		payload = map[string]any{"type": "page", "title": title, "space": map[string]any{"key": spaceKey},
+			"body": map[string]any{"storage": map[string]any{"value": confluenceBody(payload), "representation": "storage"}}}
 	}
 	return payload, nil
 }

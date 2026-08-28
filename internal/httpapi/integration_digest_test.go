@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -340,6 +341,48 @@ func TestTheScheduledDigestsCarryTheWholeReport(t *testing.T) {
 					t.Errorf("insight %d %s: the digest says %v and the screen says %v", index, field, saidItem[field], shownItem[field])
 				}
 			}
+		}
+	})
+
+	t.Run("a Confluence delivery publishes a page, not a JSON document", func(t *testing.T) {
+		// The one channel whose rendering Momento owns. A webhook hands the
+		// payload to something else; a Confluence page is the finished artefact a
+		// team reads, and it was the payload in a <pre> block.
+		channel := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/delivery-channels",
+			fmt.Sprintf(`{"name":"confluence","channel_type":"confluence","endpoint_url":"%s","headers":{},"active":true}`, target.URL))
+		confluenceChannel, _ := channel["id"].(string)
+		report := f.do(t, http.MethodPost, "/api/v1/sites/"+f.siteKey+"/scheduled-reports",
+			fmt.Sprintf(`{"channel_id":"%s","name":"주간 개요","report_kind":"insights","interval_minutes":10080,"definition":{"environment":"prd","days":7,"space_key":"ANALYTICS"},"enabled":true}`, confluenceChannel))
+		id, _ := report["id"].(string)
+		if err := automation.RunByID(ctx, uuid.MustParse(id)); err != nil {
+			t.Fatalf("confluence delivery: %v", err)
+		}
+		var payload map[string]any
+		select {
+		case payload = <-received:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the confluence delivery never arrived")
+		}
+		if payload["type"] != "page" {
+			t.Fatalf("the delivery is not a page: %v", payload)
+		}
+		body, _ := payload["body"].(map[string]any)
+		storage, _ := body["storage"].(map[string]any)
+		value, _ := storage["value"].(string)
+		if value == "" {
+			t.Fatalf("the page has no body: %v", payload)
+		}
+		if !strings.Contains(value, "<table>") {
+			t.Errorf("the published page has no table in it, so it is still a document to be read as data:\n%s", truncateBody(value))
+		}
+		for _, want := range []string{"이번 기간", "이전 기간", "변화", "사용자"} {
+			if !strings.Contains(value, want) {
+				t.Errorf("the published page does not show %q:\n%s", want, truncateBody(value))
+			}
+		}
+		// And it still carries everything a webhook would have sent.
+		if !strings.Contains(value, `ac:name="expand"`) {
+			t.Errorf("the page does not attach the original document:\n%s", truncateBody(value))
 		}
 	})
 }

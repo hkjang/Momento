@@ -154,6 +154,19 @@ func TestEndpointLatencyUnderLoad(t *testing.T) {
 	pool := loadPool(t)
 	f := seed(t, pool)
 	seedLoad(t, pool, f)
+	// A site refuses a range wider than its query policy, and the default is 180
+	// days. Two probes here ask for a year, so for as long as this harness has
+	// existed they measured a 400 in two milliseconds and reported it — on an
+	// opt-in test nobody runs on a push, which is why it stayed that way.
+	//
+	// A year-wide cohort is what an administrator who raises the limit runs, and
+	// it is exactly the read whose latency matters most, so the limit is raised
+	// here rather than the probes narrowed. The policy itself is guarded
+	// elsewhere; this harness measures how long the report takes.
+	if _, err := pool.Exec(context.Background(), `INSERT INTO query_policies(site_id,max_exact_days) VALUES($1,3650)
+		ON CONFLICT(site_id) DO UPDATE SET max_exact_days=3650`, f.siteID); err != nil {
+		t.Fatalf("raise the query policy for the load site: %v", err)
+	}
 
 	from, today := f.siteDates(t, 30)
 	long := f.siteDate(t, -90)
