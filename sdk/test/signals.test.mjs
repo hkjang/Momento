@@ -561,3 +561,54 @@ test("한 페이지가 보고하는 신호에는 상한이 있고, 그 상한은
     "라우트가 바뀐 뒤에도 신호가 나가지 않습니다: 상한이 페이지당이 아니라 세션당이 되어, 긴 방문의 나머지가 통째로 조용해집니다",
   );
 });
+
+test("스크롤·포커스 이동·텍스트 선택은 그 클릭이 무언가 했다는 뜻이다", async () => {
+  // dead click 판정은 다섯 가지를 "무언가 일어났다"로 봅니다: DOM 변경, 주소
+  // 변경, 스크롤, 포커스 이동, 텍스트 선택. 앞의 둘만 검사되고 있었습니다.
+  //
+  // 이 셋이 중요한 이유는 각각이 **클릭이 실제로 일한 방식**이기 때문입니다.
+  // 억제 조건 하나가 깨지면 멀쩡히 동작하는 버튼이 dead click으로 보고되고,
+  // 그 숫자는 Frustration 점수와 "먼저 고칠 것" 권고로 들어갑니다 — 팀은
+  // 고장나지 않은 버튼을 고치러 갑니다.
+  const { deliveries, documentElement } = harness();
+  const tracker = start();
+
+  const scrolled = el("div", { id: "scrolled", cursor: "pointer" });
+  const focused = el("div", { id: "focused", cursor: "pointer" });
+  const selected = el("div", { id: "selected", cursor: "pointer" });
+  const inert = el("div", { id: "inert", cursor: "pointer" });
+  documentElement.append(scrolled, focused, selected, inert);
+
+  // 클릭이 페이지를 스크롤시켰다.
+  dispatch("click", { target: scrolled });
+  setGlobal("scrollY", 400);
+  await wait(1400);
+  setGlobal("scrollY", 0);
+
+  // 클릭이 포커스를 옮겼다 — 입력란을 여는 버튼이 하는 일입니다.
+  dispatch("click", { target: focused });
+  document.activeElement = el("input", { id: "search-box" });
+  await wait(1400);
+  document.activeElement = null;
+
+  // 클릭이 텍스트를 선택했다.
+  const realSelection = globalThis.getSelection;
+  dispatch("click", { target: selected });
+  setGlobal("getSelection", () => ({ toString: () => "선택된 문장" }));
+  await wait(1400);
+  setGlobal("getSelection", realSelection);
+
+  // 그리고 아무것도 하지 않은 클릭 하나 — 이게 없으면 이 테스트는 dead click
+  // 자체가 꺼져 있어도 통과합니다.
+  dispatch("click", { target: inert });
+  await wait(1400);
+
+  const dead = (await events(tracker, deliveries)).filter(
+    (event) => event.name === "dead_click",
+  );
+  assert.deepEqual(
+    dead.map((event) => event.properties.element_id),
+    ["inert"],
+    `동작한 클릭이 dead click으로 보고되었습니다: ${dead.map((e) => e.properties.element_id).join(", ")}`,
+  );
+});
