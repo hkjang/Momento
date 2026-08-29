@@ -952,9 +952,10 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 		var occurred, received time.Time
 		var name, visitor, session, traffic, environment string
 		var contractVersion int
-		// network_name is null for anything arriving from outside a named
-		// internal network, which is most events. Scanning it into a string
-		// failed on every one of those rows — and the failure was dropped, so the
+		// page_url, client_ip and network_name are all nullable here: the first
+		// two for any event that did not carry them, and network_name for every
+		// row written by anything other than the collector. Scanning them into
+		// strings failed on those rows — and the failure was dropped, so the
 		// debugger an operator opens to watch events arrive silently omitted
 		// them, or showed nothing at all.
 		var page, ip, network *string

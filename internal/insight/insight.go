@@ -815,7 +815,13 @@ func (rep Reporter) insightChannelSources(ctx context.Context, siteID uuid.UUID,
 	// single number, made the report read twice as many events as the period it
 	// is about. Two bounded reads answer the same thing, each half the size, and
 	// they run at the same time: 528ms became 192ms over 200,000 events.
-	const grain = `coalesce(source,''),coalesce(medium,''),coalesce(referrer,'')<>'',coalesce(network_name,'')<>''`
+	// is_internal, not "does this row carry a network name". The collector writes
+	// a name for every event — "External / Unclassified" when the address matches
+	// no configured range — so the old test was true for everything that ever
+	// arrived through the tracker, and every direct visit was reported as having
+	// come from the corporate network. On this product that is the distinction
+	// the split exists to draw.
+	const grain = `coalesce(source,''),coalesce(medium,''),coalesce(referrer,'')<>'',coalesce(is_internal,false)`
 	type key struct {
 		Source, Medium string
 		HasReferrer    bool
