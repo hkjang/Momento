@@ -163,6 +163,17 @@ export function describeQueryError(
         actions: [{ kind: "link", label: "사이트 설정", to: sites }],
         detail: message,
       };
+    case "RESPONSE_NOT_JSON":
+      return {
+        // The request reached something, and that something was not the service.
+        // Retrying is worth offering because a sign-in redirect in front of the
+        // console clears once the reader signs in again elsewhere.
+        title: "서버가 분석 데이터가 아닌 응답을 보냈습니다",
+        explanation:
+          "요청이 Momento가 아닌 무언가에 닿았습니다. 프록시나 게이트웨이의 오류 페이지, 또는 앞단의 로그인 리디렉션일 수 있습니다. 데이터가 없는 것이 아니라 답이 도착하지 않은 것입니다.",
+        actions: retry.length ? retry : [{ kind: "retry", label: "다시 시도" }],
+        detail: message,
+      };
     case "FORBIDDEN":
       return {
         title: "이 데이터를 볼 권한이 없습니다",

@@ -52,7 +52,8 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   let target = url;
   const method = init?.method || "GET";
   if (method === "GET" && url.includes("/api/v1/sites/")) {
-    const environment = localStorage.getItem("momento:selected-environment") || "prd";
+    const environment =
+      localStorage.getItem("momento:selected-environment") || "prd";
     const parsed = new URL(url, location.origin);
     if (!parsed.searchParams.has("environment"))
       parsed.searchParams.set("environment", environment);
@@ -67,12 +68,34 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   if (response.status === 204) return undefined as T;
-  const body = await response.json().catch(() => ({}));
+  const text = await response.text();
+  let body: { error?: { code?: string; message?: string } } | undefined;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+  }
   if (!response.ok)
     throw new APIError(
       response.status,
       body?.error?.code || "REQUEST_FAILED",
       body?.error?.message || `HTTP ${response.status}`,
+    );
+  // A success whose body is not JSON is not a success.
+  //
+  // This used to fall back to {} for anything unparseable, and return it — so a
+  // 200 carrying an HTML page, which is what a proxy or a sign-in redirect in
+  // front of the service answers with, reached the screen as an object with no
+  // fields in it. Every number read off it was undefined, and the screen drew
+  // the same empty state it draws for a site that has not sent any events.
+  // On-premise is exactly where something sits in front of the service.
+  if (body === undefined)
+    throw new APIError(
+      response.status,
+      "RESPONSE_NOT_JSON",
+      `서버가 JSON이 아닌 응답을 보냈습니다 (${response.status}).`,
     );
   return body as T;
 }
@@ -122,6 +145,7 @@ export function dateRangeValues(days = 30, timezone = "UTC") {
 
 export function rangeQuery(days = 30, timezone = "UTC") {
   const { from, to } = dateRangeValues(days, timezone);
-  const environment = localStorage.getItem("momento:selected-environment") || "prd";
+  const environment =
+    localStorage.getItem("momento:selected-environment") || "prd";
   return `from=${from}&to=${to}&environment=${encodeURIComponent(environment)}`;
 }
