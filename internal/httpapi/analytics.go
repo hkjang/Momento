@@ -582,9 +582,7 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 	// hung page rather than the advice the timeout carries.
 	reportCtx, cancelReport := s.analyticalContext(r)
 	defer cancelReport()
-	var enabled bool
-	if s.DB.QueryRow(reportCtx, `SELECT coalesce((value->>'visitor_profiles')::bool,false) FROM settings WHERE key='privacy'`).Scan(&enabled) != nil || !enabled {
-		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
+	if !s.visitorProfilesGate(w, reportCtx) {
 		return
 	}
 	siteID, err := s.resolveSite(r, "siteID")
@@ -624,9 +622,7 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
-	var enabled bool
-	if s.DB.QueryRow(r.Context(), `SELECT coalesce((value->>'visitor_profiles')::bool,false) FROM settings WHERE key='privacy'`).Scan(&enabled) != nil || !enabled {
-		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
+	if !s.visitorProfilesGate(w, r.Context()) {
 		return
 	}
 	siteID, err := s.resolveSite(r, "siteID")

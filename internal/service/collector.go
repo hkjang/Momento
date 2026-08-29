@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
+	privacypolicy "github.com/hkjang/Momento/internal/privacy"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -193,8 +194,13 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 			}
 		}
 	}
-	var privacy privacyConfig
-	_ = json.Unmarshal(site.PrivacyRaw, &privacy)
+	// A policy that will not parse is not an empty policy. Storing the events
+	// anyway would keep full IP addresses, unmasked query parameters and no PII
+	// detection, and the console would go on showing the policy that was set.
+	privacy, err := privacypolicy.Parse(site.PrivacyRaw)
+	if err != nil {
+		return 0, fmt.Errorf("privacy policy could not be read: %w", err)
+	}
 	privacyBlocked := countPrivacyBlocked(req, privacy.BlockedProperties)
 	identifiedBefore := strings.TrimSpace(req.UserID) != ""
 	piiDetected, piiKinds := protectPII(&req, privacy.PIIDetectionMode)
@@ -294,16 +300,10 @@ func originAllowed(origin string, allowed []string) bool {
 	return false
 }
 
-type privacyConfig struct {
-	IPAnonymization   bool     `json:"ip_anonymization"`
-	CollectUserAgent  bool     `json:"collect_user_agent"`
-	StripQueryString  bool     `json:"strip_query_string"`
-	MaskedParameters  []string `json:"masked_parameters"`
-	CollectUserID     bool     `json:"collect_user_id"`
-	DoNotTrack        bool     `json:"do_not_track"`
-	BlockedProperties []string `json:"blocked_properties"`
-	PIIDetectionMode  string   `json:"pii_detection_mode"`
-}
+// privacyConfig is the shared policy. It carries the shipped defaults for every
+// field the stored settings row does not name, which is the opposite of what a
+// zero value would say for all of them.
+type privacyConfig = privacypolicy.Policy
 
 type Worker struct {
 	DB *pgxpool.Pool
@@ -362,10 +362,9 @@ func (w Worker) processBatch(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	var privacy privacyConfig
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='privacy'`).Scan(&raw); err == nil {
-		_ = json.Unmarshal(raw, &privacy)
+	privacy, err := privacypolicy.Load(ctx, tx)
+	if err != nil {
+		return err
 	}
 	for _, job := range jobs {
 		if _, err := tx.Exec(ctx, `SAVEPOINT momento_inbox_job`); err != nil {
@@ -1344,10 +1343,11 @@ func (w Worker) cleanupOnce(ctx context.Context) (map[string]int64, error) {
 		}
 		return err
 	}
-	var months, debugDays int
-	if err := w.DB.QueryRow(ctx, `SELECT coalesce((value->>'raw_event_retention_months')::int,13),coalesce((value->>'debug_retention_days')::int,7) FROM settings WHERE key='privacy'`).Scan(&months, &debugDays); err != nil {
+	policy, err := privacypolicy.Load(ctx, w.DB)
+	if err != nil {
 		return removed, err
 	}
+	months, debugDays := policy.RawEventRetentionMonths, policy.DebugRetentionDays
 	if months < 1 {
 		months = 1
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
+	privacypolicy "github.com/hkjang/Momento/internal/privacy"
 	"github.com/hkjang/Momento/internal/secret"
 	"github.com/hkjang/Momento/internal/service"
 	"github.com/hkjang/Momento/internal/version"
@@ -403,8 +404,12 @@ func (s *Server) collect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Header.Get("DNT") == "1" {
-		var enabled bool
-		if s.DB.QueryRow(r.Context(), `SELECT coalesce((value->>'do_not_track')::bool,false) FROM settings WHERE key='privacy'`).Scan(&enabled) == nil && enabled {
+		// The reader asked not to be tracked. A policy this cannot read is not a
+		// policy that says to ignore them: the shipped setting honours the
+		// header, and a failed settings read used to be the one case that
+		// collected the events anyway.
+		policy, policyErr := privacypolicy.Load(r.Context(), s.DB)
+		if policyErr != nil || policy.DoNotTrack {
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": 0, "reason": "CONSENT_DENIED"})
 			return
 		}

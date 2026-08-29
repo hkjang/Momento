@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net"
@@ -570,6 +571,30 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_SETTING", err.Error())
 		return
 	}
+	// A write names the fields it changes. It used to replace the whole group,
+	// so a caller that sent four privacy fields silently dropped the masked
+	// parameters, the blocked properties and the PII mode — and a stored field
+	// that is gone reads as "off" everywhere downstream. Merging keeps a full
+	// write identical and makes a partial one safe.
+	var stored map[string]any
+	var storedRaw []byte
+	if err := s.DB.QueryRow(r.Context(), `SELECT value FROM settings WHERE key=$1`, key).Scan(&storedRaw); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 500, "SETTING_READ_FAILED", err.Error())
+		return
+	}
+	if len(storedRaw) > 0 {
+		if err := json.Unmarshal(storedRaw, &stored); err != nil {
+			writeError(w, 500, "SETTING_READ_FAILED", err.Error())
+			return
+		}
+	}
+	if stored == nil {
+		stored = map[string]any{}
+	}
+	for name, field := range value {
+		stored[name] = field
+	}
+	value = stored
 	body, _ := json.Marshal(value)
 	_, err := s.DB.Exec(r.Context(), `INSERT INTO settings(key,value,updated_by,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_by=excluded.updated_by,updated_at=now()`, key, body, p.ID)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/insight"
+	privacypolicy "github.com/hkjang/Momento/internal/privacy"
 	"github.com/hkjang/Momento/internal/version"
 )
 
@@ -257,8 +258,12 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		body, _ := json.MarshalIndent(map[string]any{"revenue": revenue, "refunds": refunds, "net_revenue": revenue - refunds, "transactions": transactions, "buyers": buyers, "average_order_value": aov, "purchase_conversion_rate": rate}, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
 	case "query_identity_graph":
-		var profiles bool
-		if err := s.DB.QueryRow(r.Context(), `SELECT coalesce((value->>'visitor_profiles')::bool,false) FROM settings WHERE key='privacy'`).Scan(&profiles); err != nil || !profiles {
+		policy, policyErr := privacypolicy.Load(r.Context(), s.DB)
+		if policyErr != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(policyErr), true)))
+			return
+		}
+		if !policy.VisitorProfiles {
 			writeJSON(w, 200, rpcResult(req.ID, mcpText("Visitor Explorer is disabled by the privacy policy", true)))
 			return
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/insight"
+	privacypolicy "github.com/hkjang/Momento/internal/privacy"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -24,12 +25,22 @@ import (
 
 const timelineEventLimit = 200
 
-func (s *Server) visitorProfilesEnabled(ctx context.Context) bool {
-	var enabled bool
-	if err := s.DB.QueryRow(ctx, `SELECT coalesce((value->>'visitor_profiles')::boolean,true) FROM settings WHERE key='privacy'`).Scan(&enabled); err != nil {
+// visitorProfilesGate answers whether Visitor Explorer is allowed, and says so
+// separately from failing to find out. This screen and the profile list beside
+// it once read the same setting with opposite defaults, so a policy that did not
+// name the field left the timeline working while the list reported that an
+// administrator had switched the feature off.
+func (s *Server) visitorProfilesGate(w http.ResponseWriter, ctx context.Context) bool {
+	policy, err := privacypolicy.Load(ctx, s.DB)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return false
 	}
-	return enabled
+	if !policy.VisitorProfiles {
+		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
+		return false
+	}
+	return true
 }
 
 type traceSubject struct {
@@ -155,8 +166,7 @@ type traceSession struct {
 // visitorTimeline returns a session-grouped trace of one person or one device.
 func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 	preventCaching(w)
-	if !s.visitorProfilesEnabled(r.Context()) {
-		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
+	if !s.visitorProfilesGate(w, r.Context()) {
 		return
 	}
 	siteID, err := s.resolveSite(r, "siteID")
@@ -534,8 +544,7 @@ func (s *Server) traceOtherSites(ctx context.Context, siteID uuid.UUID, userID s
 // user ID, a department, a page they were on, or an event they triggered.
 func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	preventCaching(w)
-	if !s.visitorProfilesEnabled(r.Context()) {
-		writeError(w, 403, "VISITOR_PROFILES_DISABLED", "Visitor Explorer is disabled by the privacy policy")
+	if !s.visitorProfilesGate(w, r.Context()) {
 		return
 	}
 	siteID, err := s.resolveSite(r, "siteID")

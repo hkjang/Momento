@@ -2400,7 +2400,19 @@ function PrivacyAdmin() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
   if (q.isLoading) return <Loading />;
-  const v = local || q.data?.privacy.value || {};
+  // Every control on this form is a protection, and an empty object draws all of
+  // them switched off — the same picture as an administrator who turned them
+  // off. Saving from that picture used to write it. A policy this screen could
+  // not read is not a policy of no protections.
+  if (q.error) return <ErrorState error={q.error} />;
+  if (!q.data?.privacy) {
+    return (
+      <ErrorState
+        error={new Error("서버가 privacy 설정 그룹을 돌려주지 않았습니다.")}
+      />
+    );
+  }
+  const v = local || q.data.privacy.value || {};
   const set = (k: string, n: unknown) => setLocal({ ...v, [k]: n });
   return (
     <Stack spacing={2}>
