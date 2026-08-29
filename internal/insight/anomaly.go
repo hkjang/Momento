@@ -42,9 +42,15 @@ type Anomaly struct {
 	Severity      string    `json:"severity"`
 	Direction     string    `json:"direction"`
 	Samples       int       `json:"samples"`
-	Weekday       string    `json:"weekday"`
-	Evidence      string    `json:"evidence"`
-	Action        string    `json:"action,omitempty"`
+	// BaselineKind says what the value was actually compared against:
+	// same_weekday, or recent_days when there were not enough of the same weekday
+	// to judge. The evidence sentence used to say "same weekday" either way, so a
+	// reader was told the comparison had been made the way this detector says it
+	// must be made, on the days when it had not.
+	BaselineKind string `json:"baseline_kind"`
+	Weekday      string `json:"weekday"`
+	Evidence     string `json:"evidence"`
+	Action       string `json:"action,omitempty"`
 }
 
 // Detected reports whether the verdict is worth showing to a person.
@@ -63,9 +69,18 @@ var weekdayNames = map[time.Weekday]string{
 	time.Thursday: "목", time.Friday: "금", time.Saturday: "토",
 }
 
+// Which history a verdict was reached against. A service with a weekly rhythm is
+// the reason this detector compares like weekday with like, so the day it cannot
+// is a day its own premise does not hold — and the reader has to be told, because
+// the number looks identical either way.
+const (
+	baselineSameWeekday = "same_weekday"
+	baselineRecentDays  = "recent_days"
+)
+
 // baselineFor collects comparable history for a day: the same weekday first, and
 // recent days only when a weekday baseline is too thin to judge.
-func baselineFor(series []AnomalyPoint, target time.Time) []float64 {
+func baselineFor(series []AnomalyPoint, target time.Time) ([]float64, string) {
 	sameWeekday := []float64{}
 	recent := []float64{}
 	for _, point := range series {
@@ -81,9 +96,9 @@ func baselineFor(series []AnomalyPoint, target time.Time) []float64 {
 		}
 	}
 	if len(sameWeekday) >= minimumBaselineSamples {
-		return sameWeekday
+		return sameWeekday, baselineSameWeekday
 	}
-	return recent
+	return recent, baselineRecentDays
 }
 
 func median(values []float64) float64 {
@@ -127,7 +142,8 @@ func DetectAnomaly(metric AnomalyMetric, series []AnomalyPoint, target time.Time
 		return result
 	}
 	result.Value = value
-	baseline := baselineFor(series, target)
+	baseline, kind := baselineFor(series, target)
+	result.BaselineKind = kind
 	result.Samples = len(baseline)
 	if len(baseline) < minimumBaselineSamples {
 		result.Severity = "insufficient_history"
@@ -163,8 +179,15 @@ func DetectAnomaly(metric AnomalyMetric, series []AnomalyPoint, target time.Time
 	default:
 		result.Severity = "normal"
 	}
-	result.Evidence = fmt.Sprintf("%s(%s) %.0f · 같은 요일 기준선 %.0f · 편차 %.1fσ · %s",
-		target.Format("2006-01-02"), result.Weekday, value, center, result.RobustZ, formatSignedPercent(result.ChangePercent))
+	basis := fmt.Sprintf("같은 요일 %d주 기준선", len(baseline))
+	if kind == baselineRecentDays {
+		// Named for what it is. On an internal service a weekday compared against a
+		// window holding weekends is the comparison this detector exists to avoid,
+		// and the verdict reads the same as any other.
+		basis = fmt.Sprintf("최근 %d일 기준선(같은 요일 표본 부족, 요일 혼합)", len(baseline))
+	}
+	result.Evidence = fmt.Sprintf("%s(%s) %.0f · %s %.0f · 편차 %.1fσ · %s",
+		target.Format("2006-01-02"), result.Weekday, value, basis, center, result.RobustZ, formatSignedPercent(result.ChangePercent))
 	if result.Detected() && result.Severity != "positive" {
 		result.Action = metric.Action
 	}

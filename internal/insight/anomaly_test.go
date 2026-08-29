@@ -2,6 +2,7 @@ package insight
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -205,5 +206,51 @@ func TestWatchedMetricsCoverTheBasics(t *testing.T) {
 		if !keys[want] {
 			t.Fatalf("watch list is missing %q", want)
 		}
+	}
+}
+
+// The detector compares like weekday with like because an internal service has a
+// strong weekly rhythm — its own opening comment says a plain recent-days average
+// produces false alarms. When there are not enough of the same weekday it falls
+// back to that average anyway, which is the right call: some judgement beats none.
+//
+// What was wrong is that the sentence under the verdict said "같은 요일 기준선"
+// either way. A site three weeks old is always on the fallback, so every alert it
+// raised was justified by a comparison it had not made — a Monday held against a
+// window containing weekends, described as a Monday held against Mondays. The
+// number looks the same in both cases, so nothing else could have told the reader.
+func TestTheEvidenceNamesTheBaselineItActuallyUsed(t *testing.T) {
+	t.Parallel()
+
+	target := day("2026-07-27")
+	weekday := weekdaySeries(100, 100)
+	weekday = append(weekday, AnomalyPoint{Date: target, Value: 10})
+	judged := DetectAnomaly(users, weekday, target)
+	if judged.BaselineKind != "same_weekday" {
+		t.Fatalf("baseline kind = %q, want same_weekday when eight Mondays exist", judged.BaselineKind)
+	}
+	if !strings.Contains(judged.Evidence, "같은 요일") {
+		t.Errorf("evidence %q does not say it compared against the same weekday, which is what it did", judged.Evidence)
+	}
+
+	// Ten consecutive days and only two of them Mondays: the fallback.
+	mixed := []AnomalyPoint{}
+	start := day("2026-07-13")
+	for offset := 0; offset < 10; offset++ {
+		mixed = append(mixed, AnomalyPoint{Date: start.AddDate(0, 0, offset), Value: 100})
+	}
+	mixed = append(mixed, AnomalyPoint{Date: target, Value: 10})
+	fellBack := DetectAnomaly(users, mixed, target)
+	if fellBack.BaselineKind != "recent_days" {
+		t.Fatalf("baseline kind = %q, want recent_days when only two Mondays exist", fellBack.BaselineKind)
+	}
+	if strings.Contains(fellBack.Evidence, "같은 요일 기준선") {
+		t.Errorf("evidence %q claims a same-weekday baseline for a verdict reached against mixed weekdays", fellBack.Evidence)
+	}
+	if !strings.Contains(fellBack.Evidence, "최근") {
+		t.Errorf("evidence %q does not say which days it compared against", fellBack.Evidence)
+	}
+	if !fellBack.Detected() {
+		t.Fatal("the fallback stopped detecting anything, which is a different change from the one being made")
 	}
 }
