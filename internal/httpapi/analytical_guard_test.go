@@ -129,6 +129,30 @@ func TestEveryHeavyReadRunsUnderTheDeadline(t *testing.T) {
 	// twenty-two tools an agent can widen at will, was never looked at by the
 	// test that exists to make sure nothing is unbounded. A rule with a hole in
 	// it reads exactly like a rule.
+	// The rule used to be "reads analytics_events". Nine handlers read the same
+	// data through the tables the view is built from and were never looked at —
+	// the tracking debugger, which sorts every event ever received across every
+	// site to take two hundred; the event catalog, which counts all of raw_events
+	// per definition with no time bound at all; the identity report, the session
+	// report, the path report and the install diagnostics. A rule named after one
+	// relation covers the reads somebody thought of.
+	heavyRead := regexp.MustCompile(`(?i)(?:FROM|JOIN)\s+(analytics_events|raw_events|sessions|visitors|visitor_identities|visitor_sessions|daily_site_metrics|daily_site_visitors|daily_site_sessions)\b`)
+
+	// Two shapes must not carry it, and saying so here is the point: an exemption
+	// nobody wrote down is indistinguishable from a hole.
+	//
+	// The exports stream deliberately — up to a hundred thousand events, with a
+	// note on the last line when they stop early. Twenty-five seconds would cut
+	// a legitimate download and call it a timeout.
+	//
+	// deleteAnalyticsData and executePrivacyRequest destroy data on purpose. A
+	// deadline there aborts a purge partway and leaves an operator to guess how
+	// much of it happened.
+	deliberatelyUnbounded := map[string]bool{
+		"exportEvents":         true,
+		"exportPrivacyRequest": true,
+		"deleteAnalyticsData":  true,
+	}
 	handler := regexp.MustCompile(`func \(s \*Server\) (\w+)\([^)]*w http\.ResponseWriter, r \*http\.Request[^)]*\)`)
 	checked := 0
 	for _, file := range files {
@@ -154,22 +178,25 @@ func TestEveryHeavyReadRunsUnderTheDeadline(t *testing.T) {
 				}
 			}
 			body := strings.Join(lines[index:end+1], "\n")
-			if !strings.Contains(body, "analytics_events") {
+			if !heavyRead.MatchString(body) {
+				continue
+			}
+			if deliberatelyUnbounded[match[1]] {
 				continue
 			}
 			checked++
 			if !strings.Contains(body, "analyticalContext") {
-				t.Errorf("%s:%d %s reads analytics_events without opening an analytical context: a widened range holds a connection until the browser gives up, and the reader gets a hung page instead of the advice the timeout carries",
+				t.Errorf("%s:%d %s reads the event tables without opening an analytical context: a widened range holds a connection until the browser gives up, and the reader gets a hung page instead of the advice the timeout carries",
 					file, index+1, match[1])
 			}
 		}
 	}
 	// The scan has to have found the handlers it is checking. A regexp that stops
 	// matching would report a package where every read is bounded.
-	if checked < 15 {
-		t.Fatalf("only %d handlers were found to read analytics_events, so this proves nothing about the rest", checked)
+	if checked < 20 {
+		t.Fatalf("only %d handlers were found to read the event tables, so this proves nothing about the rest", checked)
 	}
-	t.Logf("checked %d handlers that read analytics_events", checked)
+	t.Logf("checked %d handlers that read the event, session or visitor tables", checked)
 }
 
 // A tool that runs out of time has to say something an agent can act on.

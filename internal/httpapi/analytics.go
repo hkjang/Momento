@@ -622,7 +622,12 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
-	if !s.visitorProfilesGate(w, r.Context()) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
+	if !s.visitorProfilesGate(w, reportCtx) {
 		return
 	}
 	siteID, err := s.resolveSite(r, "siteID")
@@ -630,7 +635,7 @@ func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT i.user_id,count(*),array_agg(i.visitor_id ORDER BY i.first_seen),min(i.first_seen),min(i.linked_at),max(i.last_seen),coalesce(sum(v.event_count),0),coalesce(sum(v.conversion_count),0)
+	rows, err := s.DB.Query(reportCtx, `SELECT i.user_id,count(*),array_agg(i.visitor_id ORDER BY i.first_seen),min(i.first_seen),min(i.linked_at),max(i.last_seen),coalesce(sum(v.event_count),0),coalesce(sum(v.conversion_count),0)
 		FROM visitor_identities i LEFT JOIN visitors v ON v.site_id=i.site_id AND v.visitor_id=i.visitor_id
 		WHERE i.site_id=$1 GROUP BY i.user_id ORDER BY max(i.last_seen) DESC LIMIT 500`, siteID)
 	if err != nil {
@@ -1252,6 +1257,11 @@ func (s *Server) runFunnelContext(ctx context.Context, siteID uuid.UUID, in funn
 }
 
 func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
@@ -1268,7 +1278,7 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeSystem := r.URL.Query().Get("include_system") == "true"
-	rows, err := s.DB.Query(r.Context(), `WITH seq AS (
+	rows, err := s.DB.Query(reportCtx, `WITH seq AS (
 		SELECT session_id,
 			CASE WHEN event_name='page_view' THEN coalesce(nullif(btrim(page_url),''),'(unknown page)') ELSE event_name END node,
 			lead(CASE WHEN event_name='page_view' THEN coalesce(nullif(btrim(page_url),''),'(unknown page)') ELSE event_name END) OVER(PARTITION BY session_id ORDER BY event_timestamp,id) next_node

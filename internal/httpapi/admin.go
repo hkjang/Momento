@@ -940,9 +940,14 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteKey := r.URL.Query().Get("site_id")
-	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class,e.environment,e.contract_version FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.received_at DESC LIMIT 200`, siteKey, p.Role, p.ID)
+	p, _ := auth.FromContext(reportCtx)
+	rows, err := s.DB.Query(reportCtx, `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class,e.environment,e.contract_version FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.received_at DESC LIMIT 200`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -969,7 +974,7 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, listErr)
 		return
 	}
-	errorRows, err := s.DB.Query(r.Context(), `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
+	errorRows, err := s.DB.Query(reportCtx, `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return

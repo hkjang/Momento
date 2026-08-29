@@ -702,13 +702,18 @@ func validateCIProperties(properties map[string]any, schemaRaw []byte) []string 
 }
 
 func (s *Server) eventCatalog(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
 	environment := requestEnvironment(r)
-	rows, err := s.DB.Query(r.Context(), `SELECT d.name,d.description,d.owner,d.current_version,d.deprecated,v.schema,min(e.event_timestamp),max(e.event_timestamp),count(e.event_id),count(*) FILTER(WHERE e.event_timestamp>=now()-interval '30 days'),
+	rows, err := s.DB.Query(reportCtx, `SELECT d.name,d.description,d.owner,d.current_version,d.deprecated,v.schema,min(e.event_timestamp),max(e.event_timestamp),count(e.event_id),count(*) FILTER(WHERE e.event_timestamp>=now()-interval '30 days'),
 		(SELECT count(*) FROM semantic_metrics m WHERE m.site_id=d.site_id AND m.definition::text LIKE '%'||d.name||'%'),
 		(SELECT count(*) FROM metric_goals g WHERE g.site_id=d.site_id AND g.metric_name IN (SELECT name FROM semantic_metrics m WHERE m.site_id=d.site_id AND m.definition::text LIKE '%'||d.name||'%'))
 		FROM event_definitions d JOIN event_contract_versions v ON v.site_id=d.site_id AND v.event_name=d.name AND v.version=d.current_version

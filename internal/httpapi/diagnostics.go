@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -22,6 +23,11 @@ type diagnosticCheck struct {
 // common cause is the measured application blocking the collector with its own
 // Content-Security-Policy, so the report always carries the exact policy to add.
 func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
+	// Every heavy read runs under the analytical deadline. Without it a widened
+	// range holds a connection until the browser gives up, and the reader sees a
+	// hung page rather than the advice the timeout carries.
+	reportCtx, cancelReport := s.analyticalContext(r)
+	defer cancelReport()
 	preventCaching(w)
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
@@ -33,12 +39,12 @@ func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
 	var domains []string
 	var active bool
 	var trackingSecret, serverSecret *string
-	if s.DB.QueryRow(r.Context(), `SELECT site_key,name,allowed_domains,active,tracking_key_secret,server_api_key_secret FROM sites WHERE id=$1`, siteID).
+	if s.DB.QueryRow(reportCtx, `SELECT site_key,name,allowed_domains,active,tracking_key_secret,server_api_key_secret FROM sites WHERE id=$1`, siteID).
 		Scan(&siteKey, &name, &domains, &active, &trackingSecret, &serverSecret) != nil {
 		writeError(w, 404, "UNKNOWN_SITE", "site not found")
 		return
 	}
-	endpoint := s.publicURL(r.Context(), r)
+	endpoint := s.publicURL(reportCtx, r)
 
 	// This screen diagnoses a site's collection, and every check below is derived
 	// from these four reads. A discarded failure does not leave a figure blank —
@@ -47,7 +53,7 @@ func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
 	// screen whose own query broke, and goes to look at the tracker.
 	var lastEvent *time.Time
 	var events24h, events1h, visitors24h, environments int64
-	if err := s.DB.QueryRow(r.Context(), `SELECT max(received_at),
+	if err := s.DB.QueryRow(reportCtx, `SELECT max(received_at),
 		count(*) FILTER(WHERE received_at>now()-interval '24 hours'),
 		count(*) FILTER(WHERE received_at>now()-interval '1 hour'),
 		count(DISTINCT visitor_id) FILTER(WHERE received_at>now()-interval '24 hours'),
@@ -57,21 +63,21 @@ func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var environmentEvents int64
-	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM raw_events WHERE site_id=$1 AND environment=$2 AND received_at>now()-interval '24 hours'`, siteID, environment).Scan(&environmentEvents); err != nil {
+	if err := s.DB.QueryRow(reportCtx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND environment=$2 AND received_at>now()-interval '24 hours'`, siteID, environment).Scan(&environmentEvents); err != nil {
 		writeQueryError(w, err)
 		return
 	}
 	var pending, stalled, deadLetters int64
-	if err := s.DB.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER(WHERE created_at<now()-interval '5 minutes') FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &stalled); err != nil {
+	if err := s.DB.QueryRow(reportCtx, `SELECT count(*),count(*) FILTER(WHERE created_at<now()-interval '5 minutes') FROM event_inbox WHERE site_id=$1 AND processed_at IS NULL`, siteID).Scan(&pending, &stalled); err != nil {
 		writeQueryError(w, err)
 		return
 	}
-	if err := s.DB.QueryRow(r.Context(), `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at>now()-interval '24 hours'`, siteID).Scan(&deadLetters); err != nil {
+	if err := s.DB.QueryRow(reportCtx, `SELECT count(*) FROM event_dead_letters WHERE site_id=$1 AND failed_at>now()-interval '24 hours'`, siteID).Scan(&deadLetters); err != nil {
 		writeQueryError(w, err)
 		return
 	}
 
-	observed := s.observedOrigins(r, siteID)
+	observed := s.observedOrigins(reportCtx, siteID)
 	unlisted := unlistedOrigins(observed, domains)
 	guidance := cspGuidance(endpoint)
 
@@ -151,8 +157,8 @@ func (s *Server) installDiagnostics(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) observedOrigins(r *http.Request, siteID uuid.UUID) []string {
-	rows, err := s.DB.Query(r.Context(), `SELECT DISTINCT page_url FROM raw_events WHERE site_id=$1 AND page_url IS NOT NULL AND received_at>now()-interval '24 hours' LIMIT 500`, siteID)
+func (s *Server) observedOrigins(ctx context.Context, siteID uuid.UUID) []string {
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT page_url FROM raw_events WHERE site_id=$1 AND page_url IS NOT NULL AND received_at>now()-interval '24 hours' LIMIT 500`, siteID)
 	if err != nil {
 		return []string{}
 	}
