@@ -836,6 +836,23 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"columns": columns, "rows": result, "environment": in.Environment, "query": plan})
 }
 
+// exportRowLimit is how many events one export carries. A reader who receives
+// exactly this many has no way to know whether that was all of them, so the file
+// says so on its last line.
+const exportRowLimit = 100000
+
+// exportEnded writes the last line of an export when it did not simply run out
+// of rows.
+//
+// The header goes out with the first row, so a failure halfway through cannot
+// become a 4xx — the response is already a 200 and already a download. What it
+// can do is be visible. Without this the file just stopped: a short CSV that
+// opens cleanly, with no row missing that anybody could point at, standing in
+// for a period that was never fully read.
+func exportNote(reason string) []string {
+	return []string{"#momento", reason}
+}
+
 func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
@@ -847,7 +864,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		writeRangeError(w, err)
 		return
 	}
-	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_timestamp,event_name,visitor_id,session_id,user_id,page_url,source,medium,campaign,device_type,browser,network_name,properties,environment,contract_version FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 ORDER BY event_timestamp LIMIT 100000`, siteID, from, to, requestEnvironment(r))
+	rows, err := s.DB.Query(r.Context(), `SELECT event_id,event_timestamp,event_name,visitor_id,session_id,user_id,page_url,source,medium,campaign,device_type,browser,network_name,properties,environment,contract_version FROM raw_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 ORDER BY event_timestamp LIMIT `+strconv.Itoa(exportRowLimit), siteID, from, to, requestEnvironment(r))
 	if err != nil {
 		writeError(w, 500, "EXPORT_FAILED", err.Error())
 		return
@@ -858,6 +875,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("Content-Disposition", `attachment; filename="momento-events.ndjson"`)
 		enc := json.NewEncoder(w)
+		written := 0
 		for rows.Next() {
 			vals, _ := rows.Values()
 			properties := vals[13]
@@ -865,12 +883,17 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 				properties = json.RawMessage(raw)
 			}
 			_ = enc.Encode(map[string]any{"event_id": exportUUID(vals[0]), "timestamp": vals[1], "event_name": vals[2], "visitor_id": vals[3], "session_id": vals[4], "user_id": vals[5], "page_url": vals[6], "source": vals[7], "medium": vals[8], "campaign": vals[9], "device_type": vals[10], "browser": vals[11], "network": vals[12], "properties": properties, "environment": vals[14], "contract_version": vals[15]})
+			written++
+		}
+		if note := exportOutcome(rows.Err(), written); note != "" {
+			_ = enc.Encode(map[string]any{"momento_export": note})
 		}
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="momento-events.csv"`)
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+	written := 0
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"event_id", "timestamp", "event_name", "visitor_id", "session_id", "user_id", "page_url", "source", "medium", "campaign", "device_type", "browser", "network", "properties", "environment", "contract_version"})
 	for rows.Next() {
@@ -891,8 +914,34 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_ = cw.Write(record)
+		written++
+	}
+	if note := exportOutcome(rows.Err(), written); note != "" {
+		_ = cw.Write(exportNote(note))
 	}
 	cw.Flush()
+	if err := cw.Error(); err != nil {
+		s.Logger.Error("export truncated while writing", "error", err, "rows", written)
+	}
+}
+
+// exportOutcome says why an export stopped, when the reason is not "there were
+// no more events".
+//
+// Two ways a file ends short and looks whole. The read can fail partway, which
+// the loop above cannot report because the response is already a 200 with rows
+// in it. And the row limit can be reached, which is not a failure at all — but a
+// reader holding exactly the limit has no way to tell a complete export from a
+// cut one, and the difference is a period they think they have.
+func exportOutcome(err error, written int) string {
+	if err != nil {
+		return "export stopped after " + strconv.Itoa(written) + " events and did not finish: " + err.Error()
+	}
+	if written >= exportRowLimit {
+		return "export reached its limit of " + strconv.Itoa(exportRowLimit) +
+			" events, so this is not the whole period. Narrow the range and export again."
+	}
+	return ""
 }
 func exportUUID(value any) any {
 	switch current := value.(type) {
