@@ -576,7 +576,9 @@ func (s *Server) evaluateSemanticMetric(r *http.Request, siteID uuid.UUID, envir
 	}
 	if def.TrafficClass != "" {
 		args = append(args, def.TrafficClass)
-		where += fmt.Sprintf(" AND traffic_class=$%d", len(args))
+		// client_class so a saved metric means the same thing either side of
+		// v0.34.33, where traffic_class stopped carrying the network fact.
+		where += fmt.Sprintf(" AND client_class=$%d", len(args))
 	}
 	for _, filter := range def.Filters {
 		args = append(args, filter.Property)

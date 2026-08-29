@@ -65,8 +65,11 @@ var builtinDimensionSQL = map[string]string{
 	"traffic.source":   "%s.source",
 	"traffic.medium":   "%s.medium",
 	"traffic.campaign": "%s.campaign",
-	"traffic.class":    "%s.traffic_class",
-	"network":          "%s.network_name",
+	// client_class, not traffic_class: the stored column carried the network fact
+	// too until v0.34.33, and a saved segment must not change what it selects in
+	// the middle of its own window. The view normalises the history.
+	"traffic.class": "%s.client_class",
+	"network":       "%s.network_name",
 	// Whether the event came from a network an administrator marked internal. The
 	// collector has always recorded this and nothing could read it, so "exclude
 	// our own staff" was expressible only by naming every internal network.

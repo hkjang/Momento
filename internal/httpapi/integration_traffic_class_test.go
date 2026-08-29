@@ -110,3 +110,44 @@ func TestTheTrafficClassDescribesTheClientAndNotTheNetwork(t *testing.T) {
 		t.Error("is_internal no longer records that the visit came from inside")
 	}
 }
+
+// Stopping the overwrite moved the meaning of a saved segment in the middle of
+// its own window: the same employee is internal_traffic before the release and
+// normal after it. A report spanning that date would change its definition
+// halfway through and say nothing about it.
+//
+// client_class is how the analytical surface reads the class, and it reads the
+// same on both sides of the line. An event stored as internal_traffic is an
+// event whose client was never classified as anything else, so it is normal
+// there. raw_events keeps what was written, which is what the debugger shows.
+func TestASavedSegmentMeansTheSameThingEitherSideOfTheChange(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	// An event as it was stored before the change: an ordinary employee inside a
+	// registered network, filed as internal_traffic.
+	historic := uuid.New()
+	if _, err := pool.Exec(ctx, `INSERT INTO raw_events(event_id,site_id,environment,visitor_id,session_id,event_name,event_timestamp,received_at,properties,is_conversion,traffic_class,is_internal)
+		VALUES($1,$2,'prd','historic-employee','session-historic','page_view',now()-interval '2 hours',now(),'{}'::jsonb,false,'internal_traffic',true)`, historic, f.siteID); err != nil {
+		t.Fatalf("store the historic event: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM raw_events WHERE event_id=$1`, historic)
+	})
+
+	var stored, analytical string
+	var internal bool
+	if err := pool.QueryRow(ctx, `SELECT r.traffic_class,a.client_class,a.is_internal FROM raw_events r JOIN analytics_events a ON a.event_id=r.event_id WHERE r.event_id=$1`, historic).Scan(&stored, &analytical, &internal); err != nil {
+		t.Fatalf("read the event back: %v", err)
+	}
+	if stored != "internal_traffic" {
+		t.Fatalf("raw_events no longer keeps what was written (%q), so the tracking debugger would stop showing the truth", stored)
+	}
+	if analytical != "normal" {
+		t.Errorf("an event stored before the change reads as %q on the analytical surface: a segment filtered to traffic.class = normal covers the employee after the release and drops the same employee before it, in one window, with nothing on the screen to say why", analytical)
+	}
+	if !internal {
+		t.Error("the network fact was lost for the historic event")
+	}
+}
