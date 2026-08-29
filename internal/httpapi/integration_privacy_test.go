@@ -167,6 +167,38 @@ func TestPrivacyRequestWorkflow(t *testing.T) {
 		t.Fatalf("export = %d body=%d: %s", recorder.Code, recorder.Body.Len(), recorder.Body.String())
 	}
 
+	// The file declares itself complete, in a header and in the audit record. So
+	// it has to be: this is the answer to somebody asking what is held about
+	// them, and a short one is data withheld from the person who asked.
+	//
+	// It used to be streamed, which meant both claims were written before a
+	// single row had been read and could not be taken back — a read that failed
+	// halfway produced a shorter file that still said it was whole, and a row
+	// that would not decode was skipped with `continue`. Nothing checked the
+	// count, only that the body was not empty.
+	if completeness := recorder.Header().Get("X-Momento-Export-Completeness"); completeness != "complete" {
+		t.Errorf("the export declares itself %q", completeness)
+	}
+	var held int64
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM raw_events
+		WHERE site_id=$1 AND (user_id=$2 OR visitor_id IN (SELECT visitor_id FROM visitor_identities WHERE site_id=$1 AND user_id=$2))`,
+		f.siteID, f.userID).Scan(&held); err != nil {
+		t.Fatalf("count what is held about the person: %v", err)
+	}
+	if held == 0 {
+		t.Fatal("the fixture holds nothing about this person, so an empty export would agree with the database")
+	}
+	lines := 0
+	for _, line := range strings.Split(strings.TrimSpace(recorder.Body.String()), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines++
+		}
+	}
+	if int64(lines) != held {
+		t.Errorf("the export carries %d events and the database holds %d for this person: a file that says it is complete and is not is data withheld from somebody who asked for it",
+			lines, held)
+	}
+
 	// A delete request needs an explicit decision before anything is removed.
 	deleteRequest := f.do(t, http.MethodPost, site+"/privacy-requests",
 		fmt.Sprintf(`{"request_type":"delete","identity_type":"visitor_id","identity_value":"visitor-anon","reason":"삭제 요청"}`))

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -920,11 +921,21 @@ func (s *Server) exportPrivacyRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		for rows.Next() {
 			var visitor string
-			if rows.Scan(&visitor) == nil {
-				linked = append(linked, visitor)
+			if scanErr := rows.Scan(&visitor); scanErr != nil {
+				rows.Close()
+				writeError(w, 500, "EXPORT_FAILED", scanErr.Error())
+				return
 			}
+			linked = append(linked, visitor)
 		}
+		scanErr := rows.Err()
 		rows.Close()
+		// A device missed here is a device missing from the export, and the file
+		// would still have said it was complete.
+		if scanErr != nil {
+			writeError(w, 500, "EXPORT_FAILED", scanErr.Error())
+			return
+		}
 	}
 	var from, to time.Time
 	if fromDate != nil && toDate != nil {
@@ -941,24 +952,67 @@ func (s *Server) exportPrivacyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	s.audit(r.Context(), &p, "privacy_request.export", "privacy_request", id.String(), map[string]any{"format": "ndjson", "complete": true}, clientIP(r))
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="momento-privacy-%s.ndjson"`, id.String()))
-	w.Header().Set("X-Momento-Export-Completeness", "complete")
-	encoder := json.NewEncoder(w)
+
+	// Built before any of it is sent, because of what this file is.
+	//
+	// It is the answer to a person asking what is held about them, and it used to
+	// stream — which meant the completeness header and the audit record saying
+	// "complete": true were both written before a single row had been read, and
+	// could not be taken back. A read that failed halfway produced a shorter file
+	// that still declared itself whole, and a row that would not decode was
+	// skipped with `continue`: data withheld from the person who asked for it,
+	// with nothing anywhere saying so.
+	//
+	// So it is complete or it is refused. An export that cannot be finished is an
+	// error an operator can act on; a file that quietly answers less than the
+	// question is not.
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	exported := 0
 	for rows.Next() {
 		values, scanErr := rows.Values()
 		if scanErr != nil {
-			continue
+			writeError(w, 500, "EXPORT_FAILED", scanErr.Error())
+			return
 		}
 		for _, index := range []int{18, 19, 20} {
 			if raw, ok := values[index].([]byte); ok {
 				values[index] = json.RawMessage(raw)
 			}
 		}
-		_ = encoder.Encode(map[string]any{"event_id": exportUUID(values[0]), "timestamp": values[1], "event_name": values[2], "visitor_id": values[3], "session_id": values[4], "user_id": values[5], "page_url": values[6], "page_title": values[7], "referrer": values[8], "source": values[9], "medium": values[10], "campaign": values[11], "device_type": values[12], "browser": values[13], "os": values[14], "language": values[15], "screen": values[16], "network": values[17], "properties": values[18], "user_properties": values[19], "session_properties": values[20], "environment": values[21], "contract_version": values[22]})
+		if encodeErr := encoder.Encode(map[string]any{"event_id": exportUUID(values[0]), "timestamp": values[1], "event_name": values[2], "visitor_id": values[3], "session_id": values[4], "user_id": values[5], "page_url": values[6], "page_title": values[7], "referrer": values[8], "source": values[9], "medium": values[10], "campaign": values[11], "device_type": values[12], "browser": values[13], "os": values[14], "language": values[15], "screen": values[16], "network": values[17], "properties": values[18], "user_properties": values[19], "session_properties": values[20], "environment": values[21], "contract_version": values[22]}); encodeErr != nil {
+			writeError(w, 500, "EXPORT_FAILED", encodeErr.Error())
+			return
+		}
+		exported++
+		if body.Len() > privacyExportMaxBytes {
+			// Refused rather than truncated. The request carries an optional date
+			// range, so narrowing it is a remedy the operator has; a half file
+			// that claims to be whole is not something anybody can act on.
+			writeError(w, 413, "EXPORT_TOO_LARGE",
+				"이 요청의 내보내기가 허용 크기를 넘었습니다. 개인정보 요청에 기간을 지정해 다시 실행하십시오.")
+			return
+		}
 	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "EXPORT_FAILED", err.Error())
+		return
+	}
+
+	s.audit(r.Context(), &p, "privacy_request.export", "privacy_request", id.String(),
+		map[string]any{"format": "ndjson", "complete": true, "events": exported}, clientIP(r))
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="momento-privacy-%s.ndjson"`, id.String()))
+	w.Header().Set("X-Momento-Export-Completeness", "complete")
+	_, _ = w.Write(body.Bytes())
 }
+
+// privacyExportMaxBytes bounds what one subject access export may build in
+// memory. It is generous for one person's events and small enough that a
+// pathological request cannot take the service down — and reaching it is
+// answered with a refusal, since the one thing this file may not be is
+// incomplete without saying so.
+const privacyExportMaxBytes = 64 << 20
 
 func (s *Server) executePrivacyRequest(ctx context.Context, siteID, requestID, approver uuid.UUID) (map[string]any, error) {
 	tx, err := s.DB.Begin(ctx)
@@ -979,11 +1033,20 @@ func (s *Server) executePrivacyRequest(ctx context.Context, siteID, requestID, a
 		}
 		for rows.Next() {
 			var visitor string
-			if rows.Scan(&visitor) == nil {
-				linked = append(linked, visitor)
+			if scanErr := rows.Scan(&visitor); scanErr != nil {
+				rows.Close()
+				return nil, scanErr
 			}
+			linked = append(linked, visitor)
 		}
+		scanErr := rows.Err()
 		rows.Close()
+		// A device missed here is a device this request does not act on, and the
+		// request is marked completed either way. On a deletion that is data the
+		// person asked to have removed, still there, recorded as removed.
+		if scanErr != nil {
+			return nil, scanErr
+		}
 	}
 	mode := map[string]string{"visitor_id": "visitor", "user_id": "user_id", "period": "period"}[identityType]
 	var from, to time.Time
