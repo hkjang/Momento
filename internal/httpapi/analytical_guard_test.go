@@ -121,7 +121,15 @@ func TestEveryHeavyReadRunsUnderTheDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list the package: %v", err)
 	}
-	handler := regexp.MustCompile(`func \(s \*Server\) (\w+)\(w http\.ResponseWriter, r \*http\.Request\) \{`)
+	// Any function that is handed the response writer and the request, however
+	// many other parameters it takes.
+	//
+	// This used to require the signature to end there, and mcpCall takes the
+	// decoded JSON-RPC request as a third parameter — so the entire MCP surface,
+	// twenty-two tools an agent can widen at will, was never looked at by the
+	// test that exists to make sure nothing is unbounded. A rule with a hole in
+	// it reads exactly like a rule.
+	handler := regexp.MustCompile(`func \(s \*Server\) (\w+)\([^)]*w http\.ResponseWriter, r \*http\.Request[^)]*\)`)
 	checked := 0
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {
@@ -162,4 +170,31 @@ func TestEveryHeavyReadRunsUnderTheDeadline(t *testing.T) {
 		t.Fatalf("only %d handlers were found to read analytics_events, so this proves nothing about the rest", checked)
 	}
 	t.Logf("checked %d handlers that read analytics_events", checked)
+}
+
+// A tool that runs out of time has to say something an agent can act on.
+//
+// The MCP surface answered the driver's own words, so a read that hit the
+// deadline told an agent "context deadline exceeded". That is not something to
+// act on, and an agent with nothing to act on repeats the call — the same read,
+// the same deadline, on a database that is already busy. The screens answer the
+// same failure with advice: narrow the range, use a segment, have it delivered.
+// An agent can follow every one of those.
+func TestATimedOutToolTellsAnAgentWhatToDo(t *testing.T) {
+	t.Parallel()
+	timedOut := mcpFailure(context.DeadlineExceeded)
+	if !strings.Contains(timedOut, "QUERY_TIMEOUT") {
+		t.Errorf("a tool that ran out of time answers %q, which names no failure an agent can recognise", timedOut)
+	}
+	for _, advice := range []string{"기간", "Segment"} {
+		if !strings.Contains(timedOut, advice) {
+			t.Errorf("the answer does not mention %q: an agent given no action repeats the same call", advice)
+		}
+	}
+	// An error that is not one of the recognised failures keeps its own words
+	// rather than being dressed up as something it is not.
+	plain := mcpFailure(errors.New("semantic metric not found"))
+	if plain != "semantic metric not found" {
+		t.Errorf("an ordinary failure was rewritten as %q", plain)
+	}
 }

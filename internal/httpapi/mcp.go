@@ -71,7 +71,46 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, rpcError(req.ID, -32601, "Method not found"))
 	}
 }
+
+// mcpFailure states a failed tool read the way the screens state it.
+//
+// A tool answered the driver's own words, so a read that ran out of time told an
+// agent "context deadline exceeded" — which is not something to act on, and an
+// agent acting on nothing repeats the same call. The screens answer that with
+// the advice attached: narrow the range, use a segment, have it delivered. An
+// agent can follow every one of those, and is in a better position than a person
+// to follow them without being asked twice.
+func mcpFailure(err error) string {
+	_, code, message := queryErrorResponse(err)
+	// QUERY_FAILED is what an unrecognised error becomes, and there is nothing in
+	// it an agent could not already read in the error itself. Dressing "Semantic
+	// metric not found" as a query failure would say something untrue about what
+	// went wrong.
+	if code == "" || code == "QUERY_FAILED" {
+		return err.Error()
+	}
+	return code + ": " + message
+}
+
 func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest) {
+	// Every tool runs under the analytical deadline.
+	//
+	// Twenty-two of them, each with its own query, called by an agent that
+	// chooses the range and the cut — the most freely widened surface in the
+	// product, and the one where nobody is watching a spinner and giving up.
+	// Seven take no range at all and read a site's whole history.
+	//
+	// It was unbounded, and the test that holds every heavy read to the deadline
+	// never looked: it matched handlers shaped (w, r), and this one takes the
+	// decoded JSON-RPC request as a third parameter. A rule with a hole in it
+	// reads exactly like a rule.
+	//
+	// The context goes onto the request rather than into a variable, because the
+	// tools reach the database through helpers that take *http.Request and read
+	// r.Context() themselves.
+	analytical, cancel := s.analyticalContext(r)
+	defer cancel()
+	r = r.WithContext(analytical)
 	var call struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
@@ -91,7 +130,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		var rangeErr error
 		from, to, rangeErr = s.explicitDateRange(r.Context(), siteID, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to"))
 		if rangeErr != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(rangeErr.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(rangeErr), true)))
 			return
 		}
 	}
@@ -99,7 +138,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 	case "query_metrics":
 		m, err := s.metrics(r, siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(metricMap(m), "", "  ")
@@ -108,13 +147,13 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
 		_, location, tzErr := s.siteTimezone(r.Context(), siteID)
 		if tzErr != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(tzErr.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(tzErr), true)))
 			return
 		}
 		previousFrom, previousTo := previousDateRange(from, to, location)
 		report, err := insight.New(s.DB).Build(r.Context(), siteID, environment, from, to, previousFrom, previousTo)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(report, "", "  ")
@@ -122,12 +161,12 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 	case "detect_anomalies":
 		_, location, tzErr := s.siteTimezone(r.Context(), siteID)
 		if tzErr != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(tzErr.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(tzErr), true)))
 			return
 		}
 		report, err := insight.New(s.DB).DetectSiteAnomalies(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), location)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(report, "", "  ")
@@ -160,7 +199,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			From: from, To: to, LookbackDays: lookback, Model: model, HalfLifeDays: halfLife, Scope: scope,
 		})
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(report, "", "  ")
@@ -180,7 +219,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		sql += ` GROUP BY 1 ORDER BY 2 DESC LIMIT 20`
 		rows, err := s.DB.Query(r.Context(), sql, siteID, from, to, stringArgDefault(call.Arguments, "environment", "prd"))
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -199,7 +238,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		var revenue, refunds float64
 		err := s.DB.QueryRow(r.Context(), `WITH base AS (SELECT *,entity_id entity FROM analytics_events WHERE site_id=$1 AND event_timestamp >= $2 AND event_timestamp < $3 AND environment=$4) SELECT count(DISTINCT entity),count(DISTINCT entity) FILTER(WHERE event_name='purchase'),count(DISTINCT coalesce(properties->>'transaction_id',properties->>'order_id',event_id::text)) FILTER(WHERE event_name='purchase'),`+insight.RevenueAmountSQL("")+`::double precision,coalesce(sum(CASE WHEN event_name='refund' AND coalesce(properties->>'value',properties->>'revenue','') ~ '^-?[0-9]+(\.[0-9]+)?$' THEN coalesce(properties->>'value',properties->>'revenue')::numeric ELSE 0 END),0)::double precision FROM base`, siteID, from, to, stringArgDefault(call.Arguments, "environment", "prd")).Scan(&users, &buyers, &transactions, &revenue, &refunds)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		aov, rate := float64(0), float64(0)
@@ -222,7 +261,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			FROM visitor_identities i LEFT JOIN visitors v ON v.site_id=i.site_id AND v.visitor_id=i.visitor_id
 			WHERE i.site_id=$1 AND ($2='' OR i.user_id=$2) GROUP BY i.user_id ORDER BY max(i.last_seen) DESC LIMIT 500`, siteID, userID)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -242,7 +281,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		p, _ := auth.FromContext(r.Context())
 		rows, err := s.DB.Query(r.Context(), `SELECT name,description,definition,shared FROM segments WHERE site_id=$1 AND (shared OR owner_id=$2 OR $3 IN ('super_admin','organization_admin','workspace_admin')) ORDER BY name`, siteID, p.ID, p.Role)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -262,7 +301,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 	case "list_semantic_metrics":
 		rows, err := s.DB.Query(r.Context(), `SELECT name,label,description,definition,format,unit,definition_version,status FROM semantic_metrics WHERE site_id=$1 ORDER BY name`, siteID)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -290,12 +329,12 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		}
 		var definition semanticDefinition
 		if err := json.Unmarshal(raw, &definition); err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		value, err := s.evaluateSemanticMetric(r, siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to, definition, 1)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(map[string]any{"metric": metric, "label": label, "value": value, "format": format, "unit": unit, "version": version}, "", "  ")
@@ -313,7 +352,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		// cohortMaturity applied. Both come from there now.
 		timezone, _, err := s.siteTimezone(r.Context(), siteID)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		params := cohortParams{
@@ -324,12 +363,12 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		}
 		resolver, err := s.newDimensionResolver(r.Context(), siteID, params.Environment)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		grid, err := s.runCohortGrid(r.Context(), siteID, params, resolver, nil)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		users, curve := pooledRetentionCurve(grid, params.Periods, to, params.Granularity)
@@ -344,7 +383,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		// defect the scheduled digest had, in a third place.
 		rows, err := insight.New(s.DB).Adoption(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to, 100)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(rows, "", "  ")
@@ -356,7 +395,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		// screen's impact block and the scheduled digest.
 		summary, err := insight.New(s.DB).Experience(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(summary, "", "  ")
@@ -368,7 +407,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		out, err := s.aiOperationRows(r.Context(), siteID, stringArgDefault(call.Arguments, "environment", "prd"),
 			aiOperationDimension(stringArg(call.Arguments, "group_by")), from, to)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
@@ -378,7 +417,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		var received, accepted, duplicates, warnings, rejected, pii, piiDetected, cardinality int64
 		err := s.DB.QueryRow(r.Context(), `SELECT coalesce(sum(received),0),coalesce(sum(accepted),0),coalesce(sum(duplicates),0),coalesce(sum(warnings),0),coalesce(sum(rejected),0),coalesce(sum(pii_blocked),0),coalesce(sum(pii_detected),0),coalesce(sum(cardinality_violations),0) FROM data_quality_daily WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date <= $4::date`, siteID, environment, stringArg(call.Arguments, "from"), stringArg(call.Arguments, "to")).Scan(&received, &accepted, &duplicates, &warnings, &rejected, &pii, &piiDetected, &cardinality)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(map[string]any{"received": received, "accepted": accepted, "duplicates": duplicates, "warnings": warnings, "rejected": rejected, "pii_blocked": pii, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "", "  ")
@@ -386,13 +425,13 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 	case "get_workspace_rollup":
 		var workspaceID uuid.UUID
 		if err := s.DB.QueryRow(r.Context(), `SELECT workspace_id FROM sites WHERE id=$1`, siteID).Scan(&workspaceID); err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
 		rows, err := s.DB.Query(r.Context(), `SELECT s.site_key,s.name,s.service_name,count(e.event_id),count(DISTINCT CASE WHEN e.canonical_user_id IS NOT NULL THEN 'u:'||e.canonical_user_id ELSE 's:'||e.site_id::text||':v:'||e.visitor_id END),count(DISTINCT e.session_id),count(DISTINCT e.entity_id) FILTER(WHERE e.is_conversion) FROM sites s LEFT JOIN analytics_events e ON e.site_id=s.id AND e.environment=$4 AND e.event_timestamp >= $2 AND e.event_timestamp < $3 WHERE s.workspace_id=$1 AND s.active GROUP BY s.id ORDER BY 5 DESC`, workspaceID, from, to, environment)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -410,7 +449,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
 		rows, err := s.DB.Query(r.Context(), `WITH u AS (SELECT properties->>'feature' feature,entity_id,count(*) events,bool_or(is_conversion) converted FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND coalesce(properties->>'feature','')<>'' GROUP BY 1,2) SELECT feature,count(*) users,sum(events),count(*) FILTER(WHERE events>=2),count(*) FILTER(WHERE converted) FROM u GROUP BY feature ORDER BY users DESC LIMIT 100`, siteID, from, to, environment)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -429,7 +468,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		var searches, users, zero, clicks, successes int64
 		err := s.DB.QueryRow(r.Context(), `SELECT count(*) FILTER(WHERE event_name='search'),count(DISTINCT entity_id) FILTER(WHERE event_name='search'),count(*) FILTER(WHERE event_name='search_no_result' OR (event_name='search' AND properties->>'result_count'='0')),count(*) FILTER(WHERE event_name='search_click'),count(*) FILTER(WHERE event_name='search_success') FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3`, siteID, from, to, environment).Scan(&searches, &users, &zero, &clicks, &successes)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(map[string]any{"searches": searches, "users": users, "zero_results": zero, "zero_result_rate": math.Min(100, percent(zero, searches)), "clicks": clicks, "search_ctr": math.Min(100, percent(clicks, searches)), "successes": successes, "success_rate": math.Min(100, percent(successes, searches))}, "", "  ")
@@ -438,7 +477,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
 		rows, err := s.DB.Query(r.Context(), `SELECT event_name,count(*),count(DISTINCT entity_id),count(DISTINCT session_id) FROM analytics_events WHERE site_id=$1 AND environment=$4 AND event_timestamp >= $2 AND event_timestamp < $3 AND event_name=ANY($5) GROUP BY event_name ORDER BY count(*) DESC`, siteID, from, to, environment, frictionSignalNames)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -466,7 +505,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		// goals screen evaluates each one; this answers from the same place.
 		out, err := s.metricGoalEvaluations(r, siteID)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
@@ -475,7 +514,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		environment := stringArgDefault(call.Arguments, "environment", "prd")
 		rows, err := s.DB.Query(r.Context(), `SELECT d.name,d.description,d.owner,d.current_version,d.deprecated,count(e.event_id),max(e.event_timestamp) FROM event_definitions d LEFT JOIN raw_events e ON e.site_id=d.site_id AND e.event_name=d.name AND e.environment=$2 WHERE d.site_id=$1 GROUP BY d.name,d.description,d.owner,d.current_version,d.deprecated ORDER BY d.name`, siteID, environment)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		defer rows.Close()
@@ -498,7 +537,7 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		from := to.AddDate(0, 0, -7)
 		metrics, err := s.platformMetrics(r, siteID, stringArgDefault(call.Arguments, "environment", "prd"), from, to)
 		if err != nil {
-			writeJSON(w, 200, rpcResult(req.ID, mcpText(err.Error(), true)))
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
 			return
 		}
 		answer := fmt.Sprintf("최근 7일 사용자는 %d명, 이벤트는 %d건, 전환은 %d건, 오류는 %d건입니다.", metrics.Users, metrics.Events, metrics.Conversions, metrics.Errors)
