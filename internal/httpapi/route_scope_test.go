@@ -29,17 +29,23 @@ func TestEverySiteRouteAddressedByIDChecksTheWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read server.go: %v", err)
 	}
-	route := regexp.MustCompile(`api\.\w+\("(/api/v1/sites/\{id\}[^"]*)",\s*(.+?)\)\n`)
+	route := regexp.MustCompile(`api\.\w+\("(/api/v1/sites/\{(?:id|siteID)\}[^"]*)",\s*(.+?)\)\n`)
 	handlerName := regexp.MustCompile(`s\.(\w+)\)*\s*$`)
 	matches := route.FindAllStringSubmatch(string(server), -1)
-	if len(matches) < 5 {
-		t.Fatalf("found only %d routes addressed by a site uuid, so this proves nothing about the rest", len(matches))
+	// Six administrative routes and everything analytical under {siteID}. The
+	// six were the ones that went wrong, and they were guarded alone while the
+	// other seventy-odd rested on convention — which is how the six came to be
+	// wrong in the first place.
+	if len(matches) < 50 {
+		t.Fatalf("found only %d routes addressed by a site, so this proves nothing about the rest", len(matches))
 	}
 
 	// One index of the package, so a handler defined anywhere is found.
 	bodies := map[string]string{}
 	files, _ := os.ReadDir(".")
-	definition := regexp.MustCompile(`func \(s \*Server\) (\w+)\(w http\.ResponseWriter, r \*http\.Request\) \{`)
+	// Every method on the server, not only the handlers: the membership rule is
+	// often reached through a helper.
+	definition := regexp.MustCompile(`func \(s \*Server\) (\w+)\(`)
 	for _, file := range files {
 		if !strings.HasSuffix(file.Name(), ".go") || strings.HasSuffix(file.Name(), "_test.go") {
 			continue
@@ -74,14 +80,13 @@ func TestEverySiteRouteAddressedByIDChecksTheWorkspace(t *testing.T) {
 			t.Errorf("%s is wired to %q and this test cannot tell which handler answers it", path, wiring)
 			continue
 		}
-		body, ok := bodies[name[1]]
-		if !ok {
+		if _, ok := bodies[name[1]]; !ok {
 			t.Errorf("%s is wired to %s, which is not a handler in this package", path, name[1])
 			continue
 		}
 		checked++
-		if !strings.Contains(body, "resolveSiteByID") {
-			t.Errorf("%s is answered by %s, which does not resolve the site through resolveSiteByID: the middleware checks that the caller is a workspace_admin somewhere, not that this site is in a workspace they belong to",
+		if !resolves(name[1], bodies, map[string]bool{}) {
+			t.Errorf("%s is answered by %s, which never reaches resolveSite or resolveSiteByID: the middleware checks that the caller is a workspace_admin somewhere, not that this site is in a workspace they belong to",
 				path, name[1])
 		}
 	}
@@ -89,4 +94,35 @@ func TestEverySiteRouteAddressedByIDChecksTheWorkspace(t *testing.T) {
 		t.Fatal("no route was checked")
 	}
 	t.Logf("checked %d routes addressed by a site uuid", checked)
+}
+
+// resolves says whether a handler reaches the membership rule, directly or
+// through something it calls.
+//
+// The rule is not always in the handler: workspaceForSite calls resolveSite and
+// four routes reach it that way, which is right — a helper that resolves the
+// site is the same guarantee, and requiring the call to be inline would push
+// somebody to inline it rather than to keep the check. Following the calls one
+// package deep is what the property actually is.
+func resolves(name string, bodies map[string]string, seen map[string]bool) bool {
+	if seen[name] {
+		return false
+	}
+	seen[name] = true
+	body, ok := bodies[name]
+	if !ok {
+		return false
+	}
+	if strings.Contains(body, "resolveSite(") || strings.Contains(body, "resolveSiteByID(") {
+		return true
+	}
+	for called := range bodies {
+		if called == name {
+			continue
+		}
+		if strings.Contains(body, "s."+called+"(") && resolves(called, bodies, seen) {
+			return true
+		}
+	}
+	return false
 }
