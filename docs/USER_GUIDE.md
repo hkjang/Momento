@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 사용자 가이드 (User Guide & Developer Manual)
 
-- **문서 버전**: v0.34.6
+- **문서 버전**: v0.34.33
 - **대상**: 웹/앱 개발자, 데이터 분석가, 서비스 기획자(PO), BI 엔지니어  
 - **문서 개요**: Momento JavaScript SDK 연동, 이벤트 트래킹 규칙, 방문자 인사이트·추적·이상 감지·기여도, 집단 비교 분석, 정기 배달과 BI 내보내기 실전 매뉴얼  
 
@@ -314,12 +314,15 @@ Collector는 User-Agent로 모든 Event를 분류해 저장합니다.
 | `known_bot` | `bot`, `crawler`, `spider`, `slurp`, `bingpreview`, `headlesschrome` |
 | `monitoring` | `uptime`, `pingdom`, `healthcheck`, `monitoring`, `prometheus` |
 | `suspicious` | User-Agent가 비어 있음 |
-| `internal_traffic` | 관리자가 사내망으로 등록한 네트워크에서 발생 |
 | `normal` | 위에 해당하지 않음 |
+
+`traffic.class`는 **어떤 클라이언트가 보냈는지**만 말합니다. **어느 네트워크에서 왔는지**는 별도 필드 `traffic.internal`이 답합니다. 사내망에서 도는 크롤러는 `known_bot`이면서 `traffic.internal = true`입니다 — 두 사실이 서로를 지우지 않습니다.
+
+> v0.34.33 이전에는 사내망에서 발생한 Event의 분류를 `internal_traffic`이 덮어썼습니다. 그래서 아래 권장 조건이 **사내 사용자 전체를 함께 제외**했고, 사내망 크롤러는 어떤 `traffic.class` 필터로도 찾을 수 없었습니다. 그 이전에 수집된 Event는 저장된 값을 그대로 유지합니다.
 
 **중요: 리포트는 이 분류로 걸러내지 않습니다.** 크롤러와 모니터링 요청도 사용자·세션·페이지뷰에 함께 집계됩니다. 1분마다 페이지를 확인하는 Uptime 감시는 하루 1,440건의 페이지뷰를 더합니다.
 
-제외하려면 Segment 조건 `traffic.class = normal`을 사용하세요. 사내망 트래픽만 제외하려면 `traffic.internal = false`를 사용합니다. 저장한 Segment는 Query·Funnel·Retention·경험 비교에 그대로 넣을 수 있습니다.
+제외하려면 Segment 조건 `traffic.class = normal`을 사용하세요 — 사내 사용자는 그대로 남습니다. 사내망 트래픽만 제외하려면 `traffic.internal = false`를 사용합니다. 저장한 Segment는 Query·Funnel·Retention·경험 비교에 그대로 넣을 수 있습니다.
 
 분류 결과는 사용자 탐색기의 타임라인과 관리자 → 수집 디버거에서 Event별로 확인할 수 있습니다.
 

@@ -447,9 +447,16 @@ func (w Worker) processOne(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, bod
 	} else if knownBotPattern.MatchString(p.UserAgent) {
 		trafficClass = "known_bot"
 	}
-	if internal {
-		trafficClass = "internal_traffic"
-	}
+	// Not overwritten by `internal` any more. traffic_class carried two unrelated
+	// facts — what kind of client sent this, and which network it came from — and
+	// the second erased the first. On an on-premise deployment most traffic is
+	// internal, so the user guide's own advice for dropping an uptime monitor
+	// ("filter to traffic.class = normal") removed the entire workforce, and a
+	// crawler on the intranet was filed as internal traffic rather than as a
+	// crawler, where no filter could reach it.
+	//
+	// The network fact has its own column, is_internal, and its own segment
+	// field, traffic.internal. Nothing is lost by letting each say one thing.
 	for _, event := range p.Request.Events {
 		if event.ContractVersion <= 0 {
 			event.ContractVersion = 1

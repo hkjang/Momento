@@ -1,6 +1,6 @@
 # Momento 엔터프라이즈 관리자 가이드 (Admin & Security Guide)
 
-- **문서 버전**: v0.33.1
+- **문서 버전**: v0.34.33
 - **대상**: 시스템 관리자, Security/DevOps 엔지니어, 데이터 보안 담당자, CISO  
 - **문서 개요**: Momento 온프레미스 시스템 배포, Keycloak OIDC SSO 연동, RBAC 권한 관리, 개인정보 필터, CIDR 서브넷 매핑 및 Audit Trail 감사 운영
 
@@ -186,7 +186,7 @@ Visitor, User ID, 기간 또는 Site 삭제는 PostgreSQL Inbox와 Dead Letter �
 - Event Contract는 Version마다 JSON Schema, Validation Mode, Changelog, 작성자와 활성시각을 보관합니다.
 - Draft는 수집에 사용할 수 없습니다. Active Version을 바꾸면 이전 Active는 Deprecated가 되지만 Retry 호환을 위해 계속 검증할 수 있습니다.
 - `max_events_per_request`는 실제로 적용됩니다. 한도와 같은 크기의 배치는 수락되고 한도를 넘으면 거부되며, 거부 메시지에 현재 한도가 담기는지 통합 테스트로 확인합니다.
-- 트래픽 분류(`known_bot`·`monitoring`·`suspicious`·`internal_traffic`)는 User-Agent와 네트워크 등록으로 결정되며, **리포트에서 자동으로 제외되지 않습니다.** 제외는 Segment(`traffic.class`, `traffic.internal`)로 수행합니다. 분류 자체와 Segment 필터가 동작하는지 통합 테스트로 확인합니다.
+- 트래픽 분류(`known_bot`·`monitoring`·`suspicious`·`normal`)는 **User-Agent만으로** 결정됩니다. 사내망 여부는 이 값을 덮어쓰지 않고 `traffic.internal`이 따로 답합니다 — 사내망 크롤러는 `known_bot`이면서 내부입니다. 어느 쪽도 **리포트에서 자동으로 제외되지 않으며**, 제외는 Segment(`traffic.class`, `traffic.internal`)로 수행합니다. 분류 자체와 Segment 필터가 동작하는지 통합 테스트로 확인합니다.
 - 서버 사이드 수집 규칙도 통합 테스트로 확인합니다. Origin 헤더가 없는 요청은 서버 간 호출로 보아 **Server API Key만** 허용하고 Tracking Key는 거부합니다. Tracking Key는 페이지 HTML에 노출되므로, 그것으로 서버 사이드 이벤트를 주입할 수 있어서는 안 됩니다. Origin이 있는 요청은 두 Key 모두 허용하되 허용 도메인 목록을 통과해야 합니다.
 - 로그인은 IP 기준으로 제한됩니다. 잘못된 비밀번호를 반복하면 `RATE_LIMITED`(429)를 반환하는지 통합 테스트로 확인합니다.
 - 접근 제어도 통합 테스트로 확인합니다. Analyst는 자기 Workspace의 사이트만 조회할 수 있고 다른 조직의 사이트에는 404를 받으며(사이트 존재를 확인해 주지 않기 위해 403이 아닙니다), 사이트 목록에도 나타나지 않습니다. 관리자 전용 엔드포인트는 403을 반환합니다. `user_workspace_roles`에 권한을 부여하면 같은 요청이 성공하고 회수하면 다시 거부되는 것까지 확인합니다.
