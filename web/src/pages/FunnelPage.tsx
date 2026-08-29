@@ -21,6 +21,7 @@ import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { dateRangeValues, get, post, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
+import RangeSelect from "../components/RangeSelect";
 import DataTable from "../components/DataTable";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import { builtInSegmentFields } from "../components/SegmentBuilder";
@@ -61,17 +62,16 @@ const verdictLabel: Record<FunnelComparison["verdict"], string> = {
   insufficient: "표본 부족",
 };
 
-const verdictColor: Record<FunnelComparison["verdict"], "success" | "error" | "default" | "warning"> = {
+const verdictColor: Record<
+  FunnelComparison["verdict"],
+  "success" | "error" | "default" | "warning"
+> = {
   better: "success",
   worse: "error",
   similar: "default",
   insufficient: "warning",
 };
-import {
-  buildPathFlow,
-  type PathNode,
-  type PathTransition,
-} from "./pathFlow";
+import { buildPathFlow, type PathNode, type PathTransition } from "./pathFlow";
 
 type Step = {
   name: string;
@@ -111,9 +111,7 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const [segmentId, setSegmentId] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [pathDays, setPathDays] = useState(30);
-  const [pathView, setPathView] = useState<"pages" | "events" | "all">(
-    "pages",
-  );
+  const [pathView, setPathView] = useState<"pages" | "events" | "all">("pages");
   const [includeSystemEvents, setIncludeSystemEvents] = useState(false);
   const segments = useQuery({
     queryKey: ["segments", site?.site_id],
@@ -244,18 +242,16 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
             alignItems={{ md: "center" }}
             mb={2}
           >
-            <TextField
-              select
-              size="small"
-              label="분석 기간"
-              value={pathDays}
-              onChange={(event) => setPathDays(Number(event.target.value))}
-              sx={{ minWidth: 140 }}
-            >
-              <MenuItem value={7}>최근 7일</MenuItem>
-              <MenuItem value={30}>최근 30일</MenuItem>
-              <MenuItem value={90}>최근 90일</MenuItem>
-            </TextField>
+            {/* Through the shared control, so the site's query policy applies
+                here too. This was its own selector offering 7, 30 and 90
+                whatever the site allowed — the defect AnalysisToolbar had, in
+                the one page that used neither shared control and so was not
+                looked at by the rule that caught it there. */}
+            <RangeSelect
+              days={pathDays}
+              setDays={setPathDays}
+              maxExactDays={site.max_exact_days}
+            />
             <TextField
               select
               size="small"
@@ -632,10 +628,15 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
                 },
                 yAxis: {
                   type: "value",
-                  axisLabel: funnel.data.series ? { formatter: "{value}%" } : undefined,
+                  axisLabel: funnel.data.series
+                    ? { formatter: "{value}%" }
+                    : undefined,
                 },
                 legend: funnel.data.series
-                  ? { data: funnel.data.series.map((item) => item.label), bottom: 0 }
+                  ? {
+                      data: funnel.data.series.map((item) => item.label),
+                      bottom: 0,
+                    }
                   : undefined,
                 series: funnel.data.series
                   ? // Comparing cohorts uses the completion rate, because raw counts
@@ -643,7 +644,9 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
                     funnel.data.series.map((item, index) => ({
                       name: item.label,
                       type: "bar",
-                      data: item.steps.map((step) => Number(step.overall_conversion_rate).toFixed(1)),
+                      data: item.steps.map((step) =>
+                        Number(step.overall_conversion_rate).toFixed(1),
+                      ),
                       itemStyle: {
                         color: seriesColors[index % seriesColors.length],
                         borderRadius: [7, 7, 0, 0],
@@ -663,7 +666,11 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
                           },
                         })),
                         barMaxWidth: 100,
-                        label: { show: true, position: "top", formatter: "{c}명" },
+                        label: {
+                          show: true,
+                          position: "top",
+                          formatter: "{c}명",
+                        },
                       },
                     ],
               }}
@@ -700,7 +707,12 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
               <Stack spacing={1.2}>
                 {funnel.data.comparison.map((item) => (
                   <Card key={item.key} variant="outlined" sx={{ p: 1.8 }}>
-                    <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+                    <Stack
+                      direction="row"
+                      gap={1}
+                      alignItems="center"
+                      flexWrap="wrap"
+                    >
                       <Chip
                         size="small"
                         color={verdictColor[item.verdict]}

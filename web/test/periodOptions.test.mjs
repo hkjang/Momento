@@ -32,6 +32,27 @@ test("모든 기간 선택 컨트롤은 사이트 정책을 적용한다", () =>
   }
 });
 
+test("기간을 고르게 하는 화면은 공유 컨트롤을 지나간다", () => {
+  // 앞의 검사는 두 공유 컨트롤이 정책을 적용하는지 보고, 그 아래 검사는 그것을
+  // 붙이는 화면이 한도를 넘기는지 봅니다. 둘 다 **컨트롤을 쓰는 화면**만 봅니다.
+  //
+  // Funnel의 경로 분석은 둘 중 어느 것도 쓰지 않고 자기 선택기에 7·30·90을
+  // 하드코딩하고 있었습니다 — AnalysisToolbar에서 고친 바로 그 결함이, 그것을
+  // 찾은 규칙이 들여다보지 않는 유일한 화면에서. 규칙이 컨트롤을 기준으로
+  // 쓰였기 때문에, 컨트롤을 쓰지 않는 것이 빠져나갔습니다.
+  const dayValues = /<MenuItem value=\{(7|14|30|90|180|365)\}/;
+  const dir = new URL("../src/pages/", import.meta.url);
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".tsx")) continue;
+    const source = readFileSync(new URL(name, dir), "utf8");
+    const match = dayValues.exec(source);
+    if (!match) continue;
+    assert.fail(
+      `${name}이 기간 선택지(${match[1]}일)를 직접 그린다: 공유 컨트롤을 지나지 않으므로 사이트 정책이 적용되지 않고, 정책이 거부할 기간을 제시하게 된다`,
+    );
+  }
+});
+
 test("기간 컨트롤을 붙이는 화면은 사이트 한도를 넘겨준다", () => {
   const dir = new URL("../src/pages/", import.meta.url);
   let mounted = 0;
