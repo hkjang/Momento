@@ -86,8 +86,8 @@ func (s *Server) runExperienceCohort(ctx context.Context, siteID uuid.UUID, envi
 		var kind, metric string
 		var first, second, good int64
 		var p75 float64
-		if rows.Scan(&kind, &metric, &first, &second, &p75, &good) != nil {
-			continue
+		if err := rows.Scan(&kind, &metric, &first, &second, &p75, &good); err != nil {
+			return cohort, err
 		}
 		if kind == "summary" {
 			cohort.Users, cohort.ErrorUsers = first, second

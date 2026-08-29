@@ -230,8 +230,8 @@ func (rep Reporter) Attribution(ctx context.Context, query AttributionQuery) (At
 			defer rows.Close()
 			for rows.Next() {
 				var row creditRow
-				if rows.Scan(&row.source, &row.medium, &row.touchSite, &row.creditedConversions, &row.creditedEvents, &row.creditedUsers, &row.touchedConvs) != nil {
-					continue
+				if err := rows.Scan(&row.source, &row.medium, &row.touchSite, &row.creditedConversions, &row.creditedEvents, &row.creditedUsers, &row.touchedConvs); err != nil {
+					return err
 				}
 				creditRows = append(creditRows, row)
 			}
@@ -325,9 +325,10 @@ func (rep Reporter) siteNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UU
 	for rows.Next() {
 		var id uuid.UUID
 		var key, name string
-		if rows.Scan(&id, &key, &name) == nil {
-			out[id] = siteLabel{key: key, name: name}
+		if err := rows.Scan(&id, &key, &name); err != nil {
+			return out, err
 		}
+		out[id] = siteLabel{key: key, name: name}
 	}
 	return out, rows.Err()
 }

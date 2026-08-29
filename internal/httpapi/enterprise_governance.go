@@ -37,9 +37,15 @@ func (s *Server) listMetricGoals(w http.ResponseWriter, r *http.Request) {
 		var starts, ends *time.Time
 		var active bool
 		var created, updated time.Time
-		if rows.Scan(&id, &metric, &name, &description, &target, &comparator, &period, &environment, &organization, &department, &starts, &ends, &owner, &active, &created, &updated, &label, &format) == nil {
-			out = append(out, map[string]any{"id": id, "metric_name": metric, "metric_label": label, "format": format, "name": name, "description": description, "target_value": target, "comparator": comparator, "period": period, "environment": environment, "organization": organization, "department": department, "starts_on": starts, "ends_on": ends, "owner": owner, "active": active, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &metric, &name, &description, &target, &comparator, &period, &environment, &organization, &department, &starts, &ends, &owner, &active, &created, &updated, &label, &format); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "metric_name": metric, "metric_label": label, "format": format, "name": name, "description": description, "target_value": target, "comparator": comparator, "period": period, "environment": environment, "organization": organization, "department": department, "starts_on": starts, "ends_on": ends, "owner": owner, "active": active, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -162,8 +168,8 @@ func (s *Server) metricGoalEvaluations(r *http.Request, siteID uuid.UUID) ([]map
 		var name, metric, comparator, period, environment, organization, department, format string
 		var target float64
 		var raw []byte
-		if rows.Scan(&id, &name, &metric, &target, &comparator, &period, &environment, &organization, &department, &raw, &format) != nil {
-			continue
+		if err := rows.Scan(&id, &name, &metric, &target, &comparator, &period, &environment, &organization, &department, &raw, &format); err != nil {
+			return nil, err
 		}
 		var definition semanticDefinition
 		if json.Unmarshal(raw, &definition) != nil {
@@ -372,9 +378,15 @@ func (s *Server) listQueryAudit(w http.ResponseWriter, r *http.Request) {
 		var dimensions, metrics []string
 		var duration, resultRows *int
 		var queryError *string
-		if rows.Scan(&id, &environment, &mode, &complexity, &sample, &from, &to, &dimensions, &metrics, &duration, &resultRows, &status, &queryError, &created, &actor) == nil {
-			out = append(out, map[string]any{"id": id, "environment": environment, "mode": mode, "complexity_score": complexity, "sample_percent": sample, "from": from, "to": to, "dimensions": dimensions, "metrics": metrics, "duration_ms": duration, "result_rows": resultRows, "status": status, "error": queryError, "created_at": created, "actor": actor})
+		if err := rows.Scan(&id, &environment, &mode, &complexity, &sample, &from, &to, &dimensions, &metrics, &duration, &resultRows, &status, &queryError, &created, &actor); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "environment": environment, "mode": mode, "complexity_score": complexity, "sample_percent": sample, "from": from, "to": to, "dimensions": dimensions, "metrics": metrics, "duration_ms": duration, "result_rows": resultRows, "status": status, "error": queryError, "created_at": created, "actor": actor})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -400,9 +412,15 @@ func (s *Server) listAggregateJobs(w http.ResponseWriter, r *http.Request) {
 		var started, finished *time.Time
 		var jobError *string
 		var created time.Time
-		if rows.Scan(&id, &environment, &jobType, &from, &to, &status, &reason, &attempts, &started, &finished, &jobError, &created) == nil {
-			out = append(out, map[string]any{"id": id, "environment": environment, "job_type": jobType, "date_from": from, "date_to": to, "status": status, "reason": reason, "attempts": attempts, "started_at": started, "finished_at": finished, "error": jobError, "created_at": created})
+		if err := rows.Scan(&id, &environment, &jobType, &from, &to, &status, &reason, &attempts, &started, &finished, &jobError, &created); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "environment": environment, "job_type": jobType, "date_from": from, "date_to": to, "status": status, "reason": reason, "attempts": attempts, "started_at": started, "finished_at": finished, "error": jobError, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -478,11 +496,17 @@ func (s *Server) listAnnotations(w http.ResponseWriter, r *http.Request) {
 		var occurred, created time.Time
 		var ended *time.Time
 		var raw []byte
-		if rows.Scan(&id, &annotationSite, &environment, &occurred, &ended, &kind, &title, &description, &source, &raw, &created) == nil {
-			var metadata any
-			_ = json.Unmarshal(raw, &metadata)
-			out = append(out, map[string]any{"id": id, "site_id": annotationSite, "environment": environment, "occurred_at": occurred, "ended_at": ended, "kind": kind, "title": title, "description": description, "source": source, "metadata": metadata, "created_at": created})
+		if err := rows.Scan(&id, &annotationSite, &environment, &occurred, &ended, &kind, &title, &description, &source, &raw, &created); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var metadata any
+		_ = json.Unmarshal(raw, &metadata)
+		out = append(out, map[string]any{"id": id, "site_id": annotationSite, "environment": environment, "occurred_at": occurred, "ended_at": ended, "kind": kind, "title": title, "description": description, "source": source, "metadata": metadata, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -703,17 +727,23 @@ func (s *Server) eventCatalog(w http.ResponseWriter, r *http.Request) {
 		var schema []byte
 		var firstSeen, lastSeen *time.Time
 		var volume, volume30, metricUses, goalUses int64
-		if rows.Scan(&name, &description, &owner, &version, &deprecated, &schema, &firstSeen, &lastSeen, &volume, &volume30, &metricUses, &goalUses) == nil {
-			var schemaValue any
-			_ = json.Unmarshal(schema, &schemaValue)
-			status := "healthy"
-			if deprecated {
-				status = "deprecated"
-			} else if volume30 == 0 {
-				status = "inactive"
-			}
-			out = append(out, map[string]any{"name": name, "description": description, "owner": owner, "current_version": version, "status": status, "schema": schemaValue, "first_seen": firstSeen, "last_seen": lastSeen, "volume": volume, "volume_30d": volume30, "used_by": map[string]any{"metrics": metricUses, "goals": goalUses}})
+		if err := rows.Scan(&name, &description, &owner, &version, &deprecated, &schema, &firstSeen, &lastSeen, &volume, &volume30, &metricUses, &goalUses); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var schemaValue any
+		_ = json.Unmarshal(schema, &schemaValue)
+		status := "healthy"
+		if deprecated {
+			status = "deprecated"
+		} else if volume30 == 0 {
+			status = "inactive"
+		}
+		out = append(out, map[string]any{"name": name, "description": description, "owner": owner, "current_version": version, "status": status, "schema": schemaValue, "first_seen": firstSeen, "last_seen": lastSeen, "volume": volume, "volume_30d": volume30, "used_by": map[string]any{"metrics": metricUses, "goals": goalUses}})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -735,8 +765,9 @@ func (s *Server) dataLineage(w http.ResponseWriter, r *http.Request) {
 	for metricRows.Next() {
 		var name, label string
 		var raw []byte
-		if metricRows.Scan(&name, &label, &raw) != nil {
-			continue
+		if err := metricRows.Scan(&name, &label, &raw); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 		nodes = append(nodes, map[string]any{"id": "metric:" + name, "kind": "metric", "label": label})
 		var def semanticDefinition
@@ -750,16 +781,26 @@ func (s *Server) dataLineage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err := metricRows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
+	}
 	goalRows, _ := s.DB.Query(r.Context(), `SELECT id,name,metric_name FROM metric_goals WHERE site_id=$1`, siteID)
 	if goalRows != nil {
 		defer goalRows.Close()
 		for goalRows.Next() {
 			var id uuid.UUID
 			var name, metric string
-			if goalRows.Scan(&id, &name, &metric) == nil {
-				nodes = append(nodes, map[string]any{"id": "goal:" + id.String(), "kind": "goal", "label": name})
-				edges = append(edges, map[string]any{"from": "metric:" + metric, "to": "goal:" + id.String(), "relation": "measures"})
+			if err := goalRows.Scan(&id, &name, &metric); err != nil {
+				writeError(w, 500, "QUERY_FAILED", err.Error())
+				return
 			}
+			nodes = append(nodes, map[string]any{"id": "goal:" + id.String(), "kind": "goal", "label": name})
+			edges = append(edges, map[string]any{"from": "metric:" + metric, "to": "goal:" + id.String(), "relation": "measures"})
+		}
+		if err := goalRows.Err(); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 	}
 	writeJSON(w, 200, map[string]any{"nodes": dedupeLineageNodes(nodes), "edges": edges})
@@ -797,11 +838,17 @@ func (s *Server) listPrivacyRequests(w http.ResponseWriter, r *http.Request) {
 		var from, to, approved, completed *time.Time
 		var requested time.Time
 		var raw []byte
-		if rows.Scan(&id, &requestType, &identityType, &identityValue, &from, &to, &status, &reason, &raw, &requested, &approved, &completed) == nil {
-			var result any
-			_ = json.Unmarshal(raw, &result)
-			out = append(out, map[string]any{"id": id, "request_type": requestType, "identity_type": identityType, "identity_value": identityValue, "date_from": from, "date_to": to, "status": status, "reason": reason, "result": result, "requested_at": requested, "approved_at": approved, "completed_at": completed})
+		if err := rows.Scan(&id, &requestType, &identityType, &identityValue, &from, &to, &status, &reason, &raw, &requested, &approved, &completed); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var result any
+		_ = json.Unmarshal(raw, &result)
+		out = append(out, map[string]any{"id": id, "request_type": requestType, "identity_type": identityType, "identity_value": identityValue, "date_from": from, "date_to": to, "status": status, "reason": reason, "result": result, "requested_at": requested, "approved_at": approved, "completed_at": completed})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

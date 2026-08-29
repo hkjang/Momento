@@ -40,8 +40,8 @@ func (r Reporter) AIOperations(ctx context.Context, siteID uuid.UUID, environmen
 		var label string
 		var calls, users, inputTokens, outputTokens, fallbacks int64
 		var successRate, latency, cost float64
-		if rows.Scan(&label, &calls, &users, &successRate, &latency, &inputTokens, &outputTokens, &cost, &fallbacks) != nil {
-			continue
+		if err := rows.Scan(&label, &calls, &users, &successRate, &latency, &inputTokens, &outputTokens, &cost, &fallbacks); err != nil {
+			return nil, err
 		}
 		out = append(out, map[string]any{"label": label, "calls": calls, "users": users, "success_rate": successRate,
 			"average_latency_ms": latency, "input_tokens": inputTokens, "output_tokens": outputTokens, "cost": cost, "fallbacks": fallbacks})

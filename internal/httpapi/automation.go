@@ -48,19 +48,25 @@ func (s *Server) listDeliveryChannels(w http.ResponseWriter, r *http.Request) {
 		var sealed *string
 		var active bool
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &kind, &endpoint, &headers, &sealed, &active, &created, &updated) == nil {
-			values := map[string]any{}
-			if plain, err := s.openSecret(sealed); err == nil && plain != "" {
-				headers = []byte(plain)
-			}
-			_ = json.Unmarshal(headers, &values)
-			keys := make([]string, 0, len(values))
-			for key := range values {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			out = append(out, map[string]any{"id": id, "name": name, "channel_type": kind, "endpoint_url": endpoint, "header_names": keys, "has_headers": len(keys) > 0, "active": active, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &kind, &endpoint, &headers, &sealed, &active, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		values := map[string]any{}
+		if plain, err := s.openSecret(sealed); err == nil && plain != "" {
+			headers = []byte(plain)
+		}
+		_ = json.Unmarshal(headers, &values)
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		out = append(out, map[string]any{"id": id, "name": name, "channel_type": kind, "endpoint_url": endpoint, "header_names": keys, "has_headers": len(keys) > 0, "active": active, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -170,11 +176,17 @@ func (s *Server) listScheduledReports(w http.ResponseWriter, r *http.Request) {
 		var enabled bool
 		var lastRun *time.Time
 		var status, lastError *string
-		if rows.Scan(&id, &channelID, &channelName, &name, &kind, &definition, &interval, &next, &enabled, &lastRun, &status, &lastError, &created, &updated) == nil {
-			var value any
-			_ = json.Unmarshal(definition, &value)
-			out = append(out, map[string]any{"id": id, "channel_id": channelID, "channel_name": channelName, "name": name, "report_kind": kind, "definition": value, "interval_minutes": interval, "next_run_at": next, "enabled": enabled, "last_run_at": lastRun, "last_status": status, "last_error": lastError, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &channelID, &channelName, &name, &kind, &definition, &interval, &next, &enabled, &lastRun, &status, &lastError, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var value any
+		_ = json.Unmarshal(definition, &value)
+		out = append(out, map[string]any{"id": id, "channel_id": channelID, "channel_name": channelName, "name": name, "report_kind": kind, "definition": value, "interval_minutes": interval, "next_run_at": next, "enabled": enabled, "last_run_at": lastRun, "last_status": status, "last_error": lastError, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -310,9 +322,15 @@ func (s *Server) listDeliveryRuns(w http.ResponseWriter, r *http.Request) {
 		var errorText *string
 		var started time.Time
 		var finished *time.Time
-		if rows.Scan(&id, &reportID, &channelID, &status, &responseStatus, &errorText, &started, &finished) == nil {
-			out = append(out, map[string]any{"id": id, "report_id": reportID, "channel_id": channelID, "status": status, "response_status": responseStatus, "error": errorText, "started_at": started, "finished_at": finished})
+		if err := rows.Scan(&id, &reportID, &channelID, &status, &responseStatus, &errorText, &started, &finished); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "report_id": reportID, "channel_id": channelID, "status": status, "response_status": responseStatus, "error": errorText, "started_at": started, "finished_at": finished})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

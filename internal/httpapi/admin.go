@@ -80,10 +80,15 @@ func (s *Server) listMyKeys(w http.ResponseWriter, r *http.Request) {
 		var created time.Time
 		var stored *string
 		if err := rows.Scan(&id, &name, &prefix, &scopes, &expires, &lastUsed, &created, &stored); err != nil {
-			continue
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 		plain, _ := s.openSecret(stored)
 		out = append(out, map[string]any{"id": id, "name": name, "prefix": prefix, "scopes": scopes, "expires_at": expires, "last_used_at": lastUsed, "created_at": created, "recoverable": plain != ""})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -184,12 +189,18 @@ func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 		var timeout, engagementThreshold, maxExactDays int
 		var active bool
 		var created time.Time
-		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &timezone, &engagementThreshold, &active, &prefix, &serverPrefix, &created, &workspace, &org, &maxExactDays); err == nil {
-			out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "timezone": timezone, "engagement_threshold_seconds": engagementThreshold, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org,
-				// The console builds its period options from this, so it never offers a
-				// range the site's policy will refuse.
-				"max_exact_days": maxExactDays})
+		if err := rows.Scan(&id, &key, &name, &service, &domains, &timeout, &timezone, &engagementThreshold, &active, &prefix, &serverPrefix, &created, &workspace, &org, &maxExactDays); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "site_id": key, "name": name, "service_name": service, "allowed_domains": domains, "session_timeout_minutes": timeout, "timezone": timezone, "engagement_threshold_seconds": engagementThreshold, "active": active, "tracking_key_prefix": prefix, "server_api_key_prefix": serverPrefix, "created_at": created, "workspace": workspace, "organization": org,
+			// The console builds its period options from this, so it never offers a
+			// range the site's policy will refuse.
+			"max_exact_days": maxExactDays})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -498,8 +509,9 @@ func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
 		var key string
 		var raw []byte
 		var updated time.Time
-		if rows.Scan(&key, &raw, &updated) != nil {
-			continue
+		if err := rows.Scan(&key, &raw, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 		var value any
 		_ = json.Unmarshal(raw, &value)
@@ -511,6 +523,10 @@ func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out[key] = map[string]any{"value": value, "updated_at": updated}
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -689,9 +705,15 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
 		var name, cidr, desc string
 		var internal bool
 		var created time.Time
-		if rows.Scan(&id, &name, &cidr, &desc, &internal, &created) == nil {
-			out = append(out, map[string]any{"id": id, "name": name, "cidr": cidr, "description": desc, "internal": internal, "created_at": created})
+		if err := rows.Scan(&id, &name, &cidr, &desc, &internal, &created); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "name": name, "cidr": cidr, "description": desc, "internal": internal, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -753,9 +775,15 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		var email, name, dept, org, role string
 		var active, oidc bool
 		var created time.Time
-		if rows.Scan(&id, &email, &name, &dept, &org, &role, &active, &oidc, &created) == nil {
-			out = append(out, map[string]any{"id": id, "email": email, "display_name": name, "department": dept, "organization_name": org, "role": role, "active": active, "oidc": oidc, "created_at": created})
+		if err := rows.Scan(&id, &email, &name, &dept, &org, &role, &active, &oidc, &created); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "email": email, "display_name": name, "department": dept, "organization_name": org, "role": role, "active": active, "oidc": oidc, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -871,11 +899,17 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		var rid, ip *string
 		var raw []byte
 		var created time.Time
-		if rows.Scan(&id, &action, &rt, &rid, &raw, &ip, &created, &name, &email) == nil {
-			var detail any
-			_ = json.Unmarshal(raw, &detail)
-			out = append(out, map[string]any{"id": id, "action": action, "resource_type": rt, "resource_id": rid, "detail": detail, "client_ip": ip, "created_at": created, "actor": name, "actor_email": email})
+		if err := rows.Scan(&id, &action, &rt, &rid, &raw, &ip, &created, &name, &email); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var detail any
+		_ = json.Unmarshal(raw, &detail)
+		out = append(out, map[string]any{"id": id, "action": action, "resource_type": rt, "resource_id": rid, "detail": detail, "client_ip": ip, "created_at": created, "actor": name, "actor_email": email})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -1155,11 +1189,17 @@ func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {
 		var conversion bool
 		var currentVersion int
 		var created time.Time
-		if rows.Scan(&id, &siteUUID, &siteKey, &name, &desc, &raw, &mode, &conversion, &currentVersion, &owner, &created) == nil {
-			var schema any
-			_ = json.Unmarshal(raw, &schema)
-			out = append(out, map[string]any{"id": id, "site_uuid": siteUUID, "site_id": siteKey, "name": name, "description": desc, "schema": schema, "validation_mode": mode, "conversion": conversion, "current_version": currentVersion, "owner": owner, "created_at": created})
+		if err := rows.Scan(&id, &siteUUID, &siteKey, &name, &desc, &raw, &mode, &conversion, &currentVersion, &owner, &created); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var schema any
+		_ = json.Unmarshal(raw, &schema)
+		out = append(out, map[string]any{"id": id, "site_uuid": siteUUID, "site_id": siteKey, "name": name, "description": desc, "schema": schema, "validation_mode": mode, "conversion": conversion, "current_version": currentVersion, "owner": owner, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

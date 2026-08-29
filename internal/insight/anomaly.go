@@ -294,8 +294,8 @@ func (rep Reporter) dailySeriesFromRollups(ctx context.Context, siteID uuid.UUID
 	for rows.Next() {
 		var day time.Time
 		var users, sessions, events, conversions int64
-		if rows.Scan(&day, &users, &sessions, &events, &conversions) != nil {
-			continue
+		if err := rows.Scan(&day, &users, &sessions, &events, &conversions); err != nil {
+			return nil, err
 		}
 		date := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		series["users"] = append(series["users"], AnomalyPoint{Date: date, Value: float64(users)})
@@ -321,8 +321,8 @@ func (rep Reporter) dailyErrorSeries(ctx context.Context, siteID uuid.UUID, envi
 	for rows.Next() {
 		var day time.Time
 		var count int64
-		if rows.Scan(&day, &count) != nil {
-			continue
+		if err := rows.Scan(&day, &count); err != nil {
+			return nil, err
 		}
 		out = append(out, AnomalyPoint{Date: time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC), Value: float64(count)})
 	}
@@ -350,8 +350,8 @@ func (rep Reporter) dailySeriesFromEvents(ctx context.Context, siteID uuid.UUID,
 	for rows.Next() {
 		var day time.Time
 		var users, sessions, events, conversions, errorCount int64
-		if rows.Scan(&day, &users, &sessions, &events, &conversions, &errorCount) != nil {
-			continue
+		if err := rows.Scan(&day, &users, &sessions, &events, &conversions, &errorCount); err != nil {
+			return nil, err
 		}
 		date := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, time.UTC)
 		series["users"] = append(series["users"], AnomalyPoint{Date: date, Value: float64(users)})

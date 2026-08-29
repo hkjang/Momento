@@ -70,11 +70,17 @@ func (s *Server) listSegments(w http.ResponseWriter, r *http.Request) {
 		var ownerID *uuid.UUID
 		var owner *string
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &description, &raw, &shared, &ownerID, &owner, &created, &updated) == nil {
-			var definition any
-			_ = json.Unmarshal(raw, &definition)
-			out = append(out, map[string]any{"id": id, "name": name, "description": description, "definition": definition, "shared": shared, "owner_id": ownerID, "owner": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &description, &raw, &shared, &ownerID, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var definition any
+		_ = json.Unmarshal(raw, &definition)
+		out = append(out, map[string]any{"id": id, "name": name, "description": description, "definition": definition, "shared": shared, "owner_id": ownerID, "owner": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -201,9 +207,15 @@ func (s *Server) listDimensions(w http.ResponseWriter, r *http.Request) {
 		var name, propertyKey, scope, dataType, description string
 		var active bool
 		var updated time.Time
-		if rows.Scan(&id, &name, &propertyKey, &scope, &dataType, &description, &active, &updated) == nil {
-			out = append(out, map[string]any{"id": id, "name": name, "query_name": "custom." + name, "property_key": propertyKey, "scope": scope, "data_type": dataType, "description": description, "active": active, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &propertyKey, &scope, &dataType, &description, &active, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "name": name, "query_name": "custom." + name, "property_key": propertyKey, "scope": scope, "data_type": dataType, "description": description, "active": active, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -297,11 +309,17 @@ func (s *Server) listSavedReports(w http.ResponseWriter, r *http.Request) {
 		var ownerID *uuid.UUID
 		var owner *string
 		var created, updated time.Time
-		if rows.Scan(&id, &reportKind, &name, &description, &definition, &shared, &ownerID, &owner, &created, &updated) == nil {
-			var value any
-			_ = json.Unmarshal(definition, &value)
-			out = append(out, map[string]any{"id": id, "kind": reportKind, "name": name, "description": description, "definition": value, "shared": shared, "owner_id": ownerID, "owner": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &reportKind, &name, &description, &definition, &shared, &ownerID, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var value any
+		_ = json.Unmarshal(definition, &value)
+		out = append(out, map[string]any{"id": id, "kind": reportKind, "name": name, "description": description, "definition": value, "shared": shared, "owner_id": ownerID, "owner": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

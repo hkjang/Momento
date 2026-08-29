@@ -68,8 +68,8 @@ func (s *Server) workspaceRollup(w http.ResponseWriter, r *http.Request) {
 				var id uuid.UUID
 				var key, name, serviceName string
 				var events, users, sessions, conversions, errorCount, repeatUsers, windowEvents, windowSites int64
-				if rows.Scan(&id, &key, &name, &serviceName, &events, &users, &sessions, &conversions, &errorCount, &repeatUsers, &windowEvents, &windowSites) != nil {
-					continue
+				if err := rows.Scan(&id, &key, &name, &serviceName, &events, &users, &sessions, &conversions, &errorCount, &repeatUsers, &windowEvents, &windowSites); err != nil {
+					return err
 				}
 				repeatRate, conversionRate, errorRate := percent(repeatUsers, users), percent(conversions, users), percent(errorCount, events)
 				score := clampScore(.45*repeatRate + .25*math.Min(100, conversionRate*5) + .30*(100-errorRate))
@@ -133,11 +133,17 @@ func (s *Server) listWorkspaceJourneys(w http.ResponseWriter, r *http.Request) {
 		var shared, active bool
 		var owner *uuid.UUID
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &description, &raw, &days, &shared, &active, &owner, &created, &updated) == nil {
-			var steps any
-			_ = json.Unmarshal(raw, &steps)
-			out = append(out, map[string]any{"id": id, "name": name, "description": description, "steps": steps, "conversion_window_days": days, "shared": shared, "active": active, "owner_id": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &description, &raw, &days, &shared, &active, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var steps any
+		_ = json.Unmarshal(raw, &steps)
+		out = append(out, map[string]any{"id": id, "name": name, "description": description, "steps": steps, "conversion_window_days": days, "shared": shared, "active": active, "owner_id": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -276,12 +282,18 @@ func (s *Server) analyzeWorkspaceJourney(w http.ResponseWriter, r *http.Request)
 		var step int
 		var users int64
 		var elapsed float64
-		if rows.Scan(&step, &users, &elapsed) == nil {
-			if step == 1 {
-				first = users
-			}
-			out = append(out, map[string]any{"step": step, "name": in.Steps[step-1].Name, "event": in.Steps[step-1].Event, "site_id": in.Steps[step-1].SiteID, "users": users, "conversion_rate": percent(users, first), "average_elapsed_seconds": elapsed})
+		if err := rows.Scan(&step, &users, &elapsed); err != nil {
+			writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
+			return
 		}
+		if step == 1 {
+			first = users
+		}
+		out = append(out, map[string]any{"step": step, "name": in.Steps[step-1].Name, "event": in.Steps[step-1].Event, "site_id": in.Steps[step-1].SiteID, "users": users, "conversion_rate": percent(users, first), "average_elapsed_seconds": elapsed})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, map[string]any{"workspace_id": workspaceID, "environment": requestEnvironment(r), "steps": out, "identity_policy": "SSO user_id across sites; anonymous visitor is site-scoped"})
 }
@@ -335,8 +347,9 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 		var feature string
 		var users, events, repeats, converted, errors, previous, current, eligible int64
 		var first, last time.Time
-		if rows.Scan(&feature, &users, &events, &repeats, &converted, &errors, &first, &last, &previous, &current, &eligible) != nil {
-			continue
+		if err := rows.Scan(&feature, &users, &events, &repeats, &converted, &errors, &first, &last, &previous, &current, &eligible); err != nil {
+			writeQueryError(w, err)
+			return
 		}
 		adoption, repeatRate, conversionRate, errorRate := percent(users, eligible), percent(repeats, users), percent(converted, users), percent(errors, users)
 		trend := float64(0)
@@ -346,6 +359,10 @@ func (s *Server) featureIntelligence(w http.ResponseWriter, r *http.Request) {
 		score := clampScore(.4*math.Min(100, adoption) + .3*repeatRate + .2*conversionRate + .1*(100-errorRate))
 		dead := users < 10 && trend < 0 && repeatRate < 10
 		out = append(out, map[string]any{"feature": feature, "users": users, "eligible_users": eligible, "events": events, "adoption_rate": adoption, "repeat_rate": repeatRate, "conversion_rate": conversionRate, "error_rate": errorRate, "trend_percent": trend, "feature_score": score, "dead_feature": dead, "first_seen": first, "last_seen": last})
+	}
+	if err := rows.Err(); err != nil {
+		writeQueryError(w, err)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"population": population, "environment": environment, "features": out})
 }
@@ -395,9 +412,10 @@ func (s *Server) searchAnalytics(w http.ResponseWriter, r *http.Request) {
 				var query string
 				var count, queryUsers, zero, queryClicks int64
 				var last time.Time
-				if rows.Scan(&query, &count, &queryUsers, &zero, &queryClicks, &last) == nil {
-					queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
+				if err := rows.Scan(&query, &count, &queryUsers, &zero, &queryClicks, &last); err != nil {
+					return err
 				}
+				queries = append(queries, map[string]any{"query": query, "searches": count, "users": queryUsers, "zero_results": zero, "clicks": queryClicks, "ctr": math.Min(100, percent(queryClicks, count)), "last_seen": last})
 			}
 			return rows.Err()
 		},
@@ -532,10 +550,11 @@ func (s *Server) frustrationAnalytics(w http.ResponseWriter, r *http.Request) {
 				var event string
 				var count, users, sessions int64
 				var last time.Time
-				if rows.Scan(&event, &count, &users, &sessions, &last) == nil {
-					weightedCount += count * int64(weights[event])
-					signals = append(signals, map[string]any{"signal": event, "count": count, "users": users, "sessions": sessions, "weight": weights[event], "last_seen": last})
+				if err := rows.Scan(&event, &count, &users, &sessions, &last); err != nil {
+					return err
 				}
+				weightedCount += count * int64(weights[event])
+				signals = append(signals, map[string]any{"signal": event, "count": count, "users": users, "sessions": sessions, "weight": weights[event], "last_seen": last})
 			}
 			return rows.Err()
 		},
@@ -588,11 +607,17 @@ func (s *Server) listFeatureFlags(w http.ResponseWriter, r *http.Request) {
 		var raw []byte
 		var starts, ends *time.Time
 		var created, updated time.Time
-		if rows.Scan(&id, &key, &name, &description, &raw, &status, &starts, &ends, &owner, &created, &updated) == nil {
-			var variants any
-			_ = json.Unmarshal(raw, &variants)
-			out = append(out, map[string]any{"id": id, "flag_key": key, "name": name, "description": description, "variants": variants, "status": status, "starts_at": starts, "ends_at": ends, "owner": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &key, &name, &description, &raw, &status, &starts, &ends, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var variants any
+		_ = json.Unmarshal(raw, &variants)
+		out = append(out, map[string]any{"id": id, "flag_key": key, "name": name, "description": description, "variants": variants, "status": status, "starts_at": starts, "ends_at": ends, "owner": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -653,12 +678,18 @@ func (s *Server) listExperiments(w http.ResponseWriter, r *http.Request) {
 		var variantsRaw, audienceRaw []byte
 		var starts, ends *time.Time
 		var created, updated time.Time
-		if rows.Scan(&id, &flagID, &key, &name, &hypothesis, &metric, &variantsRaw, &audienceRaw, &environment, &status, &starts, &ends, &owner, &created, &updated) == nil {
-			var variants, audience any
-			_ = json.Unmarshal(variantsRaw, &variants)
-			_ = json.Unmarshal(audienceRaw, &audience)
-			out = append(out, map[string]any{"id": id, "feature_flag_id": flagID, "experiment_key": key, "name": name, "hypothesis": hypothesis, "primary_metric": metric, "variants": variants, "audience": audience, "environment": environment, "status": status, "starts_at": starts, "ends_at": ends, "owner": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &flagID, &key, &name, &hypothesis, &metric, &variantsRaw, &audienceRaw, &environment, &status, &starts, &ends, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var variants, audience any
+		_ = json.Unmarshal(variantsRaw, &variants)
+		_ = json.Unmarshal(audienceRaw, &audience)
+		out = append(out, map[string]any{"id": id, "feature_flag_id": flagID, "experiment_key": key, "name": name, "hypothesis": hypothesis, "primary_metric": metric, "variants": variants, "audience": audience, "environment": environment, "status": status, "starts_at": starts, "ends_at": ends, "owner": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

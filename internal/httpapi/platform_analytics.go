@@ -56,11 +56,17 @@ func (s *Server) listBusinessJourneys(w http.ResponseWriter, r *http.Request) {
 		var shared, active bool
 		var owner *uuid.UUID
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &description, &steps, &window, &shared, &active, &owner, &created, &updated) == nil {
-			var value any
-			_ = json.Unmarshal(steps, &value)
-			out = append(out, map[string]any{"id": id, "name": name, "description": description, "steps": value, "conversion_window_days": window, "shared": shared, "active": active, "owner_id": owner, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &description, &steps, &window, &shared, &active, &owner, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var value any
+		_ = json.Unmarshal(steps, &value)
+		out = append(out, map[string]any{"id": id, "name": name, "description": description, "steps": value, "conversion_window_days": window, "shared": shared, "active": active, "owner_id": owner, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -228,8 +234,9 @@ func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) 
 		var stepNo int
 		var users int64
 		var avgSeconds float64
-		if rows.Scan(&stepNo, &users, &avgSeconds) != nil {
-			continue
+		if err := rows.Scan(&stepNo, &users, &avgSeconds); err != nil {
+			writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
+			return
 		}
 		if stepNo == 1 {
 			first = users
@@ -239,6 +246,10 @@ func (s *Server) analyzeBusinessJourney(w http.ResponseWriter, r *http.Request) 
 			rate = float64(users) * 100 / float64(first)
 		}
 		result = append(result, map[string]any{"step": stepNo, "name": in.Steps[stepNo-1].Name, "event": in.Steps[stepNo-1].Event, "users": users, "conversion_rate": rate, "average_elapsed_seconds": avgSeconds})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "JOURNEY_QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, map[string]any{"environment": requestEnvironment(r), "steps": result})
 }
@@ -261,9 +272,15 @@ func (s *Server) listAdoptionTargets(w http.ResponseWriter, r *http.Request) {
 		var organization, department, feature string
 		var eligible int
 		var updated time.Time
-		if rows.Scan(&id, &organization, &department, &feature, &eligible, &updated) == nil {
-			out = append(out, map[string]any{"id": id, "organization": organization, "department": department, "feature": feature, "eligible_users": eligible, "updated_at": updated})
+		if err := rows.Scan(&id, &organization, &department, &feature, &eligible, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"id": id, "organization": organization, "department": department, "feature": feature, "eligible_users": eligible, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }

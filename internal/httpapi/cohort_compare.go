@@ -127,8 +127,8 @@ func (s *Server) runCohortGrid(ctx context.Context, siteID uuid.UUID, params coh
 		var date time.Time
 		var size, retained int64
 		var period int
-		if rows.Scan(&date, &size, &period, &retained) != nil {
-			continue
+		if err := rows.Scan(&date, &size, &period, &retained); err != nil {
+			return nil, err
 		}
 		key := date.Format("2006-01-02")
 		if cohorts[key] == nil {

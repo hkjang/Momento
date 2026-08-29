@@ -794,8 +794,8 @@ func (rep Reporter) insightLifecycle(ctx context.Context, siteID uuid.UUID, envi
 	for rows.Next() {
 		var row LifecycleRow
 		var converted int64
-		if rows.Scan(&row.Kind, &row.Users, &row.Sessions, &converted) != nil {
-			continue
+		if err := rows.Scan(&row.Kind, &row.Users, &row.Sessions, &converted); err != nil {
+			return nil, err
 		}
 		row.ConversionRate = percent(converted, row.Users)
 		row.SessionsPerUser = ratio(float64(row.Sessions), float64(row.Users))
@@ -837,8 +837,8 @@ func (rep Reporter) insightChannelSources(ctx context.Context, siteID uuid.UUID,
 			defer rows.Close()
 			for rows.Next() {
 				var row channelSource
-				if rows.Scan(&row.Source, &row.Medium, &row.HasReferrer, &row.Internal, &row.Users, &row.Sessions, &row.Converted) != nil {
-					continue
+				if err := rows.Scan(&row.Source, &row.Medium, &row.HasReferrer, &row.Internal, &row.Users, &row.Sessions, &row.Converted); err != nil {
+					return err
 				}
 				mu.Lock()
 				current[key{row.Source, row.Medium, row.HasReferrer, row.Internal}] = row
@@ -865,8 +865,8 @@ func (rep Reporter) insightChannelSources(ctx context.Context, siteID uuid.UUID,
 			for rows.Next() {
 				var item key
 				var users int64
-				if rows.Scan(&item.Source, &item.Medium, &item.HasReferrer, &item.Internal, &users) != nil {
-					continue
+				if err := rows.Scan(&item.Source, &item.Medium, &item.HasReferrer, &item.Internal, &users); err != nil {
+					return err
 				}
 				mu.Lock()
 				previous[item] = users
@@ -927,8 +927,8 @@ func (rep Reporter) insightLandingPages(ctx context.Context, siteID uuid.UUID, e
 	for rows.Next() {
 		var row LandingRow
 		var bounces, engaged, converted, totalSessions int64
-		if rows.Scan(&row.Page, &row.Sessions, &bounces, &engaged, &converted, &row.AverageSeconds, &totalSessions) != nil {
-			continue
+		if err := rows.Scan(&row.Page, &row.Sessions, &bounces, &engaged, &converted, &row.AverageSeconds, &totalSessions); err != nil {
+			return nil, err
 		}
 		row.BounceRate = percent(bounces, row.Sessions)
 		row.EngagementRate = percent(engaged, row.Sessions)
@@ -978,8 +978,8 @@ func (rep Reporter) insightVisitorBuckets(ctx context.Context, siteID uuid.UUID,
 	for rows.Next() {
 		var kind, bucket string
 		var users, converted int64
-		if rows.Scan(&kind, &bucket, &users, &converted) != nil {
-			continue
+		if err := rows.Scan(&kind, &bucket, &users, &converted); err != nil {
+			return nil, nil, nil, err
 		}
 		switch kind {
 		case "frequency":
@@ -1026,8 +1026,8 @@ func (rep Reporter) insightDeviceRows(ctx context.Context, siteID uuid.UUID, env
 	for rows.Next() {
 		var row DeviceRow
 		var converted int64
-		if rows.Scan(&row.Device, &row.Users, &row.Sessions, &converted) != nil {
-			continue
+		if err := rows.Scan(&row.Device, &row.Users, &row.Sessions, &converted); err != nil {
+			return nil, err
 		}
 		row.ConversionRate = percent(converted, row.Users)
 		out = append(out, row)

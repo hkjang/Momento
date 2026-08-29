@@ -421,9 +421,13 @@ func (a Automation) buildPayload(ctx context.Context, delivery scheduledDelivery
 			entities := []string{}
 			for rows.Next() {
 				var entity string
-				if rows.Scan(&entity) == nil {
-					entities = append(entities, entity)
+				if err := rows.Scan(&entity); err != nil {
+					return nil, err
 				}
+				entities = append(entities, entity)
+			}
+			if err := rows.Err(); err != nil {
+				return nil, err
 			}
 			data["entity_ids"] = entities
 		}

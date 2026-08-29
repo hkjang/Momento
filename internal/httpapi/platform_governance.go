@@ -46,9 +46,15 @@ func (s *Server) listEnvironments(w http.ResponseWriter, r *http.Request) {
 		var limit int
 		var active bool
 		var created, updated time.Time
-		if rows.Scan(&name, &label, &mode, &limit, &active, &created, &updated) == nil {
-			out = append(out, map[string]any{"name": name, "label": label, "contract_mode": mode, "cardinality_limit": limit, "active": active, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&name, &label, &mode, &limit, &active, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		out = append(out, map[string]any{"name": name, "label": label, "contract_mode": mode, "cardinality_limit": limit, "active": active, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -125,11 +131,17 @@ func (s *Server) listEventContracts(w http.ResponseWriter, r *http.Request) {
 		var schema []byte
 		var created time.Time
 		var activated *time.Time
-		if rows.Scan(&name, &description, &owner, &current, &deprecated, &version, &schema, &validation, &status, &changelog, &created, &activated) == nil {
-			var schemaValue any
-			_ = json.Unmarshal(schema, &schemaValue)
-			out = append(out, map[string]any{"event_name": name, "description": description, "owner": owner, "current_version": current, "deprecated": deprecated, "version": version, "schema": schemaValue, "validation_mode": validation, "status": status, "changelog": changelog, "created_at": created, "activated_at": activated})
+		if err := rows.Scan(&name, &description, &owner, &current, &deprecated, &version, &schema, &validation, &status, &changelog, &created, &activated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var schemaValue any
+		_ = json.Unmarshal(schema, &schemaValue)
+		out = append(out, map[string]any{"event_name": name, "description": description, "owner": owner, "current_version": current, "deprecated": deprecated, "version": version, "schema": schemaValue, "validation_mode": validation, "status": status, "changelog": changelog, "created_at": created, "activated_at": activated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -391,11 +403,17 @@ func (s *Server) listSemanticMetrics(w http.ResponseWriter, r *http.Request) {
 		var definition []byte
 		var version int
 		var created, updated time.Time
-		if rows.Scan(&id, &name, &label, &description, &definition, &format, &unit, &version, &status, &owner, &entityScope, &tags, &created, &updated) == nil {
-			var value any
-			_ = json.Unmarshal(definition, &value)
-			out = append(out, map[string]any{"id": id, "name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "definition_version": version, "status": status, "owner": owner, "entity_scope": entityScope, "tags": tags, "created_at": created, "updated_at": updated})
+		if err := rows.Scan(&id, &name, &label, &description, &definition, &format, &unit, &version, &status, &owner, &entityScope, &tags, &created, &updated); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
+		var value any
+		_ = json.Unmarshal(definition, &value)
+		out = append(out, map[string]any{"id": id, "name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "definition_version": version, "status": status, "owner": owner, "entity_scope": entityScope, "tags": tags, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
@@ -670,31 +688,48 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 	// tolerant: no row means no limit configured.
 	var cardinalityLimit int64
 	_ = s.DB.QueryRow(r.Context(), `SELECT cardinality_limit FROM site_environments WHERE site_id=$1 AND name=$2`, siteID, environment).Scan(&cardinalityLimit)
-	cardinalityRows, _ := s.DB.Query(r.Context(), `SELECT dimension,count(DISTINCT value_hash) FROM data_quality_dimension_values WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY dimension ORDER BY count(DISTINCT value_hash) DESC`, siteID, environment, dateFrom, dateTo)
+	cardinalityRows, cardinalityErr := s.DB.Query(r.Context(), `SELECT dimension,count(DISTINCT value_hash) FROM data_quality_dimension_values WHERE site_id=$1 AND environment=$2 AND event_date >= $3::date AND event_date < $4::date GROUP BY dimension ORDER BY count(DISTINCT value_hash) DESC`, siteID, environment, dateFrom, dateTo)
+	// A query that failed is not a site with no crowded dimensions. Both halves
+	// of this screen read as "nothing to worry about" when they are empty, which
+	// is the one thing an empty answer must not be allowed to mean here.
+	if cardinalityErr != nil {
+		writeError(w, 500, "QUERY_FAILED", cardinalityErr.Error())
+		return
+	}
 	cardinalities := []map[string]any{}
 	if cardinalityRows != nil {
 		defer cardinalityRows.Close()
 		for cardinalityRows.Next() {
 			var dimension string
 			var count int64
-			if cardinalityRows.Scan(&dimension, &count) == nil {
-				level := "low"
-				ratio := float64(0)
-				if cardinalityLimit > 0 {
-					ratio = float64(count) / float64(cardinalityLimit)
-				}
-				if ratio >= 1 {
-					level = "extreme"
-				} else if ratio >= .75 {
-					level = "high"
-				} else if ratio >= .25 {
-					level = "medium"
-				}
-				cardinalities = append(cardinalities, map[string]any{"dimension": dimension, "distinct_values": count, "limit": cardinalityLimit, "level": level, "query_builder_allowed": level != "extreme"})
+			if err := cardinalityRows.Scan(&dimension, &count); err != nil {
+				writeError(w, 500, "QUERY_FAILED", err.Error())
+				return
 			}
+			level := "low"
+			ratio := float64(0)
+			if cardinalityLimit > 0 {
+				ratio = float64(count) / float64(cardinalityLimit)
+			}
+			if ratio >= 1 {
+				level = "extreme"
+			} else if ratio >= .75 {
+				level = "high"
+			} else if ratio >= .25 {
+				level = "medium"
+			}
+			cardinalities = append(cardinalities, map[string]any{"dimension": dimension, "distinct_values": count, "limit": cardinalityLimit, "level": level, "query_builder_allowed": level != "extreme"})
+		}
+		if err := cardinalityRows.Err(); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 	}
-	issueRows, _ := s.DB.Query(r.Context(), `SELECT code,severity,event_name,message,sample,occurred_at FROM data_quality_issues WHERE site_id=$1 AND environment=$2 AND occurred_at >= $3 AND occurred_at < $4 ORDER BY occurred_at DESC LIMIT 100`, siteID, environment, from, to)
+	issueRows, issueErr := s.DB.Query(r.Context(), `SELECT code,severity,event_name,message,sample,occurred_at FROM data_quality_issues WHERE site_id=$1 AND environment=$2 AND occurred_at >= $3 AND occurred_at < $4 ORDER BY occurred_at DESC LIMIT 100`, siteID, environment, from, to)
+	if issueErr != nil {
+		writeError(w, 500, "QUERY_FAILED", issueErr.Error())
+		return
+	}
 	issues := []map[string]any{}
 	if issueRows != nil {
 		defer issueRows.Close()
@@ -702,11 +737,17 @@ func (s *Server) dataQualityReport(w http.ResponseWriter, r *http.Request) {
 			var code, severity, eventName, message string
 			var sample []byte
 			var occurred time.Time
-			if issueRows.Scan(&code, &severity, &eventName, &message, &sample, &occurred) == nil {
-				var sampleValue any
-				_ = json.Unmarshal(sample, &sampleValue)
-				issues = append(issues, map[string]any{"code": code, "severity": severity, "event_name": eventName, "message": message, "sample": sampleValue, "occurred_at": occurred})
+			if err := issueRows.Scan(&code, &severity, &eventName, &message, &sample, &occurred); err != nil {
+				writeError(w, 500, "QUERY_FAILED", err.Error())
+				return
 			}
+			var sampleValue any
+			_ = json.Unmarshal(sample, &sampleValue)
+			issues = append(issues, map[string]any{"code": code, "severity": severity, "event_name": eventName, "message": message, "sample": sampleValue, "occurred_at": occurred})
+		}
+		if err := issueRows.Err(); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
 		}
 	}
 	writeJSON(w, 200, map[string]any{"health_score": score, "environment": environment, "collector": map[string]any{"received": received, "accepted": accepted, "pending": pending, "inbox_lag_seconds": inboxLag, "dead_letters": deadLetters}, "quality": map[string]any{"duplicates": duplicates, "warnings": warnings, "rejected": rejected, "late_events": late, "missing_user_id": missingUser, "refused_user_id": refusedUser, "missing_feature": missingFeature, "unknown_network": unknownNetwork, "pii_blocked": piiBlocked, "pii_detected": piiDetected, "cardinality_violations": cardinality}, "cardinalities": cardinalities, "issues": issues})

@@ -207,9 +207,10 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 			for rows.Next() {
 				var name string
 				var count int64
-				if rows.Scan(&name, &count) == nil {
-					counts[name] = count
+				if err := rows.Scan(&name, &count); err != nil {
+					return err
 				}
+				counts[name] = count
 			}
 			for _, name := range []string{"view_item", "add_to_cart", "begin_checkout", "purchase"} {
 				steps = append(steps, map[string]any{"event": name, "users": counts[name]})

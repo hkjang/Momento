@@ -47,8 +47,8 @@ func (rep Reporter) AnomalyStates(ctx context.Context, siteID uuid.UUID, environ
 	defer rows.Close()
 	for rows.Next() {
 		var state AnomalyState
-		if rows.Scan(&state.Metric, &state.Severity, &state.FirstDetectedOn, &state.LastDetectedOn, &state.NotifiedOn, &state.ResolvedOn) != nil {
-			continue
+		if err := rows.Scan(&state.Metric, &state.Severity, &state.FirstDetectedOn, &state.LastDetectedOn, &state.NotifiedOn, &state.ResolvedOn); err != nil {
+			return out, err
 		}
 		state.DaysOpen = int(state.LastDetectedOn.Sub(state.FirstDetectedOn).Hours()/24) + 1
 		out[state.Metric] = state

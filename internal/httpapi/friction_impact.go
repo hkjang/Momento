@@ -141,9 +141,10 @@ func (s *Server) frictionImpactReport(ctx context.Context, siteID any, from, to 
 	collected := []impactRow{}
 	for rows.Next() {
 		var row impactRow
-		if rows.Scan(&row.Signal, &row.Affected, &row.AffectedConverters, &row.TotalPeople, &row.TotalConverters) == nil {
-			collected = append(collected, row)
+		if err := rows.Scan(&row.Signal, &row.Affected, &row.AffectedConverters, &row.TotalPeople, &row.TotalConverters); err != nil {
+			return nil, err
 		}
+		collected = append(collected, row)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

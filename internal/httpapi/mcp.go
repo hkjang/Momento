@@ -227,9 +227,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		for rows.Next() {
 			var label string
 			var events, users int64
-			if rows.Scan(&label, &events, &users) == nil {
-				out = append(out, map[string]any{"label": label, "events": events, "users": users})
+			if err := rows.Scan(&label, &events, &users); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"label": label, "events": events, "users": users})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -271,9 +277,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			var visitorIDs []string
 			var visitors, events, conversions int64
 			var firstSeen, linkedAt, lastSeen time.Time
-			if rows.Scan(&currentUser, &visitors, &visitorIDs, &firstSeen, &linkedAt, &lastSeen, &events, &conversions) == nil {
-				out = append(out, map[string]any{"user_id": currentUser, "visitor_count": visitors, "visitor_ids": visitorIDs, "first_seen": firstSeen, "linked_at": linkedAt, "last_seen": lastSeen, "events": events, "conversions": conversions, "confidence": 1, "source": "identify"})
+			if err := rows.Scan(&currentUser, &visitors, &visitorIDs, &firstSeen, &linkedAt, &lastSeen, &events, &conversions); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"user_id": currentUser, "visitor_count": visitors, "visitor_ids": visitorIDs, "first_seen": firstSeen, "linked_at": linkedAt, "last_seen": lastSeen, "events": events, "conversions": conversions, "confidence": 1, "source": "identify"})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -290,11 +302,17 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			var name, description string
 			var definition []byte
 			var shared bool
-			if rows.Scan(&name, &description, &definition, &shared) == nil {
-				var value any
-				_ = json.Unmarshal(definition, &value)
-				out = append(out, map[string]any{"name": name, "description": description, "definition": value, "shared": shared})
+			if err := rows.Scan(&name, &description, &definition, &shared); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			var value any
+			_ = json.Unmarshal(definition, &value)
+			out = append(out, map[string]any{"name": name, "description": description, "definition": value, "shared": shared})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -310,11 +328,17 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			var name, label, description, format, unit, status string
 			var definition []byte
 			var version int
-			if rows.Scan(&name, &label, &description, &definition, &format, &unit, &version, &status) == nil {
-				var value any
-				_ = json.Unmarshal(definition, &value)
-				out = append(out, map[string]any{"name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "version": version, "status": status})
+			if err := rows.Scan(&name, &label, &description, &definition, &format, &unit, &version, &status); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			var value any
+			_ = json.Unmarshal(definition, &value)
+			out = append(out, map[string]any{"name": name, "label": label, "description": description, "definition": value, "format": format, "unit": unit, "version": version, "status": status})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -439,9 +463,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		for rows.Next() {
 			var key, name, serviceName string
 			var events, users, sessions, conversions int64
-			if rows.Scan(&key, &name, &serviceName, &events, &users, &sessions, &conversions) == nil {
-				out = append(out, map[string]any{"site_id": key, "site_name": name, "service": serviceName, "events": events, "users": users, "sessions": sessions, "conversion_users": conversions})
+			if err := rows.Scan(&key, &name, &serviceName, &events, &users, &sessions, &conversions); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"site_id": key, "site_name": name, "service": serviceName, "events": events, "users": users, "sessions": sessions, "conversion_users": conversions})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -457,9 +487,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		for rows.Next() {
 			var feature string
 			var users, events, repeats, converted int64
-			if rows.Scan(&feature, &users, &events, &repeats, &converted) == nil {
-				out = append(out, map[string]any{"feature": feature, "users": users, "events": events, "repeat_users": repeats, "repeat_rate": percent(repeats, users), "conversion_rate": percent(converted, users), "dead_feature_candidate": users < 10 && percent(repeats, users) < 10})
+			if err := rows.Scan(&feature, &users, &events, &repeats, &converted); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"feature": feature, "users": users, "events": events, "repeat_users": repeats, "repeat_rate": percent(repeats, users), "conversion_rate": percent(converted, users), "dead_feature_candidate": users < 10 && percent(repeats, users) < 10})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))
@@ -485,9 +521,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 		for rows.Next() {
 			var signal string
 			var count, users, sessions int64
-			if rows.Scan(&signal, &count, &users, &sessions) == nil {
-				out = append(out, map[string]any{"signal": signal, "count": count, "users": users, "sessions": sessions})
+			if err := rows.Scan(&signal, &count, &users, &sessions); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"signal": signal, "count": count, "users": users, "sessions": sessions})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		// Counts alone tell an agent that something happened, not whether it cost
 		// anything, so the per-signal impact and its caveat travel with them.
@@ -525,9 +567,15 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req rpcRequest)
 			var deprecated bool
 			var volume int64
 			var last *time.Time
-			if rows.Scan(&name, &description, &owner, &version, &deprecated, &volume, &last) == nil {
-				out = append(out, map[string]any{"event": name, "description": description, "owner": owner, "version": version, "deprecated": deprecated, "volume": volume, "last_seen": last})
+			if err := rows.Scan(&name, &description, &owner, &version, &deprecated, &volume, &last); err != nil {
+				writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+				return
 			}
+			out = append(out, map[string]any{"event": name, "description": description, "owner": owner, "version": version, "deprecated": deprecated, "volume": volume, "last_seen": last})
+		}
+		if err := rows.Err(); err != nil {
+			writeJSON(w, 200, rpcResult(req.ID, mcpText(mcpFailure(err), true)))
+			return
 		}
 		body, _ := json.MarshalIndent(out, "", "  ")
 		writeJSON(w, 200, rpcResult(req.ID, mcpText(string(body), false)))

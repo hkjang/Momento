@@ -91,9 +91,10 @@ func (s *Server) resolveTraceSubject(ctx context.Context, siteID uuid.UUID, valu
 	linked := []string{}
 	for rows.Next() {
 		var visitorID string
-		if rows.Scan(&visitorID) == nil {
-			linked = append(linked, visitorID)
+		if err := rows.Scan(&visitorID); err != nil {
+			return subject, err
 		}
+		linked = append(linked, visitorID)
 	}
 	if len(linked) == 0 {
 		return subject, rows.Err()
@@ -374,9 +375,11 @@ func (s *Server) groupTraceSessions(ctx context.Context, siteID uuid.UUID, envir
 			Interactions      int64
 			ActiveMS          int64
 		}
-		if rows.Scan(&id, &value.Started, &value.Ended, &value.Events, &value.PageViews, &value.Conversions, &value.Engaged, &value.Landing, &value.Exit, &value.Interactions, &value.ActiveMS) == nil {
-			stored[id] = value
+		if err := rows.Scan(&id, &value.Started, &value.Ended, &value.Events, &value.PageViews, &value.Conversions, &value.Engaged, &value.Landing, &value.Exit, &value.Interactions, &value.ActiveMS); err != nil {
+			rows.Close()
+			return nil, err
 		}
+		stored[id] = value
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -454,9 +457,10 @@ func (s *Server) traceSummary(ctx context.Context, siteID uuid.UUID, environment
 			var value string
 			var count int64
 			var last time.Time
-			if rows.Scan(&value, &count, &last) == nil {
-				out = append(out, map[string]any{"value": value, "events": count, "last_seen": last})
+			if err := rows.Scan(&value, &count, &last); err != nil {
+				return err
 			}
+			out = append(out, map[string]any{"value": value, "events": count, "last_seen": last})
 		}
 		summary[key] = out
 		return rows.Err()
@@ -492,9 +496,10 @@ func (s *Server) traceIdentityLinks(ctx context.Context, siteID uuid.UUID, userI
 		var visitorID, source string
 		var first, linked, last time.Time
 		var confidence float64
-		if rows.Scan(&visitorID, &first, &linked, &last, &source, &confidence) == nil {
-			out = append(out, map[string]any{"visitor_id": visitorID, "first_seen": first, "linked_at": linked, "last_seen": last, "source": source, "confidence": confidence})
+		if err := rows.Scan(&visitorID, &first, &linked, &last, &source, &confidence); err != nil {
+			return nil, err
 		}
+		out = append(out, map[string]any{"visitor_id": visitorID, "first_seen": first, "linked_at": linked, "last_seen": last, "source": source, "confidence": confidence})
 	}
 	return out, rows.Err()
 }
@@ -517,9 +522,10 @@ func (s *Server) traceOtherSites(ctx context.Context, siteID uuid.UUID, userID s
 	for rows.Next() {
 		var siteKey, name string
 		var first, last time.Time
-		if rows.Scan(&siteKey, &name, &first, &last) == nil {
-			out = append(out, map[string]any{"site_id": siteKey, "name": name, "first_seen": first, "last_seen": last})
+		if err := rows.Scan(&siteKey, &name, &first, &last); err != nil {
+			return nil, err
 		}
+		out = append(out, map[string]any{"site_id": siteKey, "name": name, "first_seen": first, "last_seen": last})
 	}
 	return out, rows.Err()
 }
@@ -578,8 +584,10 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	for identityRows.Next() {
 		var userID, department, organization, visitorID string
-		if identityRows.Scan(&userID, &department, &organization, &visitorID) != nil {
-			continue
+		if err := identityRows.Scan(&userID, &department, &organization, &visitorID); err != nil {
+			identityRows.Close()
+			writeQueryError(w, err)
+			return
 		}
 		matchedBy, matchedValue := "user_id", userID
 		lowered := strings.ToLower(query)
@@ -592,6 +600,11 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		addRow(visitorID, userID, matchedBy, matchedValue)
 	}
+	if err := identityRows.Err(); err != nil {
+		identityRows.Close()
+		writeQueryError(w, err)
+		return
+	}
 	identityRows.Close()
 
 	// 2. Visitor ID fragment, for tracing from a support ticket or a log line.
@@ -602,9 +615,17 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	for visitorRows.Next() {
 		var visitorID, userID string
-		if visitorRows.Scan(&visitorID, &userID) == nil {
-			addRow(visitorID, userID, "visitor_id", visitorID)
+		if err := visitorRows.Scan(&visitorID, &userID); err != nil {
+			visitorRows.Close()
+			writeQueryError(w, err)
+			return
 		}
+		addRow(visitorID, userID, "visitor_id", visitorID)
+	}
+	if err := visitorRows.Err(); err != nil {
+		visitorRows.Close()
+		writeQueryError(w, err)
+		return
 	}
 	visitorRows.Close()
 
@@ -620,14 +641,21 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	for activityRows.Next() {
 		var visitorID, userID, eventName, pageURL string
-		if activityRows.Scan(&visitorID, &userID, &eventName, &pageURL) != nil {
-			continue
+		if err := activityRows.Scan(&visitorID, &userID, &eventName, &pageURL); err != nil {
+			activityRows.Close()
+			writeQueryError(w, err)
+			return
 		}
 		matchedBy, matchedValue := "event", eventName
 		if strings.Contains(strings.ToLower(pageURL), strings.ToLower(query)) {
 			matchedBy, matchedValue = "page", pageURL
 		}
 		addRow(visitorID, userID, matchedBy, matchedValue)
+	}
+	if err := activityRows.Err(); err != nil {
+		activityRows.Close()
+		writeQueryError(w, err)
+		return
 	}
 	activityRows.Close()
 
@@ -649,13 +677,20 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 		var visitorID string
 		var first, last time.Time
 		var events, conversions, sessions int64
-		if summaryRows.Scan(&visitorID, &first, &last, &events, &conversions, &sessions) != nil {
-			continue
+		if err := summaryRows.Scan(&visitorID, &first, &last, &events, &conversions, &sessions); err != nil {
+			summaryRows.Close()
+			writeQueryError(w, err)
+			return
 		}
 		if row, ok := results[visitorID]; ok {
 			row["first_seen"], row["last_seen"] = first, last
 			row["events"], row["conversions"], row["sessions"] = events, conversions, sessions
 		}
+	}
+	if err := summaryRows.Err(); err != nil {
+		summaryRows.Close()
+		writeQueryError(w, err)
+		return
 	}
 	summaryRows.Close()
 
@@ -696,9 +731,10 @@ func (s *Server) attributionTouchSites(ctx context.Context, r *http.Request, sit
 	out := []uuid.UUID{}
 	for rows.Next() {
 		var id uuid.UUID
-		if rows.Scan(&id) == nil {
-			out = append(out, id)
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
 		}
+		out = append(out, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

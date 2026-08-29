@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -69,16 +70,20 @@ func (s *Server) encryptionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recoverable, unrecoverable, pending := 0, 0, 0
-	count := func(query string) {
+	// A column this read cannot finish is not a column of zero unrecoverable
+	// keys. Every one of these numbers reads as reassurance, so a partial count
+	// is worse than no answer: it says the stored secrets are fine when nobody
+	// looked at them.
+	count := func(query string) error {
 		rows, err := s.DB.Query(r.Context(), query)
 		if err != nil {
-			return
+			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
 			var stored *string
-			if rows.Scan(&stored) != nil {
-				continue
+			if err := rows.Scan(&stored); err != nil {
+				return err
 			}
 			if stored == nil || *stored == "" {
 				unrecoverable++
@@ -93,10 +98,18 @@ func (s *Server) encryptionStatus(w http.ResponseWriter, r *http.Request) {
 				pending++
 			}
 		}
+		return rows.Err()
 	}
-	count(`SELECT tracking_key_secret FROM sites`)
-	count(`SELECT server_api_key_secret FROM sites`)
-	count(`SELECT token_secret FROM api_keys WHERE revoked_at IS NULL`)
+	for _, query := range []string{
+		`SELECT tracking_key_secret FROM sites`,
+		`SELECT server_api_key_secret FROM sites`,
+		`SELECT token_secret FROM api_keys WHERE revoked_at IS NULL`,
+	} {
+		if err := count(query); err != nil {
+			writeError(w, 500, "QUERY_FAILED", err.Error())
+			return
+		}
+	}
 	out["recoverable_keys"] = recoverable
 	out["unrecoverable_keys"] = unrecoverable
 	out["pending_reseal"] = pending
@@ -185,9 +198,18 @@ func (s *Server) rekeySecrets(w http.ResponseWriter, r *http.Request) {
 		{"api_keys", "token_secret"},
 		{"delivery_channels", "headers_secret"},
 	} {
-		ok, bad := s.resealColumn(r.Context(), target.table, target.column)
+		ok, bad, err := s.resealColumn(r.Context(), target.table, target.column)
 		resealed += ok
 		failed += bad
+		if err != nil {
+			// Some secrets may already carry the new key. Saying "resealed N,
+			// failed 0" here would report a complete rekey over a column this
+			// never managed to read, and the next key retirement would drop
+			// secrets nobody knew were still sealed with the old one.
+			s.audit(r.Context(), &p, "encryption.rekey", "setting", "encryption", map[string]any{"resealed": resealed, "failed": failed, "incomplete": target.table + "." + target.column}, clientIP(r))
+			writeError(w, 500, "REKEY_INCOMPLETE", fmt.Sprintf("resealed %d and failed %d before %s.%s could not be read: %v", resealed, failed, target.table, target.column, err))
+			return
+		}
 	}
 	if ok, bad := s.resealOIDCSecret(r.Context()); ok {
 		resealed++
@@ -198,11 +220,11 @@ func (s *Server) rekeySecrets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"resealed": resealed, "failed": failed, "key_id": s.Secrets.KeyID()})
 }
 
-func (s *Server) resealColumn(ctx context.Context, table, column string) (int, int) {
+func (s *Server) resealColumn(ctx context.Context, table, column string) (int, int, error) {
 	// table and column come from a fixed list above, never from user input.
 	rows, err := s.DB.Query(ctx, `SELECT id,`+column+` FROM `+table+` WHERE `+column+` IS NOT NULL`)
 	if err != nil {
-		return 0, 0
+		return 0, 0, err
 	}
 	type pending struct {
 		id    uuid.UUID
@@ -213,8 +235,9 @@ func (s *Server) resealColumn(ctx context.Context, table, column string) (int, i
 	for rows.Next() {
 		var id uuid.UUID
 		var stored string
-		if rows.Scan(&id, &stored) != nil {
-			continue
+		if err := rows.Scan(&id, &stored); err != nil {
+			rows.Close()
+			return 0, 0, err
 		}
 		if !s.Secrets.NeedsReseal(stored) {
 			continue
@@ -231,6 +254,10 @@ func (s *Server) resealColumn(ctx context.Context, table, column string) (int, i
 		}
 		updates = append(updates, pending{id: id, value: sealed})
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, 0, err
+	}
 	rows.Close()
 	resealed := 0
 	for _, item := range updates {
@@ -240,7 +267,7 @@ func (s *Server) resealColumn(ctx context.Context, table, column string) (int, i
 			failed++
 		}
 	}
-	return resealed, failed
+	return resealed, failed, nil
 }
 
 func (s *Server) resealOIDCSecret(ctx context.Context) (bool, bool) {

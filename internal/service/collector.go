@@ -149,6 +149,9 @@ func (s CollectorService) Accept(ctx context.Context, req model.CollectRequest, 
 		contracts.versions[version] = item
 		definitions[name] = contracts
 	}
+	if err := definitionRows.Err(); err != nil {
+		return 0, err
+	}
 	definitionRows.Close()
 	for i := range req.Events {
 		contracts, known := definitions[req.Events[i].Name]

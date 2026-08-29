@@ -300,9 +300,10 @@ func (s *Server) overviewTrend(ctx context.Context, siteID uuid.UUID, environmen
 	for rows.Next() {
 		var day string
 		var users, sessions, views, events, conversions int64
-		if rows.Scan(&day, &users, &sessions, &views, &events, &conversions) == nil {
-			trend = append(trend, map[string]any{"date": day, "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
+		if err := rows.Scan(&day, &users, &sessions, &views, &events, &conversions); err != nil {
+			return nil, err
 		}
+		trend = append(trend, map[string]any{"date": day, "users": users, "sessions": sessions, "page_views": views, "events": events, "conversions": conversions})
 	}
 	return trend, rows.Err()
 }
@@ -1206,25 +1207,26 @@ func (s *Server) runFunnelContext(ctx context.Context, siteID uuid.UUID, in funn
 		var index int
 		var users int64
 		var seconds float64
-		if rows.Scan(&index, &users, &seconds) == nil {
-			if index == 1 {
-				first = users
-			}
-			prevUsers := first
-			if len(out) > 0 {
-				prevUsers = out[len(out)-1]["users"].(int64)
-			}
-			rate := float64(0)
-			if prevUsers > 0 {
-				rate = float64(users) * 100 / float64(prevUsers)
-			}
-			out = append(out, map[string]any{"step": index, "name": in.Steps[index-1].Name, "event": in.Steps[index-1].Event, "users": users, "step_conversion_rate": rate, "overall_conversion_rate": func() float64 {
-				if first == 0 {
-					return 0
-				}
-				return float64(users) * 100 / float64(first)
-			}(), "avg_seconds": seconds})
+		if err := rows.Scan(&index, &users, &seconds); err != nil {
+			return nil, err
 		}
+		if index == 1 {
+			first = users
+		}
+		prevUsers := first
+		if len(out) > 0 {
+			prevUsers = out[len(out)-1]["users"].(int64)
+		}
+		rate := float64(0)
+		if prevUsers > 0 {
+			rate = float64(users) * 100 / float64(prevUsers)
+		}
+		out = append(out, map[string]any{"step": index, "name": in.Steps[index-1].Name, "event": in.Steps[index-1].Event, "users": users, "step_conversion_rate": rate, "overall_conversion_rate": func() float64 {
+			if first == 0 {
+				return 0
+			}
+			return float64(users) * 100 / float64(first)
+		}(), "avg_seconds": seconds})
 	}
 	return out, rows.Err()
 }

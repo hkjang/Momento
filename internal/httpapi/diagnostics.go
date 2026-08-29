@@ -161,7 +161,10 @@ func (s *Server) observedOrigins(r *http.Request, siteID uuid.UUID) []string {
 	out := []string{}
 	for rows.Next() {
 		var page *string
-		if rows.Scan(&page) != nil || page == nil {
+		if err := rows.Scan(&page); err != nil {
+			return []string{}
+		}
+		if page == nil {
 			continue
 		}
 		parsed, err := url.Parse(*page)
@@ -174,6 +177,9 @@ func (s *Server) observedOrigins(r *http.Request, siteID uuid.UUID) []string {
 		}
 		seen[host] = true
 		out = append(out, host)
+	}
+	if err := rows.Err(); err != nil {
+		return []string{}
 	}
 	return out
 }
