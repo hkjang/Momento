@@ -1375,6 +1375,22 @@ func (w Worker) cleanupOnce(ctx context.Context) (map[string]int64, error) {
 		`last_event_at < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=sessions.site_id),25))`); err != nil {
 		return removed, err
 	}
+	// visitor_sessions is the visitor-to-session index, and it carries the same
+	// mapping the identity tables do — visitor, session, and the SSO user id the
+	// collector back-fills onto it — plus the first and last time that person was
+	// seen in that session. The fix below covered visitor_identities, visitors and
+	// identified_users and walked past this one, so nothing had ever deleted a row
+	// from it. Erasing one person is safe because that path rebuilds the derived
+	// tables from what survives; the retention window is the path that deletes
+	// incrementally, and it left every row here standing.
+	//
+	// It describes a session, so it expires with one, on the same rule and from
+	// the same policy column the sessions table uses. The index on
+	// (site_id, last_seen DESC) makes the pass a range scan.
+	if err := drop("visitor_sessions",
+		`last_seen < now()-make_interval(months=>coalesce((SELECT p.session_months FROM retention_policies p WHERE p.site_id=visitor_sessions.site_id),25))`); err != nil {
+		return removed, err
+	}
 	// Nothing bounded the identity tables. Once retention removed a person's events
 	// and sessions, their visitor_id -> user_id mapping and per-visitor aggregate
 	// stayed behind with no policy and no expiry, and the identities screen went on
