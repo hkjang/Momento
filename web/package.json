@@ -1,6 +1,6 @@
 {
   "name": "momento-console",
-  "version": "0.34.38",
+  "version": "0.34.39",
   "private": true,
   "type": "module",
   "scripts": {
