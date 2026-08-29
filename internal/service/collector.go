@@ -833,14 +833,27 @@ func boolInt(value bool) int64 {
 	return 0
 }
 
+// matchSet turns a configured list of names into the set the filters match
+// against. One function because the filter and the counter that reports it are
+// one decision made twice: the counter trimmed each configured name and the
+// filter did not, so a rule stored with a space around it — which the API
+// accepts, even though the console trims — was counted as blocked on the data
+// quality screen and stored anyway.
+func matchSet(names []string) map[string]bool {
+	set := make(map[string]bool, len(names))
+	for _, name := range names {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			set[name] = true
+		}
+	}
+	return set
+}
+
 func filteredProperties(in map[string]any, blocked []string) map[string]any {
 	out := make(map[string]any, len(in))
-	blockedSet := make(map[string]bool, len(blocked))
-	for _, key := range blocked {
-		blockedSet[strings.ToLower(key)] = true
-	}
+	blockedSet := matchSet(blocked)
 	for key, value := range in {
-		if !blockedSet[strings.ToLower(key)] {
+		if !blockedSet[strings.ToLower(strings.TrimSpace(key))] {
 			out[key] = filterNested(value, blockedSet)
 		}
 	}
@@ -848,10 +861,7 @@ func filteredProperties(in map[string]any, blocked []string) map[string]any {
 }
 
 func countPrivacyBlocked(req model.CollectRequest, blocked []string) int {
-	blockedSet := make(map[string]bool, len(blocked))
-	for _, key := range blocked {
-		blockedSet[strings.ToLower(strings.TrimSpace(key))] = true
-	}
+	blockedSet := matchSet(blocked)
 	count := countBlockedProperties(req.UserProperties, blockedSet)
 	count += countBlockedProperties(req.SessionProperties, blockedSet)
 	for _, event := range req.Events {
@@ -867,7 +877,7 @@ func countPrivacyBlocked(req model.CollectRequest, blocked []string) int {
 func countBlockedProperties(properties map[string]any, blocked map[string]bool) int {
 	count := 0
 	for key, value := range properties {
-		if blocked[strings.ToLower(key)] {
+		if blocked[strings.ToLower(strings.TrimSpace(key))] {
 			count++
 			continue
 		}
@@ -1145,7 +1155,7 @@ func filterNested(value any, blocked map[string]bool) any {
 	case map[string]any:
 		out := map[string]any{}
 		for key, nested := range current {
-			if !blocked[strings.ToLower(key)] {
+			if !blocked[strings.ToLower(strings.TrimSpace(key))] {
 				out[key] = filterNested(nested, blocked)
 			}
 		}
@@ -1176,9 +1186,15 @@ func sanitizeURL(raw string, privacy privacyConfig) string {
 		u.RawQuery = ""
 		return u.String()
 	}
+	// Matched the way the blocked property list is matched. These are two lists on
+	// one settings screen and they behaved differently: a rule of "token" masked
+	// ?token= and let ?Token= through, while the same rule blocked a property named
+	// Token. Nothing on the screen said which list was which, and the parameter an
+	// enterprise application actually sends is as often PascalCase as lower.
+	masked := matchSet(privacy.MaskedParameters)
 	q := u.Query()
-	for _, key := range privacy.MaskedParameters {
-		if q.Has(key) {
+	for key := range q {
+		if masked[strings.ToLower(strings.TrimSpace(key))] {
 			q.Set(key, "[MASKED]")
 		}
 	}

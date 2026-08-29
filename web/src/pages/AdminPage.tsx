@@ -2454,6 +2454,7 @@ function PrivacyAdmin() {
           </TextField>
           <TextField
             label="마스킹할 URL Parameter"
+            helperText="대소문자를 구분하지 않습니다. 브라우저 SDK는 URL의 Query String을 전송하지 않으므로, 이 목록과 위의 「URL Query String 전체 제거」는 Server API Key로 직접 전송되는 Event에 적용됩니다."
             value={((v.masked_parameters as string[]) || []).join(", ")}
             onChange={(e) =>
               set(
@@ -2467,6 +2468,7 @@ function PrivacyAdmin() {
           />
           <TextField
             label="차단할 Event Property"
+            helperText="대소문자를 구분하지 않으며 중첩된 Property에도 적용됩니다."
             value={((v.blocked_properties as string[]) || []).join(", ")}
             onChange={(e) =>
               set(
