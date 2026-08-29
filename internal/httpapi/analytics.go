@@ -854,7 +854,13 @@ func (s *Server) query(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		vals, err := rows.Values()
 		if err != nil {
-			continue
+			// Dropping this row would answer the question with a smaller number
+			// than the data holds, and nothing in the response would differ from a
+			// period that really was that quiet.
+			s.finishQueryAudit(reportCtx, auditID, started, len(result), "failed", err.Error())
+			auditComplete = true
+			writeQueryError(w, err)
+			return
 		}
 		item := map[string]any{}
 		for i, c := range columns {
@@ -913,8 +919,15 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="momento-events.ndjson"`)
 		enc := json.NewEncoder(w)
 		written := 0
+		var readErr error
 		for rows.Next() {
-			vals, _ := rows.Values()
+			vals, valueErr := rows.Values()
+			if valueErr != nil {
+				// The rows are indexed by position just below. A discarded error
+				// leaves vals nil, and the next line reads vals[13] off it.
+				readErr = valueErr
+				break
+			}
 			properties := vals[13]
 			if raw, ok := properties.([]byte); ok {
 				properties = json.RawMessage(raw)
@@ -922,7 +935,10 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 			_ = enc.Encode(map[string]any{"event_id": exportUUID(vals[0]), "timestamp": vals[1], "event_name": vals[2], "visitor_id": vals[3], "session_id": vals[4], "user_id": vals[5], "page_url": vals[6], "source": vals[7], "medium": vals[8], "campaign": vals[9], "device_type": vals[10], "browser": vals[11], "network": vals[12], "properties": properties, "environment": vals[14], "contract_version": vals[15]})
 			written++
 		}
-		if note := exportOutcome(rows.Err(), written); note != "" {
+		if readErr == nil {
+			readErr = rows.Err()
+		}
+		if note := exportOutcome(readErr, written); note != "" {
 			_ = enc.Encode(map[string]any{"momento_export": note})
 		}
 		return
@@ -933,8 +949,13 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 	written := 0
 	cw := csv.NewWriter(w)
 	_ = cw.Write([]string{"event_id", "timestamp", "event_name", "visitor_id", "session_id", "user_id", "page_url", "source", "medium", "campaign", "device_type", "browser", "network", "properties", "environment", "contract_version"})
+	var readErr error
 	for rows.Next() {
-		vals, _ := rows.Values()
+		vals, valueErr := rows.Values()
+		if valueErr != nil {
+			readErr = valueErr
+			break
+		}
 		record := make([]string, len(vals))
 		for i, v := range vals {
 			if v != nil {
@@ -953,7 +974,10 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 		_ = cw.Write(record)
 		written++
 	}
-	if note := exportOutcome(rows.Err(), written); note != "" {
+	if readErr == nil {
+		readErr = rows.Err()
+	}
+	if note := exportOutcome(readErr, written); note != "" {
 		_ = cw.Write(exportNote(note))
 	}
 	cw.Flush()

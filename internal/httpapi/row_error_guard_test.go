@@ -31,10 +31,20 @@ func TestEveryRowLoopReportsItsFailures(t *testing.T) {
 		t.Fatalf("resolve source root: %v", err)
 	}
 	loopStart := regexp.MustCompile(`for (\w+)\.Next\(\)`)
-	// Both ways of throwing the error away: comparing it inline without binding
-	// it, and binding it only to take the success path.
-	discarded := regexp.MustCompile(`\.Scan\([^;\n]*\)\s*(==|!=)\s*nil`)
-	successOnly := regexp.MustCompile(`if err := \w+\.Scan\([^;\n]*\); err == nil \{`)
+	// Scan is not the only way to read a row. The first version of this test named
+	// that one method, so three loops reading rows.Values() walked straight past
+	// it — including the query builder, which dropped a failed row with continue
+	// and answered with a smaller number than the data holds, and two exports
+	// which discarded the error and then indexed the nil slice it returns.
+	//
+	// A rule written in terms of the method a loop happens to call covers the
+	// calls somebody thought of. This one is written in terms of the read.
+	read := `(?:Scan|Values|RawValues)`
+	// Every way of throwing the error away: comparing it inline without binding
+	// it, binding it only to take the success path, and assigning it to _.
+	discarded := regexp.MustCompile(`\.` + read + `\([^;\n]*\)\s*(==|!=)\s*nil`)
+	successOnly := regexp.MustCompile(`if err := \w+\.` + read + `\([^;\n]*\); err == nil \{`)
+	blankHole := regexp.MustCompile(`, _ (?::)?= \w+\.` + read + `\(`)
 
 	checked := 0
 	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -67,19 +77,23 @@ func TestEveryRowLoopReportsItsFailures(t *testing.T) {
 			body := strings.Join(lines[index:end+1], "\n")
 			checked++
 
+			if blankHole.MatchString(body) {
+				t.Errorf("%s:%d loops over %s and assigns the read error to _: the values it goes on to index are nil when that error is set",
+					rel, index+1, rows)
+			}
 			if discarded.MatchString(body) || successOnly.MatchString(body) {
-				t.Errorf("%s:%d loops over %s and throws the scan error away: a column that stops scanning fails on every row, so the caller is handed an empty list and no reason for it",
+				t.Errorf("%s:%d loops over %s and throws the read error away: a column that stops reading fails on every row, so the caller is handed an empty list and no reason for it",
 					rel, index+1, rows)
 			}
 			// The failure has to leave the loop. A bare continue is the same
 			// silence written differently: the row is gone and nobody is told.
-			for _, fragment := range strings.Split(body, "; err != nil {")[1:] {
+			for _, fragment := range strings.Split(body, "err != nil {")[1:] {
 				block := fragment
 				if close := strings.Index(block, "\n\t\t}"); close > 0 {
 					block = block[:close]
 				}
 				if strings.TrimSpace(strings.ReplaceAll(block, "\n", "")) == "continue" {
-					t.Errorf("%s:%d loops over %s and answers a scan failure with continue, which drops the row as quietly as ignoring the error would",
+					t.Errorf("%s:%d loops over %s and answers a read failure with continue, which drops the row as quietly as ignoring the error would",
 						rel, index+1, rows)
 				}
 			}
