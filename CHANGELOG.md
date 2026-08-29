@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.34.34
+
+- **저장한 Segment가 조회 기간 도중에 뜻을 바꾸고 있었습니다.** v0.34.33이 사내망 여부의 덮어쓰기를 멈추면서, **같은 직원이 릴리스 이전에는 `internal_traffic`이고 이후에는 `normal`**이 됐습니다. `traffic.class = normal`로 저장한 Segment는 날짜의 한쪽에서 그 사람을 포함하고 다른 쪽에서 떨어뜨렸습니다 — **하나의 기간 안에서**, 화면에는 이유를 말해 주는 것 없이. 리포트는 데이터가 바뀔 때 바뀌어야지 정의가 바뀔 때 바뀌면 안 됩니다.
+- `analytics_events`에 **`client_class`**가 생겼습니다 — "어떤 클라이언트가 보냈는가"에 대한 답이며 경계의 양쪽에서 같게 읽힙니다. `internal_traffic`으로 저장된 Event는 **그 클라이언트가 다른 무엇으로도 분류되지 않았다는 뜻**이므로 `normal`로 읽힙니다.
+- `raw_events.traffic_class`는 실제로 쓰인 값을 유지합니다 — Tracking Debugger가 보여 주는 값이자, 어떤 행이 왜 그렇게 보이는지 물을 때 필요한 값입니다.
+- 분석을 위해 분류를 읽는 두 곳(Segment 필드 `traffic.class`, Semantic Metric의 `traffic_class` 필터)이 `client_class`를 읽습니다.
+
 ## v0.34.33
 
 - **봇을 걸러내라는 가이드의 안내가 사내 인원 전체를 지우고 있었습니다.** `traffic_class`가 **서로 관계없는 두 사실**을 담고 있었기 때문입니다 — 수집기는 User-Agent로 클라이언트를 분류한 뒤, 주소가 등록된 사내망에 맞으면 그 답을 **`internal_traffic`으로 덮어썼습니다.** 온프레미스에서는 구조상 대부분이 사내망이므로 가이드가 권한 `traffic.class = normal`은 **모든 직원을 떨어뜨렸고**, 사내망 크롤러는 **크롤러가 아니라 사내 트래픽으로 기록되어** 어떤 `traffic.class` 필터로도 찾을 수 없었습니다. 안내의 양쪽이 서로 반대 방향으로 못 쓰게 되어 있었습니다.
