@@ -418,7 +418,7 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			vitals = rowsToList(rows, func() (map[string]any, error) {
+			vitals, err = rowsToList(rows, func() (map[string]any, error) {
 				var metric, page string
 				var samples, good int64
 				var average, p75 float64
@@ -429,6 +429,9 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 				}
 				return map[string]any{"metric": metric, "page": page, "samples": samples, "average": average, "p75": p75, "good_rate": goodRate}, err
 			})
+			if err != nil {
+				return err
+			}
 			return nil
 		},
 		func(ctx context.Context) error {
@@ -437,13 +440,16 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			errorsOut = rowsToList(rows, func() (map[string]any, error) {
+			errorsOut, err = rowsToList(rows, func() (map[string]any, error) {
 				var eventName, message, page string
 				var count, users int64
 				var lastSeen time.Time
 				err := rows.Scan(&eventName, &message, &page, &count, &users, &lastSeen)
 				return map[string]any{"event": eventName, "message": message, "page": page, "count": count, "affected_users": users, "last_seen": lastSeen}, err
 			})
+			if err != nil {
+				return err
+			}
 			return nil
 		},
 		func(ctx context.Context) error {
@@ -460,7 +466,7 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			releases = rowsToList(rows, func() (map[string]any, error) {
+			releases, err = rowsToList(rows, func() (map[string]any, error) {
 				var release string
 				var events, users, errors int64
 				var conversionRate float64
@@ -468,6 +474,9 @@ func (s *Server) experienceReport(w http.ResponseWriter, r *http.Request) {
 				err := rows.Scan(&release, &events, &users, &errors, &conversionRate, &lastSeen)
 				return map[string]any{"release": release, "events": events, "users": users, "errors": errors, "user_conversion_rate": conversionRate, "last_seen": lastSeen}, err
 			})
+			if err != nil {
+				return err
+			}
 			return nil
 		},
 	}
@@ -661,12 +670,16 @@ func (s *Server) naturalLanguageAnalytics(w http.ResponseWriter, r *http.Request
 			writeError(w, 500, "QUERY_FAILED", queryErr.Error())
 			return
 		}
-		items := rowsToList(rows, func() (map[string]any, error) {
+		items, listErr := rowsToList(rows, func() (map[string]any, error) {
 			var label string
 			var events, users int64
 			err := rows.Scan(&label, &events, &users)
 			return map[string]any{"label": label, "events": events, "users": users}, err
 		})
+		if listErr != nil {
+			writeQueryError(w, listErr)
+			return
+		}
 		result = items
 		if len(items) > 0 {
 			answer = fmt.Sprintf("가장 많이 사용된 %s은(는) %s이며 %d건입니다.", dimension, items[0]["label"], items[0]["events"])

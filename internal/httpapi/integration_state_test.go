@@ -1027,6 +1027,47 @@ func TestSearchNumbersAreCorrectAndAgreeAcrossPaths(t *testing.T) {
 	}
 }
 
+// The tracking debugger is the screen an operator opens to watch events arrive.
+//
+// Its scan read network_name into a string, and network_name is null for
+// anything from outside a named internal network — which is most events. The
+// scan failed on every one of those rows, and the failure was dropped by the
+// helper that built the list, so the screen omitted them. With no internal
+// networks configured it showed nothing at all, which is exactly what "nothing
+// is arriving" looks like: the one conclusion this screen exists to rule out.
+func TestTheTrackingDebuggerShowsEventsWithNoNetwork(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	ctx := context.Background()
+
+	var withoutNetwork int64
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM raw_events WHERE site_id=$1 AND network_name IS NULL`, f.siteID).Scan(&withoutNetwork); err != nil {
+		t.Fatalf("count events with no network: %v", err)
+	}
+	if withoutNetwork == 0 {
+		t.Fatal("every seeded event carries a network, so this cannot tell a screen that drops them from one that does not")
+	}
+
+	rows, _ := f.get(t, "/api/v1/tracking-debugger?site_id="+f.siteKey)["events"].([]any)
+	if len(rows) == 0 {
+		t.Fatal("the debugger shows nothing, which is what an operator reads as nothing arriving")
+	}
+	seen := 0
+	for _, row := range rows {
+		event, _ := row.(map[string]any)
+		if event == nil {
+			continue
+		}
+		if event["network"] == nil {
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Errorf("the debugger listed %d events and none of them has a null network, while the site holds %d such events: they are being dropped",
+			len(rows), withoutNetwork)
+	}
+}
+
 // callMCP invokes one tool and returns its text payload, which is where every
 // tool puts its answer.
 func (f fixture) callMCP(t *testing.T, tool, arguments string) string {

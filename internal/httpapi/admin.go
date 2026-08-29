@@ -888,24 +888,33 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	events := rowsToList(rows, func() (map[string]any, error) {
+	events, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var eventID uuid.UUID
 		var occurred, received time.Time
-		var name, visitor, session, network, traffic, environment string
+		var name, visitor, session, traffic, environment string
 		var contractVersion int
-		var page, ip *string
+		// network_name is null for anything arriving from outside a named
+		// internal network, which is most events. Scanning it into a string
+		// failed on every one of those rows — and the failure was dropped, so the
+		// debugger an operator opens to watch events arrive silently omitted
+		// them, or showed nothing at all.
+		var page, ip, network *string
 		var raw []byte
 		err := rows.Scan(&eventID, &occurred, &received, &name, &visitor, &session, &page, &ip, &network, &raw, &traffic, &environment, &contractVersion)
 		var props any
 		_ = json.Unmarshal(raw, &props)
 		return map[string]any{"event_id": eventID, "event_timestamp": occurred, "received_at": received, "event_name": name, "visitor_id": visitor, "session_id": session, "page_url": page, "client_ip": ip, "network": network, "properties": props, "traffic_class": traffic, "environment": environment, "contract_version": contractVersion}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	errorRows, err := s.DB.Query(r.Context(), `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	errorsList := rowsToList(errorRows, func() (map[string]any, error) {
+	errorsList, listErr := rowsToList(errorRows, func() (map[string]any, error) {
 		var id int64
 		var site string
 		var attempts int
@@ -914,6 +923,10 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 		err := errorRows.Scan(&id, &site, &attempts, &message, &created)
 		return map[string]any{"receipt_id": id, "site_id": site, "attempts": attempts, "error": message, "created_at": created}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, map[string]any{"events": events, "errors": errorsList})
 }
 

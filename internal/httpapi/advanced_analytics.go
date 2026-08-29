@@ -137,7 +137,7 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var sessionID, visitorID string
 		var userID, landing, exitPage, source, medium, campaign, device *string
 		var started, last time.Time
@@ -147,6 +147,10 @@ func (s *Server) sessionReport(w http.ResponseWriter, r *http.Request) {
 		err := rows.Scan(&sessionID, &visitorID, &userID, &started, &last, &duration, &events, &pageViews, &conversions, &engaged, &activeMS, &heartbeats, &interactions, &landing, &exitPage, &source, &medium, &campaign, &device)
 		return map[string]any{"session_id": sessionID, "visitor_id": visitorID, "user_id": userID, "started_at": started, "last_event_at": last, "duration_seconds": duration, "events": events, "page_views": pageViews, "conversions": conversions, "engaged": engaged, "active_engagement_ms": activeMS, "heartbeat_count": heartbeats, "interaction_count": interactions, "landing_page": landing, "exit_page": exitPage, "source": source, "medium": medium, "campaign": campaign, "device_type": device}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -181,13 +185,16 @@ func (s *Server) ecommerceReport(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			products = rowsToList(rows, func() (map[string]any, error) {
+			products, err = rowsToList(rows, func() (map[string]any, error) {
 				var itemID, name, category, brand string
 				var quantity, itemRevenue float64
 				var purchases int64
 				err := rows.Scan(&itemID, &name, &category, &brand, &quantity, &itemRevenue, &purchases)
 				return map[string]any{"item_id": itemID, "item_name": name, "category": category, "brand": brand, "quantity": quantity, "revenue": itemRevenue, "transactions": purchases}, err
 			})
+			if err != nil {
+				return err
+			}
 			return rows.Err()
 		},
 		func(stepCtx context.Context) error {

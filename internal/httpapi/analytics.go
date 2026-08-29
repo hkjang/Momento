@@ -307,16 +307,28 @@ func (s *Server) overviewTrend(ctx context.Context, siteID uuid.UUID, environmen
 	return trend, rows.Err()
 }
 
-func rowsToList(rows pgx.Rows, scan func() (map[string]any, error)) []map[string]any {
+// rowsToList collects a result set into the rows a screen draws.
+//
+// It used to drop a row whose scan failed and return what it had, and never look
+// at rows.Err() — so a read that failed partway, or a column whose type stopped
+// matching, produced a shorter list or an empty one, and the screen drew it as
+// the answer. An empty list is what a site with no data looks like; a shorter one
+// is not visibly anything at all.
+//
+// A scan failure is not one bad row, either. The scan is the same for every row,
+// so a type that no longer matches fails all of them, and seventeen call sites
+// would have answered "nothing to show" in unison.
+func rowsToList(rows pgx.Rows, scan func() (map[string]any, error)) ([]map[string]any, error) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
 		v, err := scan()
-		if err == nil {
-			out = append(out, v)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, v)
 	}
-	return out
+	return out, rows.Err()
 }
 func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
@@ -340,12 +352,15 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			topEvents = rowsToList(rows, func() (map[string]any, error) {
+			topEvents, err = rowsToList(rows, func() (map[string]any, error) {
 				var n string
 				var c, u int64
 				err := rows.Scan(&n, &c, &u)
 				return map[string]any{"name": n, "count": c, "users": u}, err
 			})
+			if err != nil {
+				return err
+			}
 			return rows.Err()
 		},
 		func(stepCtx context.Context) error {
@@ -353,12 +368,15 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			topPages = rowsToList(rows, func() (map[string]any, error) {
+			topPages, err = rowsToList(rows, func() (map[string]any, error) {
 				var n string
 				var c, u int64
 				err := rows.Scan(&n, &c, &u)
 				return map[string]any{"name": n, "count": c, "users": u}, err
 			})
+			if err != nil {
+				return err
+			}
 			return rows.Err()
 		},
 		func(stepCtx context.Context) error {
@@ -366,12 +384,15 @@ func (s *Server) realtime(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			timeline = rowsToList(rows, func() (map[string]any, error) {
+			timeline, err = rowsToList(rows, func() (map[string]any, error) {
 				var t time.Time
 				var e, p int64
 				err := rows.Scan(&t, &e, &p)
 				return map[string]any{"time": t, "events": e, "page_views": p}, err
 			})
+			if err != nil {
+				return err
+			}
 			return rows.Err()
 		}); err != nil {
 		writeQueryError(w, err)
@@ -413,13 +434,17 @@ func (s *Server) eventReport(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, err)
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var name string
 		var count, users, conversions int64
 		var last time.Time
 		err := rows.Scan(&name, &count, &users, &conversions, &last)
 		return map[string]any{"event": name, "count": count, "users": users, "conversions": conversions, "last_seen": last}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
@@ -443,12 +468,16 @@ func (s *Server) pageReport(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, err)
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var page, title string
 		var views, users, sessions, conversions int64
 		err := rows.Scan(&page, &title, &views, &users, &sessions, &conversions)
 		return map[string]any{"page": page, "title": title, "views": views, "users": users, "sessions": sessions, "conversions": conversions}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -521,12 +550,15 @@ func (s *Server) usageReport(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
-			list := rowsToList(rows, func() (map[string]any, error) {
+			list, listErr := rowsToList(rows, func() (map[string]any, error) {
 				var label string
 				var events, users, sessions int64
 				err := rows.Scan(&label, &events, &users, &sessions)
 				return map[string]any{"label": label, "events": events, "users": users, "sessions": sessions}, err
 			})
+			if listErr != nil {
+				return listErr
+			}
 			if err := rows.Err(); err != nil {
 				return err
 			}
@@ -572,7 +604,7 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, err)
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var visitor string
 		var user *string
 		var props []byte
@@ -583,6 +615,10 @@ func (s *Server) visitorReport(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(props, &p)
 		return map[string]any{"visitor_id": visitor, "user_id": user, "user_properties": p, "first_seen": first, "last_seen": last, "events": events, "sessions": sessions, "conversions": conversions, "linked_visitors": linkedVisitors}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -604,7 +640,7 @@ func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var userID string
 		var visitorIDs []string
 		var visitors, events, conversions int64
@@ -612,6 +648,10 @@ func (s *Server) identityReport(w http.ResponseWriter, r *http.Request) {
 		err := rows.Scan(&userID, &visitors, &visitorIDs, &firstSeen, &linkedAt, &lastSeen, &events, &conversions)
 		return map[string]any{"user_id": userID, "visitor_count": visitors, "visitor_ids": visitorIDs, "first_seen": firstSeen, "linked_at": linkedAt, "last_seen": lastSeen, "events": events, "conversions": conversions, "confidence": 1, "source": "identify"}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -1223,12 +1263,16 @@ func (s *Server) pathReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	out := rowsToList(rows, func() (map[string]any, error) {
+	out, listErr := rowsToList(rows, func() (map[string]any, error) {
 		var source, target string
 		var count int64
 		err := rows.Scan(&source, &target, &count)
 		return map[string]any{"source": source, "target": target, "count": count}, err
 	})
+	if listErr != nil {
+		writeQueryError(w, listErr)
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
