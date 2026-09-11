@@ -233,3 +233,16 @@ export function allowedRanges(
   // than a control with nothing in it.
   return allowed.length ? allowed : [options[0]];
 }
+
+/**
+ * policyRange caps a screen's fixed period at the site's policy limit. Some
+ * screens do not offer a period at all — the visitor trace asks for a year,
+ * the search and the change calendar for 90 days — and those requests never
+ * went past allowedRanges, so the trace answered RANGE_EXCEEDS_POLICY on every
+ * site that kept the 180-day default. The button ran into the limit instead
+ * of reading it.
+ */
+export function policyRange(days: number, maxExactDays?: number): number {
+  if (!maxExactDays || maxExactDays <= 0) return days;
+  return Math.min(days, maxExactDays);
+}

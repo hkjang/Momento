@@ -6,6 +6,7 @@ import { get, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { policyRange } from "../components/queryError";
 import { ErrorState, Loading, NoSite } from "../components/States";
 type Row = { label: string; events: number; users: number; sessions: number };
 type Usage = Record<
@@ -33,7 +34,7 @@ export default function UsagePage() {
     placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: () =>
       get<Usage>(
-        `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
       ),
     enabled: !!site,
   });

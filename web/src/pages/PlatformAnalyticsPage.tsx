@@ -22,7 +22,7 @@ import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import RangeSelect from "../components/RangeSelect";
-import { narrowerRange } from "../components/queryError";
+import { narrowerRange, policyRange } from "../components/queryError";
 
 export type PlatformMode =
   | "cohort"
@@ -349,7 +349,7 @@ function Journey() {
   const analyze = useMutation({
     mutationFn: () =>
       post<{ steps: Record<string, unknown>[] }>(
-        `/api/v1/sites/${site!.site_id}/journeys/analyze?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/journeys/analyze?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
         { steps, conversion_window_days: 30 },
       ),
   });
@@ -802,7 +802,7 @@ function Insights() {
     enabled: !!site,
     queryFn: () =>
       get<{ insights: Record<string, unknown>[]; engine: string }>(
-        `/api/v1/sites/${site!.site_id}/insights?${rangeQuery(7, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/insights?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   const ask = useMutation({
@@ -1011,7 +1011,7 @@ function Quality() {
         cardinalities: Record<string, unknown>[];
         issues: Record<string, unknown>[];
       }>(
-        `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(7, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   if (!site) return <NoSite />;

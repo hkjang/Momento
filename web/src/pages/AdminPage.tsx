@@ -63,6 +63,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { policyRange } from "../components/queryError";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
   buildCSPGuidance,
@@ -438,7 +439,7 @@ function AdminOverview() {
     queryKey: ["data-quality", site?.site_id, environment],
     queryFn: () =>
       get<DataQualitySummary>(
-        `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(7, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
       ),
     enabled: !!site,
     refetchInterval: 30000,

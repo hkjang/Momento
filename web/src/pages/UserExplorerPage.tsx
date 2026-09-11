@@ -24,6 +24,7 @@ import { useSearchParams } from "react-router-dom";
 import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { policyRange } from "../components/queryError";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import {
   buildTraceMarkdown,
@@ -65,7 +66,7 @@ export default function UserExplorerPage() {
     enabled: !!site && query.length >= 2,
     queryFn: () =>
       get<{ results: VisitorSearchResult[] }>(
-        `/api/v1/sites/${site!.site_id}/visitor-search?q=${encodeURIComponent(query)}&${rangeQuery(90, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/visitor-search?q=${encodeURIComponent(query)}&${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   const trace = useQuery({
@@ -73,7 +74,7 @@ export default function UserExplorerPage() {
     enabled: !!site && !!subject,
     queryFn: () =>
       get<VisitorTrace>(
-        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(subject)}/timeline?${rangeQuery(365, site!.timezone)}&scope=${scope}&limit=200${cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`,
+        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(subject)}/timeline?${rangeQuery(policyRange(365, site!.max_exact_days), site!.timezone)}&scope=${scope}&limit=200${cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`,
       ),
   });
 
