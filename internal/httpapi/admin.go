@@ -42,9 +42,13 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_NAME", "display name is required")
 		return
 	}
+	// The new hash is settled before the row is touched: a hash that could not
+	// be made must never reach the row, and the password and the profile land
+	// in one statement so neither can be reported saved while the other was not.
+	var newHash *string
 	if in.NewPassword != "" {
-		if len(in.NewPassword) < 12 {
-			writeError(w, 400, "WEAK_PASSWORD", "new password must be at least 12 characters")
+		if problem := auth.PasswordProblem(in.NewPassword); problem != "" {
+			writeError(w, 400, "WEAK_PASSWORD", "new "+problem)
 			return
 		}
 		var hash *string
@@ -52,15 +56,19 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 403, "PASSWORD_MISMATCH", "current password is incorrect")
 			return
 		}
-		newHash, _ := auth.HashPassword(in.NewPassword)
-		_, _ = s.DB.Exec(r.Context(), `UPDATE users SET password_hash=$2 WHERE id=$1`, p.ID, newHash)
+		hashed, err := auth.HashPassword(in.NewPassword)
+		if err != nil {
+			writeError(w, 500, "UPDATE_FAILED", err.Error())
+			return
+		}
+		newHash = &hashed
 	}
-	_, err := s.DB.Exec(r.Context(), `UPDATE users SET display_name=$2,department=$3,organization_name=$4,updated_at=now() WHERE id=$1`, p.ID, in.DisplayName, in.Department, in.OrganizationName)
+	_, err := s.DB.Exec(r.Context(), `UPDATE users SET display_name=$2,department=$3,organization_name=$4,password_hash=COALESCE($5,password_hash),updated_at=now() WHERE id=$1`, p.ID, in.DisplayName, in.Department, in.OrganizationName, newHash)
 	if err != nil {
 		writeError(w, 500, "UPDATE_FAILED", err.Error())
 		return
 	}
-	s.audit(r.Context(), &p, "profile.update", "user", p.ID.String(), nil, clientIP(r))
+	s.audit(r.Context(), &p, "profile.update", "user", p.ID.String(), map[string]any{"password_changed": newHash != nil}, clientIP(r))
 	writeJSON(w, 200, map[string]bool{"updated": true})
 }
 
@@ -833,8 +841,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
 		return
 	}
-	if !validRole(in.Role) || len(in.Password) < 12 {
+	if !validRole(in.Role) {
 		writeError(w, 400, "INVALID_USER", "valid role and password of at least 12 characters are required")
+		return
+	}
+	if problem := auth.PasswordProblem(in.Password); problem != "" {
+		writeError(w, 400, "INVALID_USER", problem)
 		return
 	}
 	// Creating an account is a way to grant a role, so it is bounded the same way
@@ -843,9 +855,15 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "ROLE_ABOVE_CALLER", "you cannot create an account with more authority than your own")
 		return
 	}
-	hash, _ := auth.HashPassword(in.Password)
+	// An account whose hash could not be made would be one nobody can sign in
+	// to, and whose address is then taken; refuse instead of inserting it.
+	hash, err := auth.HashPassword(in.Password)
+	if err != nil {
+		writeError(w, 500, "USER_CREATE_FAILED", err.Error())
+		return
+	}
 	var id uuid.UUID
-	err := s.DB.QueryRow(r.Context(), `INSERT INTO users(email,display_name,department,organization_name,role,password_hash) VALUES(lower($1),$2,$3,$4,$5,$6) RETURNING id`, in.Email, in.DisplayName, in.Department, in.OrganizationName, in.Role, hash).Scan(&id)
+	err = s.DB.QueryRow(r.Context(), `INSERT INTO users(email,display_name,department,organization_name,role,password_hash) VALUES(lower($1),$2,$3,$4,$5,$6) RETURNING id`, in.Email, in.DisplayName, in.Department, in.OrganizationName, in.Role, hash).Scan(&id)
 	if err != nil {
 		writeError(w, 409, "USER_CREATE_FAILED", err.Error())
 		return

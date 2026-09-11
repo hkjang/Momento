@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,28 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 func FromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(contextKey{}).(Principal)
 	return p, ok
+}
+
+// Password bounds every handler that stores one applies before hashing.
+//
+// MaxPasswordBytes is bcrypt's own limit: GenerateFromPassword refuses longer
+// input rather than silently truncating it, so a handler that hashes without
+// checking would be left with no hash at all. Seventy-two bytes is twenty-four
+// Korean characters, which a passphrase reaches easily.
+const (
+	MinPasswordLength = 12
+	MaxPasswordBytes  = 72
+)
+
+// PasswordProblem says why a password cannot be stored, or "" when it can.
+func PasswordProblem(password string) string {
+	if len(password) < MinPasswordLength {
+		return fmt.Sprintf("password must be at least %d characters", MinPasswordLength)
+	}
+	if len(password) > MaxPasswordBytes {
+		return fmt.Sprintf("password must be at most %d bytes", MaxPasswordBytes)
+	}
+	return ""
 }
 
 func HashPassword(password string) (string, error) {
