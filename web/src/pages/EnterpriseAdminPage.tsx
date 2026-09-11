@@ -29,6 +29,7 @@ import {
   queryPolicyLabel,
   readQueryPolicy,
 } from "./queryPolicyForm";
+import { describeAggregateJobStatus } from "./aggregateJobStatus";
 
 export default function EnterpriseAdminPage({
   mode,
@@ -604,20 +605,18 @@ function AnalyticsEngineering() {
                 {
                   key: "status",
                   label: "Status",
-                  format: (v) => (
-                    <Chip
-                      size="small"
-                      label={String(v)}
-                      color={
-                        v === "success"
-                          ? "success"
-                          : v === "failed"
-                            ? "error"
-                            : "default"
-                      }
-                    />
-                  ),
+                  format: (_v, row) => {
+                    const chip = describeAggregateJobStatus(row);
+                    return (
+                      <Chip
+                        size="small"
+                        label={chip.label}
+                        color={chip.color}
+                      />
+                    );
+                  },
                 },
+                { key: "attempts", label: "Attempts", align: "right" },
                 { key: "reason", label: "Reason" },
                 { key: "error", label: "Error" },
               ]}
