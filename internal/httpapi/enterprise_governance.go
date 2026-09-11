@@ -777,38 +777,68 @@ func (s *Server) dataLineage(w http.ResponseWriter, r *http.Request) {
 		nodes = append(nodes, map[string]any{"id": "metric:" + name, "kind": "metric", "label": label})
 		var def semanticDefinition
 		if json.Unmarshal(raw, &def) == nil {
-			if def.EventName != "" {
-				nodes = append(nodes, map[string]any{"id": "event:" + def.EventName, "kind": "event", "label": def.EventName})
-				edges = append(edges, map[string]any{"from": "event:" + def.EventName, "to": "metric:" + name, "relation": "aggregates"})
-			}
-			if def.Metric != "" {
-				edges = append(edges, map[string]any{"from": "metric:" + def.Metric, "to": "metric:" + name, "relation": "formula"})
-			}
+			nodes, edges = appendLineageSources(nodes, edges, name, def, 0)
 		}
 	}
 	if err := metricRows.Err(); err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
 	}
-	goalRows, _ := s.DB.Query(r.Context(), `SELECT id,name,metric_name FROM metric_goals WHERE site_id=$1`, siteID)
-	if goalRows != nil {
-		defer goalRows.Close()
-		for goalRows.Next() {
-			var id uuid.UUID
-			var name, metric string
-			if err := goalRows.Scan(&id, &name, &metric); err != nil {
-				writeError(w, 500, "QUERY_FAILED", err.Error())
-				return
-			}
-			nodes = append(nodes, map[string]any{"id": "goal:" + id.String(), "kind": "goal", "label": name})
-			edges = append(edges, map[string]any{"from": "metric:" + metric, "to": "goal:" + id.String(), "relation": "measures"})
-		}
-		if err := goalRows.Err(); err != nil {
+	goalRows, err := s.DB.Query(r.Context(), `SELECT id,name,metric_name FROM metric_goals WHERE site_id=$1`, siteID)
+	if err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
+	}
+	defer goalRows.Close()
+	for goalRows.Next() {
+		var id uuid.UUID
+		var name, metric string
+		if err := goalRows.Scan(&id, &name, &metric); err != nil {
 			writeError(w, 500, "QUERY_FAILED", err.Error())
 			return
 		}
+		nodes = append(nodes, map[string]any{"id": "goal:" + id.String(), "kind": "goal", "label": name})
+		edges = append(edges, map[string]any{"from": "metric:" + metric, "to": "goal:" + id.String(), "relation": "measures"})
+	}
+	if err := goalRows.Err(); err != nil {
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
 	writeJSON(w, 200, map[string]any{"nodes": dedupeLineageNodes(nodes), "edges": edges})
+}
+
+// appendLineageSources draws an edge from everything a metric reads to the
+// metric. A ratio keeps its sources inside numerator and denominator, and a
+// walk that stopped at the top level left a conversion rate with no source at
+// all, which the lineage table showed as a metric nobody feeds. The walk goes
+// as deep as validateSemanticDefinition lets a definition nest, and the same
+// event or metric reached twice draws one edge.
+func appendLineageSources(nodes, edges []map[string]any, metric string, def semanticDefinition, depth int) ([]map[string]any, []map[string]any) {
+	if depth > 5 {
+		return nodes, edges
+	}
+	if def.EventName != "" {
+		nodes = append(nodes, map[string]any{"id": "event:" + def.EventName, "kind": "event", "label": def.EventName})
+		edges = appendLineageEdge(edges, map[string]any{"from": "event:" + def.EventName, "to": "metric:" + metric, "relation": "aggregates"})
+	}
+	if def.Metric != "" {
+		edges = appendLineageEdge(edges, map[string]any{"from": "metric:" + def.Metric, "to": "metric:" + metric, "relation": "formula"})
+	}
+	for _, side := range []*semanticDefinition{def.Numerator, def.Denominator} {
+		if side != nil {
+			nodes, edges = appendLineageSources(nodes, edges, metric, *side, depth+1)
+		}
+	}
+	return nodes, edges
+}
+
+func appendLineageEdge(edges []map[string]any, edge map[string]any) []map[string]any {
+	for _, existing := range edges {
+		if existing["from"] == edge["from"] && existing["to"] == edge["to"] && existing["relation"] == edge["relation"] {
+			return edges
+		}
+	}
+	return append(edges, edge)
 }
 
 func dedupeLineageNodes(in []map[string]any) []map[string]any {
