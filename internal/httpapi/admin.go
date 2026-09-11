@@ -176,7 +176,7 @@ func (s *Server) rotateMyKey(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listSites(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.timezone,s.engagement_threshold_seconds,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name,coalesce(q.max_exact_days,$3) FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id LEFT JOIN query_policies q ON q.site_id=s.id WHERE $1 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2) ORDER BY s.created_at`, p.Role, p.ID, defaultQueryPolicy().MaxExactDays)
+	rows, err := s.DB.Query(r.Context(), `SELECT s.id,s.site_key,s.name,s.service_name,s.allowed_domains,s.session_timeout_minutes,s.timezone,s.engagement_threshold_seconds,s.active,s.tracking_key_prefix,s.server_api_key_prefix,s.created_at,w.name,o.name,coalesce(q.max_exact_days,$3) FROM sites s JOIN workspaces w ON w.id=s.workspace_id JOIN organizations o ON o.id=w.organization_id LEFT JOIN query_policies q ON q.site_id=s.id WHERE `+siteVisibleTo("s", "$1", "$2")+` ORDER BY s.created_at`, p.Role, p.ID, defaultQueryPolicy().MaxExactDays)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -947,7 +947,7 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 	defer cancelReport()
 	siteKey := r.URL.Query().Get("site_id")
 	p, _ := auth.FromContext(reportCtx)
-	rows, err := s.DB.Query(reportCtx, `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class,e.environment,e.contract_version FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.received_at DESC LIMIT 200`, siteKey, p.Role, p.ID)
+	rows, err := s.DB.Query(reportCtx, `SELECT e.event_id,e.event_timestamp,e.received_at,e.event_name,e.visitor_id,e.session_id,e.page_url,e.client_ip::text,e.network_name,e.properties,e.traffic_class,e.environment,e.contract_version FROM raw_events e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND `+siteVisibleTo("s", "$2", "$3")+` ORDER BY e.received_at DESC LIMIT 200`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -974,7 +974,7 @@ func (s *Server) trackingDebugger(w http.ResponseWriter, r *http.Request) {
 		writeQueryError(w, listErr)
 		return
 	}
-	errorRows, err := s.DB.Query(reportCtx, `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
+	errorRows, err := s.DB.Query(reportCtx, `SELECT receipt_id,site_key,attempts,error,created_at FROM (SELECT i.id receipt_id,s.site_key,i.attempts,i.last_error error,i.created_at FROM event_inbox i JOIN sites s ON s.id=i.site_id WHERE i.processed_at IS NULL AND i.last_error IS NOT NULL AND ($1='' OR s.site_key=$1) AND `+siteVisibleTo("s", "$2", "$3")+` UNION ALL SELECT d.inbox_id,s.site_key,10,d.error,d.failed_at FROM event_dead_letters d JOIN sites s ON s.id=d.site_id WHERE ($1='' OR s.site_key=$1) AND `+siteVisibleTo("s", "$2", "$3")+`) failures ORDER BY created_at DESC LIMIT 100`, siteKey, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return
@@ -1206,7 +1206,7 @@ func scrubQueuedAnalyticsData(ctx context.Context, tx pgx.Tx, siteID uuid.UUID, 
 func (s *Server) listEventDefinitions(w http.ResponseWriter, r *http.Request) {
 	site := r.URL.Query().Get("site_id")
 	p, _ := auth.FromContext(r.Context())
-	rows, err := s.DB.Query(r.Context(), `SELECT e.id,e.site_id,s.site_key,e.name,e.description,e.schema,e.validation_mode,e.conversion,e.current_version,e.owner,e.created_at FROM event_definitions e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3)) ORDER BY e.name`, site, p.Role, p.ID)
+	rows, err := s.DB.Query(r.Context(), `SELECT e.id,e.site_id,s.site_key,e.name,e.description,e.schema,e.validation_mode,e.conversion,e.current_version,e.owner,e.created_at FROM event_definitions e JOIN sites s ON s.id=e.site_id WHERE ($1='' OR s.site_key=$1) AND `+siteVisibleTo("s", "$2", "$3")+` ORDER BY e.name`, site, p.Role, p.ID)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return

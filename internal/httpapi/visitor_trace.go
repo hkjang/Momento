@@ -731,7 +731,7 @@ func (s *Server) attributionTouchSites(ctx context.Context, r *http.Request, sit
 	p, _ := auth.FromContext(ctx)
 	rows, err := s.DB.Query(ctx, `SELECT s.id FROM sites s
 		WHERE s.active AND s.workspace_id=(SELECT workspace_id FROM sites WHERE id=$1)
-			AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`,
+			AND `+siteVisibleTo("s", "$2", "$3")+``,
 		siteID, p.Role, p.ID)
 	if err != nil {
 		return nil, err

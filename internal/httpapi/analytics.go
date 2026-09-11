@@ -173,7 +173,7 @@ func (s *Server) resolveSite(r *http.Request, param string) (uuid.UUID, error) {
 	key := chi.URLParam(r, param)
 	p, _ := auth.FromContext(r.Context())
 	var id uuid.UUID
-	err := s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.site_key=$1 AND s.active AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, key, p.Role, p.ID).Scan(&id)
+	err := s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.site_key=$1 AND s.active AND `+siteVisibleTo("s", "$2", "$3")+``, key, p.Role, p.ID).Scan(&id)
 	return id, err
 }
 
@@ -199,14 +199,14 @@ func (s *Server) resolveSiteByID(r *http.Request, param string) (uuid.UUID, bool
 	}
 	p, _ := auth.FromContext(r.Context())
 	var out uuid.UUID
-	err = s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.id=$1 AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, id, p.Role, p.ID).Scan(&out)
+	err = s.DB.QueryRow(r.Context(), `SELECT s.id FROM sites s WHERE s.id=$1 AND `+siteVisibleTo("s", "$2", "$3")+``, id, p.Role, p.ID).Scan(&out)
 	return out, true, err
 }
 
 func (s *Server) resolveSiteKey(ctx context.Context, key string) (uuid.UUID, error) {
 	p, _ := auth.FromContext(ctx)
 	var id uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT s.id FROM sites s WHERE s.site_key=$1 AND s.active AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, key, p.Role, p.ID).Scan(&id)
+	err := s.DB.QueryRow(ctx, `SELECT s.id FROM sites s WHERE s.site_key=$1 AND s.active AND `+siteVisibleTo("s", "$2", "$3")+``, key, p.Role, p.ID).Scan(&id)
 	return id, err
 }
 

@@ -180,7 +180,7 @@ func (s *Server) deleteSegment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_ID", "invalid segment id")
 		return
 	}
-	tag, err := s.DB.Exec(r.Context(), `DELETE FROM segments g USING sites s WHERE g.id=$1 AND g.site_id=s.id AND (g.owner_id=$2 OR $3 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2 AND uwr.role='workspace_admin'))`, id, p.ID, p.Role)
+	tag, err := s.DB.Exec(r.Context(), `DELETE FROM segments g USING sites s WHERE g.id=$1 AND g.site_id=s.id AND (g.owner_id=$2 OR `+siteAdministeredBy("s", "$3", "$2")+`)`, id, p.ID, p.Role)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "segment not found or not editable")
 		return
@@ -277,7 +277,7 @@ func (s *Server) deleteDimension(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_ID", "invalid dimension id")
 		return
 	}
-	tag, err := s.DB.Exec(r.Context(), `DELETE FROM dimensions d USING sites s WHERE d.id=$1 AND d.site_id=s.id AND ($2 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$3))`, id, p.Role, p.ID)
+	tag, err := s.DB.Exec(r.Context(), `DELETE FROM dimensions d USING sites s WHERE d.id=$1 AND d.site_id=s.id AND `+siteVisibleTo("s", "$2", "$3")+``, id, p.Role, p.ID)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "dimension not found")
 		return
@@ -409,7 +409,7 @@ func (s *Server) deleteSavedReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_ID", "invalid report id")
 		return
 	}
-	tag, err := s.DB.Exec(r.Context(), `DELETE FROM saved_reports q USING sites s WHERE q.id=$1 AND q.site_id=s.id AND (q.owner_id=$2 OR $3 IN ('super_admin','organization_admin') OR EXISTS(SELECT 1 FROM user_workspace_roles uwr WHERE uwr.workspace_id=s.workspace_id AND uwr.user_id=$2 AND uwr.role='workspace_admin'))`, id, p.ID, p.Role)
+	tag, err := s.DB.Exec(r.Context(), `DELETE FROM saved_reports q USING sites s WHERE q.id=$1 AND q.site_id=s.id AND (q.owner_id=$2 OR `+siteAdministeredBy("s", "$3", "$2")+`)`, id, p.ID, p.Role)
 	if err != nil || tag.RowsAffected() == 0 {
 		writeError(w, 404, "NOT_FOUND", "report not found or not editable")
 		return
