@@ -15,6 +15,7 @@ import (
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/insight"
 	privacypolicy "github.com/hkjang/Momento/internal/privacy"
+	"github.com/hkjang/Momento/internal/segment"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -565,7 +566,10 @@ func (s *Server) visitorSearch(w http.ResponseWriter, r *http.Request) {
 	environment := requestEnvironment(r)
 	ctx, cancel := s.analyticalContext(r)
 	defer cancel()
-	pattern := "%" + strings.ToLower(query) + "%"
+	// The query is text the operator saw somewhere, not a pattern: "emp_0001" is
+	// one person, not any of ten thousand. The match below decides matched_by
+	// with strings.Contains, which is literal, so the SQL has to be as well.
+	pattern := "%" + segment.LikeLiteral(strings.ToLower(query)) + "%"
 	results := map[string]map[string]any{}
 	order := []string{}
 	addRow := func(visitorID, userID, matchedBy, matchedValue string) {

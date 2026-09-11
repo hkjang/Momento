@@ -239,7 +239,11 @@ func compile(node Node, resolver Resolver, alias string, args *[]any, depth int,
 		}
 		return expr + " <> ALL(" + placeholder + ")", nil
 	case "=", "!=", "contains", "not contains", "startsWith", "endsWith":
-		*args = append(*args, fmt.Sprint(node.Value))
+		value := fmt.Sprint(node.Value)
+		if op != "=" && op != "!=" {
+			value = LikeLiteral(value)
+		}
+		*args = append(*args, value)
 		placeholder := "$" + strconv.Itoa(len(*args))
 		switch op {
 		case "=", "!=":
@@ -389,4 +393,24 @@ func numericValue(value any) (float64, bool) {
 		parsed, err := strconv.ParseFloat(fmt.Sprint(value), 64)
 		return parsed, err == nil
 	}
+}
+
+// likeEscaper quotes the three characters LIKE reads as syntax: the wildcards
+// and the escape character itself. PostgreSQL's default escape is the
+// backslash, and a bound parameter is not a string literal, so a single
+// backslash in the value is what reaches the matcher.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// LikeLiteral makes a value safe to put inside a LIKE pattern so it matches
+// itself and nothing else.
+//
+// The text an operator types into "contains" is a piece of a URL or a name, not
+// a pattern. Left as it was, an underscore stood for any one character, so
+// "report_daily" also took "reportXdaily"; and a percent sign stood for any run
+// of them, so a URL-encoded Korean path such as "%EA%B0%80" matched every page
+// with those six hex digits anywhere in it, in order, however far apart. A
+// segment is a population that reports and deliveries are built on, so
+// "matches a little more than it says" is a wrong population, not a fuzzier one.
+func LikeLiteral(value string) string {
+	return likeEscaper.Replace(value)
 }
