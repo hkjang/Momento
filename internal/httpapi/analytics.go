@@ -901,6 +901,30 @@ func exportNote(reason string) []string {
 	return []string{"#momento", reason}
 }
 
+// csvCell keeps a value from being read as a formula by the spreadsheet that
+// opens the export.
+//
+// Nearly every column here is written by a visitor's browser: the page URL, the
+// campaign, the event name, the properties. A cell that starts with "=", "+",
+// "-" or "@" is not text to Excel or LibreOffice but a formula, and a formula
+// can call out to the network or, through DDE, run a command on the analyst's
+// machine — so a page_url of "=HYPERLINK(...)" sent to the collector would go off
+// on whoever downloads the events. The apostrophe is what the spreadsheets
+// themselves use to say "this is text"; it is only added when the cell would
+// otherwise be evaluated, so ids, timestamps and JSON come through untouched.
+// Leading whitespace is looked past because some importers trim it first.
+func csvCell(value string) string {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if trimmed == "" {
+		return value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	}
+	return value
+}
+
 func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 	siteID, err := s.resolveSite(r, "siteID")
 	if err != nil {
@@ -974,6 +998,7 @@ func (s *Server) exportEvents(w http.ResponseWriter, r *http.Request) {
 				default:
 					record[i] = fmt.Sprint(x)
 				}
+				record[i] = csvCell(record[i])
 			}
 		}
 		_ = cw.Write(record)

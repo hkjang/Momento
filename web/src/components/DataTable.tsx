@@ -18,6 +18,7 @@ import {
 import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
 import { Empty } from "./States";
+import { buildCSV, cellText } from "./csvExport";
 
 export interface Column {
   key: string;
@@ -40,36 +41,15 @@ interface DataTableProps {
   getRowKey?: (row: Record<string, unknown>, index: number) => string;
 }
 
-function searchableValue(value: unknown): string {
-  if (value == null) return "";
-  if (typeof value === "object") {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-  return String(value);
-}
-
-function csvValue(value: unknown): string {
-  const text = searchableValue(value).replaceAll('"', '""');
-  return `"${text}"`;
-}
-
 function downloadCSV(
   filename: string,
   columns: Column[],
   rows: Record<string, unknown>[],
 ) {
-  const csv = [
-    columns.map((column) => csvValue(column.label)).join(","),
-    ...rows.map((row) =>
-      columns.map((column) => csvValue(row[column.key])).join(","),
-    ),
-  ].join("\n");
   const url = URL.createObjectURL(
-    new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+    new Blob(["\uFEFF", buildCSV(columns, rows)], {
+      type: "text/csv;charset=utf-8",
+    }),
   );
   const anchor = document.createElement("a");
   anchor.href = url;
@@ -99,9 +79,7 @@ export default function DataTable({
     if (!needle) return rows;
     return rows.filter((row) =>
       columns.some((column) =>
-        searchableValue(row[column.key])
-          .toLocaleLowerCase("ko-KR")
-          .includes(needle),
+        cellText(row[column.key]).toLocaleLowerCase("ko-KR").includes(needle),
       ),
     );
   }, [columns, query, rows]);
