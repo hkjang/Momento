@@ -1,0 +1,14 @@
+{
+  "name": "momento-guide-screenshots",
+  "private": true,
+  "type": "module",
+  "description": "가이드 문서용 화면 캡처 — 버려도 되는 로컬 배포에 가짜 데이터를 넣고 headless Chrome 으로 찍는다.",
+  "scripts": {
+    "seed": "node seed.mjs",
+    "capture": "node capture.mjs",
+    "cleanup": "node seed.mjs --cleanup"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

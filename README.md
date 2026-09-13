@@ -91,6 +91,8 @@ analytics.track("feature_use", {
 
 그 밖의 공개 URL, Keycloak client, claim mapping, 개인정보, 저장소, 보안 및 망 대역은 DB에 저장되는 관리자 설정입니다. Bootstrap 비밀번호는 최초 관리자 생성에만 쓰며 기존 비밀번호를 덮어쓰지 않습니다.
 
+화면 사용법은 [사용자 가이드](docs/USER_GUIDE.md)([PDF](docs/USER_GUIDE.pdf)), 설치·설정·운영은 [관리자 가이드](docs/ADMIN_GUIDE.md)([PDF](docs/ADMIN_GUIDE.pdf))에 있습니다. 가이드의 화면 캡처는 `scripts/guide/`의 시드·캡처 스크립트로 버려도 되는 로컬 배포에서 다시 찍을 수 있습니다.
+
 자세한 내용은 [오프라인 설치](docs/OFFLINE.md), [아키텍처](docs/ARCHITECTURE.md), [제공 범위와 로드맵](docs/ROADMAP.md), [MCP](docs/MCP.md), [OpenAPI](docs/openapi.yaml)를 참고하십시오.
 
 ## 개발
