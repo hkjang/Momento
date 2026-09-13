@@ -23,6 +23,10 @@ services:
     restart: unless-stopped
 
   momento:
+    # build: is for the source tree (`make dev`). With a release image loaded
+    # from the tarball, start with `docker compose up -d --no-build`: given a
+    # source tree, compose would otherwise rebuild the image under this same
+    # tag and run that instead of what was loaded.
     build:
       context: .
       # No VERSION argument: the image reports the version declared in the source
