@@ -21,6 +21,7 @@ import (
 	"github.com/hkjang/Momento/internal/database"
 	"github.com/hkjang/Momento/internal/secret"
 	"github.com/hkjang/Momento/internal/service"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -85,16 +86,42 @@ type fixture struct {
 func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 	t.Helper()
 	ctx := context.Background()
-	run := func(sql string, args ...any) {
+	// The fixture is about two thousand statements, and eighty tests build it.
+	// Sent one at a time, each was a round trip and an autocommit fsync, which
+	// made the fixture three and a half seconds under the race detector and the
+	// package five and a half minutes on a fast machine — past the ten minute
+	// default timeout on the CI runner, where nothing was hanging and every test
+	// was simply paying for the same seed. Queued and sent as one batch they are
+	// one round trip in one implicit transaction, and the statements themselves
+	// are unchanged. Anything that reads a row back has to flush first.
+	batch := &pgx.Batch{}
+	var queued []string
+	flush := func() {
 		t.Helper()
-		if _, err := pool.Exec(ctx, sql, args...); err != nil {
-			t.Fatalf("seed %.60s: %v", sql, err)
+		if batch.Len() == 0 {
+			return
 		}
+		results := pool.SendBatch(ctx, batch)
+		for _, sql := range queued {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				t.Fatalf("seed %.60s: %v", sql, err)
+			}
+		}
+		if err := results.Close(); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		batch, queued = &pgx.Batch{}, nil
+	}
+	run := func(sql string, args ...any) {
+		batch.Queue(sql, args...)
+		queued = append(queued, sql)
 	}
 	// Remove only what this fixture creates. Truncating would also wipe the settings
 	// rows the migrations seed, which the privacy and security paths depend on.
 	run(`DELETE FROM users WHERE email='admin@test.local'`)
 	run(`DELETE FROM organizations WHERE slug='test'`)
+	flush()
 
 	var orgID, workspaceID uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO organizations(name,slug) VALUES('Test','test') RETURNING id`).Scan(&orgID); err != nil {
@@ -352,6 +379,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		FROM raw_events e WHERE e.site_id=$1 AND e.session_id IS NOT NULL
 			AND NOT EXISTS(SELECT 1 FROM daily_site_sessions d WHERE d.site_id=e.site_id AND d.session_id=e.session_id)
 		GROUP BY 1,2,3,4,5`, siteID)
+	flush()
 
 	var segmentID uuid.UUID
 	if err := pool.QueryRow(ctx, `INSERT INTO segments(site_id,name,description,definition,shared,owner_id)
@@ -369,6 +397,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) fixture {
 		VALUES($1,'active_users','Active Users','','{"type":"unique_users"}','number','active') ON CONFLICT DO NOTHING`, siteID)
 	run(`INSERT INTO metric_goals(site_id,name,metric_name,target_value,comparator,period,environment)
 		VALUES($1,'월간 활성 사용자','active_users',1000,'gte','month','prd')`, siteID)
+	flush()
 
 	cipher, _ := secret.New("integration-test-encryption-key")
 	server := New(pool, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), cipher)
