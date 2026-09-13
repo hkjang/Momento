@@ -47,6 +47,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { policyRange } from "../components/queryError";
 import { ErrorState, Loading, NoSite } from "../components/States";
 
 export default function PlatformAdminPage({
@@ -185,7 +186,7 @@ function Governance() {
         unit: string;
         definition_version: number;
       }>(
-        `/api/v1/sites/${site!.site_id}/semantic-metrics/${encodeURIComponent(metricName2)}/query?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/semantic-metrics/${encodeURIComponent(metricName2)}/query?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   if (!site) return <NoSite />;

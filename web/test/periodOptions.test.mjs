@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 
-import { allowedRanges } from "../src/components/queryError.ts";
+import { allowedRanges, policyRange } from "../src/components/queryError.ts";
 
 // The server tells the console each site's max_exact_days and says of it: "The
 // console builds its period options from this, so it never offers a range the
@@ -83,4 +83,36 @@ test("한도가 없으면 모든 기간이 남고, 한도보다 짧은 것만 �
   // 가장 짧은 기간마저 한도를 넘으면 컨트롤을 비우지 않는다: 읽는 사람이
   // 거부와 그 설명을 보는 편이 빈 선택지보다 낫다.
   assert.deepEqual(allowedRanges([7, 30, 90], 3), [7]);
+});
+
+// 앞의 검사들은 기간을 **고르게 하는** 화면만 봅니다. 방문자 추적은 기간을 고르게
+// 하지 않고 1년을 고정으로 요청했고, 검색과 변경 캘린더는 90일을 고정으로
+// 요청했습니다 — 어느 것도 allowedRanges를 지나지 않으므로, 기본 정책(180일)을
+// 그대로 둔 사이트에서도 추적 버튼은 RANGE_EXCEEDS_POLICY만 돌려줬습니다.
+// 고정 기간은 policyRange로 사이트 한도에 맞춰 잘라야 합니다.
+test("고정 기간으로 조회하는 화면은 사이트 한도에 맞춰 자른다", () => {
+  const fixed = /rangeQuery\(\s*(\d+)\s*,/;
+  const dir = new URL("../src/pages/", import.meta.url);
+  let capped = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".tsx")) continue;
+    const source = readFileSync(new URL(name, dir), "utf8");
+    const match = fixed.exec(source);
+    if (match) {
+      assert.fail(
+        `${name}이 rangeQuery(${match[1]}, …)로 고정 기간을 요청한다: 사이트 정책이 그보다 짧으면 RANGE_EXCEEDS_POLICY 를 받는다. policyRange(${match[1]}, site.max_exact_days)를 지나야 한다`,
+      );
+    }
+    capped += (source.match(/rangeQuery\(policyRange\(/g) ?? []).length;
+  }
+  // 하나도 못 찾았다면 이 검사는 아무것도 확인하지 않은 것이다.
+  assert.ok(capped >= 4, `policyRange를 지나는 고정 기간 조회를 ${capped}개만 찾았다`);
+});
+
+test("고정 기간은 한도가 없으면 그대로, 있으면 한도까지만 요청한다", () => {
+  assert.equal(policyRange(365, undefined), 365);
+  assert.equal(policyRange(365, 0), 365);
+  assert.equal(policyRange(365, 180), 180);
+  assert.equal(policyRange(90, 14), 14);
+  assert.equal(policyRange(90, 365), 90);
 });

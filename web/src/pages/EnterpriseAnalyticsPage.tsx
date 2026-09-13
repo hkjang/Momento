@@ -21,7 +21,7 @@ import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import RangeSelect from "../components/RangeSelect";
-import { narrowerRange } from "./../components/queryError";
+import { narrowerRange, policyRange } from "./../components/queryError";
 import {
   describeSignal,
   frictionHeadline,
@@ -228,7 +228,7 @@ function WorkspaceJourneys() {
   const analysis = useMutation({
     mutationFn: (journeyID: string) =>
       post<JourneyAnalysis>(
-        `/api/v1/sites/${site!.site_id}/workspace-journeys/analyze?${rangeQuery(30, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/workspace-journeys/analyze?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
         journeyID
           ? { journey_id: journeyID }
           : { steps: JSON.parse(steps), conversion_window_days: windowDays },
@@ -778,7 +778,7 @@ function Experiments() {
     enabled: !!site && !!selected,
     queryFn: () =>
       get<{ method: string; variants: Record<string, unknown>[] }>(
-        `/api/v1/sites/${site!.site_id}/experiments/${selected}/analysis?${rangeQuery(90, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/experiments/${selected}/analysis?${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   if (!site) return <NoSite />;
@@ -961,7 +961,7 @@ function ChangeCalendar() {
     enabled: !!site,
     queryFn: () =>
       get<Record<string, unknown>[]>(
-        `/api/v1/sites/${site!.site_id}/annotations?${rangeQuery(90, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/annotations?${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   if (!site) return <NoSite />;
