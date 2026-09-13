@@ -713,9 +713,14 @@ func (s *Server) eventCatalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	environment := requestEnvironment(r)
+	// A metric uses an event when its definition names it as event_name, at the
+	// top or inside a ratio's numerator or denominator. That is a comparison of
+	// the name, not a search of the definition's text: as text, "purchase" is
+	// found inside "purchase_completed", and a LIKE reads each "_" as any one
+	// character, so the count said an event was in use when it was not.
 	rows, err := s.DB.Query(reportCtx, `SELECT d.name,d.description,d.owner,d.current_version,d.deprecated,v.schema,min(e.event_timestamp),max(e.event_timestamp),count(e.event_id),count(*) FILTER(WHERE e.event_timestamp>=now()-interval '30 days'),
-		(SELECT count(*) FROM semantic_metrics m WHERE m.site_id=d.site_id AND m.definition::text LIKE '%'||d.name||'%'),
-		(SELECT count(*) FROM metric_goals g WHERE g.site_id=d.site_id AND g.metric_name IN (SELECT name FROM semantic_metrics m WHERE m.site_id=d.site_id AND m.definition::text LIKE '%'||d.name||'%'))
+		(SELECT count(*) FROM semantic_metrics m WHERE m.site_id=d.site_id AND jsonb_path_exists(m.definition,'$.**.event_name ? (@ == $name)',jsonb_build_object('name',d.name))),
+		(SELECT count(*) FROM metric_goals g WHERE g.site_id=d.site_id AND g.metric_name IN (SELECT name FROM semantic_metrics m WHERE m.site_id=d.site_id AND jsonb_path_exists(m.definition,'$.**.event_name ? (@ == $name)',jsonb_build_object('name',d.name))))
 		FROM event_definitions d JOIN event_contract_versions v ON v.site_id=d.site_id AND v.event_name=d.name AND v.version=d.current_version
 		LEFT JOIN raw_events e ON e.site_id=d.site_id AND e.event_name=d.name AND e.environment=$2 WHERE d.site_id=$1
 		GROUP BY d.site_id,d.name,d.description,d.owner,d.current_version,d.deprecated,v.schema ORDER BY d.name`, siteID, environment)
