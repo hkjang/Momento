@@ -80,10 +80,42 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	return MigrateThrough(ctx, pool, "")
 }
 
+// migrateLock is the advisory lock every migration run takes. The number is
+// arbitrary; it only has to be the same one everywhere and unlike any other
+// advisory lock this database uses.
+const migrateLock = 0x6d6f6d656e746f
+
 // MigrateThrough applies migrations in order and stops after the named one. An
 // empty name applies all of them, which is what the service does at startup.
+//
+// Every process that opens the database migrates it, and more than one can be
+// opening it at once: `go test ./...` runs a process per package and each one
+// migrates the same database before its first query. Reading schema_migrations
+// and then applying what is missing is safe alone and not safe together — two
+// processes both find a migration unapplied, both run it, and the second one
+// loses on a catalog index rather than on the table it was creating
+// (pg_extension_name_index for CREATE EXTENSION, pg_type_typname_nsp_index for
+// CREATE TYPE), which reads as a corrupt migration rather than a race. One
+// advisory lock around the whole run makes the second process wait and then
+// find the work already done.
 func MigrateThrough(ctx context.Context, pool *pgxpool.Pool, last string) error {
-	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+	// Everything below runs on this one connection: the lock is held by the
+	// session that took it, and a pool sized to a single connection would
+	// otherwise deadlock against itself.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, int64(migrateLock)); err != nil {
+		return err
+	}
+	defer func() {
+		// The caller's context may already be done by the time we unlock, and an
+		// advisory lock left behind outlives the statement that took it.
+		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, int64(migrateLock))
+	}()
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
 		return err
 	}
 	names, err := Versions()
@@ -105,7 +137,7 @@ func MigrateThrough(ctx context.Context, pool *pgxpool.Pool, last string) error 
 	}
 	for _, name := range names {
 		var exists bool
-		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, name).Scan(&exists); err != nil {
+		if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, name).Scan(&exists); err != nil {
 			return err
 		}
 		if exists {
@@ -115,7 +147,7 @@ func MigrateThrough(ctx context.Context, pool *pgxpool.Pool, last string) error 
 		if err != nil {
 			return err
 		}
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return err
 		}
