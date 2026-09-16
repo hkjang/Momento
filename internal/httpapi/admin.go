@@ -887,6 +887,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		OrganizationName string `json:"organization_name"`
 		Role             string `json:"role"`
 		Active           *bool  `json:"active"`
+		// Password, when given, replaces the person's password without knowing
+		// the current one: it is how an administrator lets someone back in who
+		// has lost theirs. Nothing else does, so before this the only way was a
+		// direct write to the database.
+		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &in, 64<<10); err != nil {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
@@ -907,24 +912,66 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "ROLE_ABOVE_CALLER", "you cannot grant more authority than your own")
 		return
 	}
-	if id == p.ID {
-		var current string
-		if s.DB.QueryRow(r.Context(), `SELECT role FROM users WHERE id=$1`, id).Scan(&current) == nil && current != in.Role {
-			writeError(w, 400, "SELF_ROLE", "you cannot change your own role")
+	var current string
+	if err := s.DB.QueryRow(r.Context(), `SELECT role FROM users WHERE id=$1`, id).Scan(&current); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "USER_NOT_FOUND", "user not found")
 			return
 		}
+		writeError(w, 500, "QUERY_FAILED", err.Error())
+		return
 	}
-	_, err = s.DB.Exec(r.Context(), `UPDATE users SET display_name=$2,department=$3,organization_name=$4,role=$5,active=coalesce($6,active),updated_at=now() WHERE id=$1`, id, in.DisplayName, in.Department, in.OrganizationName, in.Role, in.Active)
+	// The account being administered is bounded the same way as the role being
+	// granted: an organization_admin that could set a super_admin's password would
+	// sign in as one, and one that could demote or disable a super_admin could
+	// leave the deployment without its administrator.
+	if auth.RoleAbove(current, p.Role) {
+		writeError(w, 403, "ROLE_ABOVE_CALLER", "you cannot administer an account with more authority than your own")
+		return
+	}
+	if id == p.ID && current != in.Role {
+		writeError(w, 400, "SELF_ROLE", "you cannot change your own role")
+		return
+	}
+	// The new hash is settled before the row is touched, as in updateMe: a hash
+	// that could not be made must never reach the row.
+	var newHash *string
+	if in.Password != "" {
+		if id == p.ID {
+			writeError(w, 400, "SELF_PASSWORD", "change your own password from your profile, where the current one is asked for")
+			return
+		}
+		if problem := auth.PasswordProblem(in.Password); problem != "" {
+			writeError(w, 400, "WEAK_PASSWORD", problem)
+			return
+		}
+		hashed, err := auth.HashPassword(in.Password)
+		if err != nil {
+			writeError(w, 500, "USER_UPDATE_FAILED", err.Error())
+			return
+		}
+		newHash = &hashed
+	}
+	_, err = s.DB.Exec(r.Context(), `UPDATE users SET display_name=$2,department=$3,organization_name=$4,role=$5,active=coalesce($6,active),password_hash=COALESCE($7,password_hash),updated_at=now() WHERE id=$1`, id, in.DisplayName, in.Department, in.OrganizationName, in.Role, in.Active, newHash)
 	if err != nil {
 		writeError(w, 500, "USER_UPDATE_FAILED", err.Error())
 		return
+	}
+	if newHash != nil {
+		// A reset is asked for when the password is lost or no longer trusted;
+		// either way whoever holds a session opened with the old one should not
+		// keep it. The password itself has already changed, so a sweep that fails
+		// is reported rather than hidden, but the answer stays 200.
+		if _, err := s.DB.Exec(r.Context(), `DELETE FROM user_sessions WHERE user_id=$1`, id); err != nil {
+			s.Logger.Error("end the sessions of a user whose password was reset", "user_id", id, "error", err)
+		}
 	}
 	if in.Role == "super_admin" || in.Role == "organization_admin" {
 		_, _ = s.DB.Exec(r.Context(), `DELETE FROM user_workspace_roles WHERE user_id=$1`, id)
 	} else {
 		_, _ = s.DB.Exec(r.Context(), `INSERT INTO user_workspace_roles(user_id,workspace_id,role) SELECT $1,id,$2 FROM workspaces ORDER BY created_at LIMIT 1 ON CONFLICT(user_id,workspace_id) DO UPDATE SET role=excluded.role`, id, in.Role)
 	}
-	s.audit(r.Context(), &p, "user.update", "user", id.String(), map[string]any{"role": in.Role}, clientIP(r))
+	s.audit(r.Context(), &p, "user.update", "user", id.String(), map[string]any{"role": in.Role, "password_reset": newHash != nil}, clientIP(r))
 	writeJSON(w, 200, map[string]bool{"updated": true})
 }
 
