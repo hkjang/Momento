@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,6 +40,9 @@ func FromContext(ctx context.Context) (Principal, bool) {
 
 // Password bounds every handler that stores one applies before hashing.
 //
+// MinPasswordLength counts characters, which is what the console promises
+// ("12자 이상"); counted in bytes, four Korean characters passed as twelve.
+//
 // MaxPasswordBytes is bcrypt's own limit: GenerateFromPassword refuses longer
 // input rather than silently truncating it, so a handler that hashes without
 // checking would be left with no hash at all. Seventy-two bytes is twenty-four
@@ -50,7 +54,7 @@ const (
 
 // PasswordProblem says why a password cannot be stored, or "" when it can.
 func PasswordProblem(password string) string {
-	if len(password) < MinPasswordLength {
+	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return fmt.Sprintf("password must be at least %d characters", MinPasswordLength)
 	}
 	if len(password) > MaxPasswordBytes {
