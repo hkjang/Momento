@@ -11,6 +11,7 @@ import AddRounded from "@mui/icons-material/AddRounded";
 import InboxOutlined from "@mui/icons-material/InboxOutlined";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import { useEffect, useState, type ReactNode } from "react";
 import { describeQueryError, slowQueryNotice } from "./queryError";
@@ -80,9 +81,13 @@ export function ErrorState({
   /** Supplied by screens that own a range control, so the advice is clickable. */
   narrowRange?: () => void;
 }) {
+  const { user } = useAuth();
   const recovery = describeQueryError(error, {
     canRetry: !!retry,
     canNarrowRange: !!narrowRange,
+    // The same gate the admin pages apply, so the policy link is only offered
+    // to someone the page will let in.
+    canEditPolicy: !!user && user.role !== "analyst" && user.role !== "viewer",
   });
   return (
     <Alert severity="error">

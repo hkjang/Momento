@@ -26,10 +26,20 @@ const automation = "/admin/automation";
 const segments = "/segments";
 const sites = "/admin?section=sites";
 const privacy = "/admin?section=privacy";
+const queryPolicy = "/admin/analytics-engineering?panel=query-cost";
 
 export function describeQueryError(
   error: unknown,
-  options: { canNarrowRange?: boolean; canRetry?: boolean } = {},
+  options: {
+    canNarrowRange?: boolean;
+    canRetry?: boolean;
+    /**
+     * The reader can change the site's query policy. On a screen with no
+     * period control the policy is the only thing an administrator can act on,
+     * and the explanation named it without saying where it lives.
+     */
+    canEditPolicy?: boolean;
+  } = {},
 ): QueryRecovery {
   // Read the code off the error by shape rather than importing the client's
   // error class: this module only needs the code, and staying free of that
@@ -73,6 +83,15 @@ export function describeQueryError(
           "관리자가 정한 최대 정확 조회 기간을 넘었습니다. 더 짧은 기간을 고르거나, 이 범위가 정기적으로 필요하면 정기 배달로 받으세요.",
         actions: [
           ...narrow,
+          ...(options.canEditPolicy
+            ? [
+                {
+                  kind: "link" as const,
+                  label: "조회 정책 바꾸기",
+                  to: queryPolicy,
+                },
+              ]
+            : []),
           { kind: "link", label: "정기 배달로 받기", to: automation },
         ],
         detail: message,

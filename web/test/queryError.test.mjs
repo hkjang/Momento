@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeQueryError, slowQueryNotice } from "../src/components/queryError.ts";
+import {
+  describeQueryError,
+  slowQueryNotice,
+} from "../src/components/queryError.ts";
 
 // The recovery reads the code off the error by shape, so the test builds the
 // same shape the API client throws without importing it.
@@ -19,16 +22,26 @@ test("시간 초과는 같은 답을 얻는 경로를 목적지와 함께 제시
   );
   assert.match(recovery.title, /25초/);
   const kinds = recovery.actions.map((action) => action.kind);
-  assert.ok(kinds.includes("narrow"), "기간을 줄일 수 있는 화면에서는 줄이기를 제공한다");
+  assert.ok(
+    kinds.includes("narrow"),
+    "기간을 줄일 수 있는 화면에서는 줄이기를 제공한다",
+  );
   assert.ok(kinds.includes("retry"));
   const destinations = recovery.actions
     .filter((action) => action.kind === "link")
     .map((action) => action.to);
-  assert.deepEqual(destinations, ["/segments", "/explorer", "/admin/automation"]);
+  assert.deepEqual(destinations, [
+    "/segments",
+    "/explorer",
+    "/admin/automation",
+  ]);
 });
 
 test("기간을 바꿀 수 없는 화면에서는 기간 줄이기를 제안하지 않는다", () => {
-  const recovery = describeQueryError(new APIError(504, "QUERY_TIMEOUT", "초과"), {});
+  const recovery = describeQueryError(
+    new APIError(504, "QUERY_TIMEOUT", "초과"),
+    {},
+  );
   assert.equal(
     recovery.actions.some((action) => action.kind === "narrow"),
     false,
@@ -37,13 +50,21 @@ test("기간을 바꿀 수 없는 화면에서는 기간 줄이기를 제안하�
 });
 
 test("중단과 실패는 서로 다른 원인을 말한다", () => {
-  const canceled = describeQueryError(new APIError(499, "QUERY_CANCELED", "취소"));
+  const canceled = describeQueryError(
+    new APIError(499, "QUERY_CANCELED", "취소"),
+  );
   assert.match(canceled.explanation, /새로고침/);
   assert.equal(canceled.actions[0].kind, "retry");
 
-  const failed = describeQueryError(new APIError(500, "QUERY_FAILED", "ERROR: syntax"));
+  const failed = describeQueryError(
+    new APIError(500, "QUERY_FAILED", "ERROR: syntax"),
+  );
   assert.match(failed.explanation, /관리자/);
-  assert.equal(failed.detail, "ERROR: syntax", "원문 메시지는 신고에 필요하므로 남긴다");
+  assert.equal(
+    failed.detail,
+    "ERROR: syntax",
+    "원문 메시지는 신고에 필요하므로 남긴다",
+  );
 });
 
 test("요청이 잘못된 경우는 고칠 위치를 가리킨다", () => {
@@ -63,7 +84,9 @@ test("요청이 잘못된 경우는 고칠 위치를 가리킨다", () => {
 });
 
 test("알 수 없는 오류는 기존 동작을 유지한다", () => {
-  const recovery = describeQueryError(new Error("네트워크 오류"), { canRetry: true });
+  const recovery = describeQueryError(new Error("네트워크 오류"), {
+    canRetry: true,
+  });
   assert.equal(recovery.title, "요청을 완료하지 못했습니다");
   assert.equal(recovery.explanation, "네트워크 오류");
   assert.deepEqual(recovery.actions, [{ kind: "retry", label: "다시 시도" }]);
@@ -80,14 +103,30 @@ test("기간 줄이기는 더 짧은 선택지가 있을 때만 제안한다", a
   assert.equal(narrowerRange(90), 30);
   assert.equal(narrowerRange(30), 7);
   assert.equal(narrowerRange(7), null, "가장 짧은 기간에서는 줄일 곳이 없다");
-  assert.equal(narrowerRange(14), 7, "선택지에 없는 값에서도 더 짧은 쪽으로 내려간다");
+  assert.equal(
+    narrowerRange(14),
+    7,
+    "선택지에 없는 값에서도 더 짧은 쪽으로 내려간다",
+  );
 });
 
 test("정책이 허용하지 않는 기간은 선택지에 넣지 않는다", async () => {
   const { allowedRanges } = await import("../src/components/queryError.ts");
-  assert.deepEqual(allowedRanges([7, 30, 90], 180), [7, 30, 90], "제한이 넉넉하면 그대로");
-  assert.deepEqual(allowedRanges([90, 180, 365], 180), [90, 180], "365일은 제한을 넘으므로 제외");
-  assert.deepEqual(allowedRanges([7, 30, 90], undefined), [7, 30, 90], "제한을 모르면 줄이지 않는다");
+  assert.deepEqual(
+    allowedRanges([7, 30, 90], 180),
+    [7, 30, 90],
+    "제한이 넉넉하면 그대로",
+  );
+  assert.deepEqual(
+    allowedRanges([90, 180, 365], 180),
+    [90, 180],
+    "365일은 제한을 넘으므로 제외",
+  );
+  assert.deepEqual(
+    allowedRanges([7, 30, 90], undefined),
+    [7, 30, 90],
+    "제한을 모르면 줄이지 않는다",
+  );
   assert.deepEqual(
     allowedRanges([7, 30, 90], 3),
     [7],
@@ -96,9 +135,12 @@ test("정책이 허용하지 않는 기간은 선택지에 넣지 않는다", as
 });
 
 test("정책 초과는 기간 줄이기와 정기 배달을 제시한다", async () => {
-  const { describeQueryError } = await import("../src/components/queryError.ts");
+  const { describeQueryError } =
+    await import("../src/components/queryError.ts");
   const recovery = describeQueryError(
-    Object.assign(new Error("180일을 넘습니다"), { code: "RANGE_EXCEEDS_POLICY" }),
+    Object.assign(new Error("180일을 넘습니다"), {
+      code: "RANGE_EXCEEDS_POLICY",
+    }),
     { canNarrowRange: true },
   );
   assert.match(recovery.title, /정책이 허용하지 않습니다/);
@@ -109,12 +151,55 @@ test("정책 초과는 기간 줄이기와 정기 배달을 제시한다", async
   assert.equal(recovery.detail, "180일을 넘습니다");
 });
 
+// A screen with no period control — the visitor trace, the search, the change
+// calendar — leaves an administrator with nothing to click: the explanation
+// named "관리자가 정한 최대 정확 조회 기간" without saying where it is set. The
+// link goes to the panel that holds the form; a reader who cannot open that
+// page is not offered it.
+test("정책 초과는 관리자에게 정책 화면 링크를 준다", async () => {
+  const { describeQueryError } =
+    await import("../src/components/queryError.ts");
+  const error = Object.assign(new Error("180일을 넘습니다"), {
+    code: "RANGE_EXCEEDS_POLICY",
+  });
+  const admin = describeQueryError(error, { canEditPolicy: true });
+  assert.deepEqual(
+    admin.actions.map((action) => [action.kind, action.label]),
+    [
+      ["link", "조회 정책 바꾸기"],
+      ["link", "정기 배달로 받기"],
+    ],
+    "기간 조절이 없는 화면에서는 정책이 관리자가 손댈 수 있는 유일한 것",
+  );
+  const policyLink = admin.actions.find((a) => a.label === "조회 정책 바꾸기");
+  assert.equal(policyLink.to, "/admin/analytics-engineering?panel=query-cost");
+
+  const adminWithRange = describeQueryError(error, {
+    canEditPolicy: true,
+    canNarrowRange: true,
+  });
+  assert.deepEqual(
+    adminWithRange.actions.map((action) => action.kind),
+    ["narrow", "link", "link"],
+    "기간을 줄일 수 있으면 그것이 먼저, 정책 링크는 그 다음",
+  );
+
+  const viewer = describeQueryError(error, { canEditPolicy: false });
+  assert.ok(
+    !viewer.actions.some((a) => a.label === "조회 정책 바꾸기"),
+    "정책 화면에 들어갈 수 없는 사람에게는 링크를 주지 않는다",
+  );
+});
+
 // Three codes a reporting screen can be answered with had no explanation, so
 // they fell through to "요청을 완료하지 못했습니다" plus whatever the server
 // said — which for one of them was English, in a console that is not.
 test("a screen turned off by a setting is not reported as a failure", () => {
   const recovery = describeQueryError(
-    { code: "VISITOR_PROFILES_DISABLED", message: "Visitor Explorer is disabled by the privacy policy" },
+    {
+      code: "VISITOR_PROFILES_DISABLED",
+      message: "Visitor Explorer is disabled by the privacy policy",
+    },
     { canRetry: true },
   );
   assert.match(recovery.title, /방문자 프로필/);
@@ -123,35 +208,52 @@ test("a screen turned off by a setting is not reported as a failure", () => {
     "a setting is not fixed by trying again, so retry must not be offered",
   );
   assert.ok(
-    recovery.actions.some((action) => action.kind === "link" && action.to.includes("privacy")),
+    recovery.actions.some(
+      (action) => action.kind === "link" && action.to.includes("privacy"),
+    ),
     "the reader is not told where the setting lives",
   );
 });
 
 test("an invalid site timezone sends the reader to the setting", () => {
-  const recovery = describeQueryError({ code: "INVALID_TIMEZONE", message: `invalid site timezone "Mars/Olympus"` });
+  const recovery = describeQueryError({
+    code: "INVALID_TIMEZONE",
+    message: `invalid site timezone "Mars/Olympus"`,
+  });
   assert.match(recovery.title, /시간대/);
   assert.ok(
-    recovery.actions.some((action) => action.kind === "link" && action.to.includes("sites")),
+    recovery.actions.some(
+      (action) => action.kind === "link" && action.to.includes("sites"),
+    ),
     "every report on the site fails until this is corrected, so the setting has to be reachable from here",
   );
 });
 
 test("a report that produced an unrepresentable value does not offer a retry", () => {
   const recovery = describeQueryError(
-    { code: "RESPONSE_NOT_ENCODABLE", message: "보고서에 표현할 수 없는 값이 있어 응답을 만들지 못했습니다." },
+    {
+      code: "RESPONSE_NOT_ENCODABLE",
+      message: "보고서에 표현할 수 없는 값이 있어 응답을 만들지 못했습니다.",
+    },
     { canRetry: true },
   );
   assert.ok(
     !recovery.actions.some((action) => action.kind === "retry"),
     "the same request produces the same value, so a retry button is a loop",
   );
-  assert.match(recovery.explanation, /관리자/, "the reader is not told who can act on it");
+  assert.match(
+    recovery.explanation,
+    /관리자/,
+    "the reader is not told who can act on it",
+  );
 });
 
 // An unmapped code still has to say something, and never an empty screen.
 test("a code nobody has explained yet still reads as something", () => {
   const recovery = describeQueryError({ code: "SOMETHING_NEW", message: "" });
   assert.ok(recovery.title.length > 0);
-  assert.ok(recovery.explanation.length > 0, "an unexplained failure must not render blank");
+  assert.ok(
+    recovery.explanation.length > 0,
+    "an unexplained failure must not render blank",
+  );
 });
