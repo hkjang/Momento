@@ -541,7 +541,7 @@ func (s *Server) listSettings(w http.ResponseWriter, r *http.Request) {
 }
 func allowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "privacy", "storage", "security", "automation":
+	case "general", "oidc", "privacy", "storage", "security", "automation", "mcp.oauth":
 		return true
 	}
 	return false
@@ -578,6 +578,20 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	if err := validateAdminSetting(key, value); err != nil {
 		writeError(w, 400, "INVALID_SETTING", err.Error())
 		return
+	}
+	// Switching SSO tokens on without an issuer to verify them against would be
+	// accepted here and then behave as off at /mcp, with the reason only in the
+	// log. Refusing at save time puts the reason in front of the administrator.
+	if enabled, _ := value["enabled"].(bool); key == "mcp.oauth" && enabled {
+		var issuer string
+		if err := s.DB.QueryRow(r.Context(), `SELECT coalesce(value->>'issuer_url','') FROM settings WHERE key='oidc'`).Scan(&issuer); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 500, "SETTING_READ_FAILED", err.Error())
+			return
+		}
+		if strings.TrimSpace(issuer) == "" {
+			writeError(w, 400, "INVALID_SETTING", "MCP SSO tokens need the Keycloak issuer: set oidc.issuer_url first")
+			return
+		}
 	}
 	// A write names the fields it changes. It used to replace the whole group,
 	// so a caller that sent four privacy fields silently dropped the masked
@@ -644,6 +658,23 @@ func validateAdminSetting(key string, value map[string]any) error {
 			u, err := url.Parse(issuer)
 			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || client == "" {
 				return fmt.Errorf("enabled OIDC requires a valid issuer_url and client_id")
+			}
+		}
+	case "mcp.oauth":
+		if raw, ok := value["resource"]; ok {
+			resource, isString := raw.(string)
+			if !isString {
+				return fmt.Errorf("resource must be a string")
+			}
+			if resource = strings.TrimSpace(resource); resource != "" && !validMCPResource(resource) {
+				return fmt.Errorf("resource must be an absolute HTTP(S) URL ending in /mcp, such as https://analytics.company.local/mcp")
+			}
+		}
+		for _, name := range []string{"audience", "scopes"} {
+			if raw, ok := value[name]; ok {
+				if _, isString := raw.(string); !isString {
+					return fmt.Errorf("%s must be a space-separated string", name)
+				}
 			}
 		}
 	case "privacy":

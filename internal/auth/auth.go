@@ -27,6 +27,20 @@ type Principal struct {
 	AuthType         string    `json:"-"`
 }
 
+// Programmatic reports whether the caller is a program holding a credential —
+// a personal API key or an SSO access token presented to MCP — rather than a
+// person in a browser session.
+//
+// Every gate that keeps automation out of administration and interactive
+// writes asks this, and asks it here, because the gates used to ask "is this an
+// API key" each on its own. A third kind of credential would have passed two of
+// them untouched: not a key, so not refused, and holding the account's role, so
+// admitted as an administrator. What the gates mean is "not a person at the
+// console", and that is what this says.
+func (p Principal) Programmatic() bool {
+	return p.AuthType != "session"
+}
+
 type contextKey struct{}
 
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
@@ -141,11 +155,28 @@ func (s Service) CreateSession(ctx context.Context, userID uuid.UUID) (string, e
 	return plain, err
 }
 
-func (s Service) Authenticate(r *http.Request) (Principal, error) {
-	token := ""
+// BearerToken is the value of an `Authorization: Bearer` header, or "".
+func BearerToken(r *http.Request) string {
 	if h := r.Header.Get("Authorization"); strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		token = strings.TrimSpace(h[7:])
+		return strings.TrimSpace(h[7:])
 	}
+	return ""
+}
+
+// KeyPrefix is what every personal API key starts with. A bearer that starts
+// with it is a key whatever else it looks like.
+const KeyPrefix = "mom_key_"
+
+// LooksLikeJWT is the shape test that tells a signed token from a key or a
+// session: three non-empty dot-separated parts. Keys and session tokens are
+// base64url and never contain a dot.
+func LooksLikeJWT(token string) bool {
+	parts := strings.Split(token, ".")
+	return len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != ""
+}
+
+func (s Service) Authenticate(r *http.Request) (Principal, error) {
+	token := BearerToken(r)
 	if token == "" {
 		if c, err := r.Cookie("momento_session"); err == nil {
 			token = c.Value
@@ -156,7 +187,7 @@ func (s Service) Authenticate(r *http.Request) (Principal, error) {
 	}
 	hash := HashToken(token)
 	var p Principal
-	if strings.HasPrefix(token, "mom_key_") {
+	if strings.HasPrefix(token, KeyPrefix) {
 		err := s.DB.QueryRow(r.Context(), `SELECT u.id,u.email,u.display_name,u.department,u.organization_name,u.role,k.scopes
 			FROM api_keys k JOIN users u ON u.id=k.user_id WHERE k.key_hash=$1 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now()) AND u.active`, hash).
 			Scan(&p.ID, &p.Email, &p.DisplayName, &p.Department, &p.OrganizationName, &p.Role, &p.Scopes)

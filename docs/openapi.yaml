@@ -675,13 +675,33 @@ paths:
   /mcp:
     post:
       summary: MCP Streamable HTTP JSON-RPC endpoint
-      responses: {'200': {description: JSON-RPC response}}
+      description: |
+        Accepts a personal `mom_key_` API key or a browser session like the rest of the API, and — only here, and only when `mcp.oauth.enabled` is on — a Keycloak access token (JWT) in the same `Authorization: Bearer` header.
+        A 401 carries `WWW-Authenticate: Bearer realm="Momento", resource_metadata="<public URL>/.well-known/oauth-protected-resource/mcp"` so an MCP client can find the authorization server and sign the person in itself.
+      responses:
+        '200': {description: JSON-RPC response}
+        '401': {description: 'No or refused credential. With SSO tokens on, WWW-Authenticate points at the protected resource metadata; a refused token adds error="invalid_token" and the body says why (audience, issuer, expiry, unregistered account).'}
+  /.well-known/oauth-protected-resource:
+    get:
+      summary: OAuth protected resource metadata (RFC 9728) for the MCP endpoint
+      description: Unauthenticated bare JSON, not the error envelope. 404 while `mcp.oauth.enabled` is off.
+      security: []
+      responses:
+        '200': {description: '{resource, authorization_servers, bearer_methods_supported, scopes_supported, resource_name}'}
+        '404': {description: SSO tokens are not accepted by this deployment}
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      summary: The same metadata at the path-specific address MCP clients try first
+      security: []
+      responses:
+        '200': {description: '{resource, authorization_servers, bearer_methods_supported, scopes_supported, resource_name}'}
+        '404': {description: SSO tokens are not accepted by this deployment}
 components:
   securitySchemes:
     bearer:
       type: http
       scheme: bearer
-      description: Personal mom_key_ API key or browser session token
+      description: Personal mom_key_ API key or browser session token. /mcp additionally accepts a Keycloak access token when the administrator has switched MCP SSO on.
   parameters:
     SiteId:
       name: siteId
