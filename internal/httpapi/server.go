@@ -50,7 +50,7 @@ type Server struct {
 	maxPayloadBytes int64
 	// oauthProviders caches OIDC discovery per issuer for MCP token checks.
 	oauthMu        sync.Mutex
-	oauthProviders map[string]*oidc.Provider
+	oauthProviders map[string]*oauthDiscovery
 }
 
 func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger, secrets *secret.Cipher) *Server {
@@ -73,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	// wire. Only compressible types are touched, and a client that does not ask
 	// for an encoding still gets the response uncompressed.
 	r.Use(middleware.Compress(5))
+	// A request id, so a refusal logged deep in a handler can be tied to the
+	// request that produced it.
+	r.Use(middleware.RequestID)
 	r.Use(s.recoverer, s.requestLog, s.securityHeaders)
 	r.Get("/health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/health/ready", s.ready)

@@ -1,10 +1,16 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hkjang/Momento/internal/auth"
 )
@@ -48,18 +54,22 @@ func TestEveryInteractiveGateRefusesEveryProgrammaticCredential(t *testing.T) {
 	}
 }
 
-func TestMCPResourceIdentifierIsTheConfiguredOneBeforeTheHost(t *testing.T) {
+func TestMCPResourceIdentifierIsTheConfiguredOneAndNeverTheHost(t *testing.T) {
 	t.Parallel()
-	server := &Server{}
-	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	request.Host = "attacker.example"
-	if got := server.mcpResource(request, mcpOAuthConfig{Resource: "https://momento.example.test/mcp"}); got != "https://momento.example.test/mcp" {
-		t.Errorf("a configured resource was overridden by the Host header: %q", got)
+	// Without a resource identifier of the operator's choosing there is nothing
+	// a token's audience can be held to, so the feature is off however the
+	// switch is set — a Host header is the sender's to choose.
+	on := mcpOAuthConfig{Enabled: true, Issuer: "https://kc.example/realms/x", Resource: "https://momento.example.test/mcp"}
+	if !on.active() {
+		t.Error("switched on with an issuer and a resource is not active")
 	}
-	if got := server.mcpResource(request, mcpOAuthConfig{}); got != "http://attacker.example/mcp" {
-		t.Errorf("with nothing configured the host is the last resort: %q", got)
+	if noResource := (mcpOAuthConfig{Enabled: true, Issuer: on.Issuer}); noResource.active() || !strings.Contains(noResource.inactiveReason(), "public_url") {
+		t.Errorf("switched on without a resource is active (%v) or the reason %q does not name public_url", noResource.active(), noResource.inactiveReason())
 	}
-	if got := server.mcpMetadataURL(request, mcpOAuthConfig{Resource: "https://momento.example.test/mcp"}); got != "https://momento.example.test/.well-known/oauth-protected-resource/mcp" {
+	if noIssuer := (mcpOAuthConfig{Enabled: true, Resource: on.Resource}); noIssuer.active() || !strings.Contains(noIssuer.inactiveReason(), "issuer") {
+		t.Errorf("switched on without an issuer is active (%v) or the reason %q does not name the issuer", noIssuer.active(), noIssuer.inactiveReason())
+	}
+	if got := mcpMetadataURL(on); got != "https://momento.example.test/.well-known/oauth-protected-resource/mcp" {
 		t.Errorf("metadata URL %q", got)
 	}
 	for raw, want := range map[string]bool{
@@ -113,5 +123,78 @@ func TestBearerShapes(t *testing.T) {
 		if got := auth.LooksLikeJWT(token); got != want {
 			t.Errorf("LooksLikeJWT(%q) = %v, want %v", token, got, want)
 		}
+	}
+}
+
+// Discovery is one round trip per issuer, not one per request: callers that
+// arrive while it is in flight wait for the same outcome, a failure is
+// remembered for a while rather than retried on every call, and a caller whose
+// request ends first leaves without holding anyone else up.
+func TestDiscoveryRunsOncePerIssuerAndOutsideTheLock(t *testing.T) {
+	t.Parallel()
+	var hits atomic.Int32
+	release := make(chan struct{})
+	var status atomic.Int32
+	status.Store(http.StatusServiceUnavailable)
+	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		<-release
+		if code := int(status.Load()); code != http.StatusOK {
+			w.WriteHeader(code)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"issuer":%q,"jwks_uri":%q}`, "http://"+r.Host, "http://"+r.Host+"/jwks")
+	}))
+	defer issuer.Close()
+	server := &Server{}
+
+	// Ten callers at once, Keycloak slow: one round trip, and the others are
+	// not stuck behind a lock — a caller whose request is cancelled leaves.
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for i := 0; i < 9; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := server.oauthProvider(context.Background(), issuer.URL)
+			errs <- err
+		}()
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for hits.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := server.oauthProvider(cancelled, issuer.URL); !errors.Is(err, context.Canceled) {
+		t.Errorf("a caller with a cancelled request waited on discovery instead of leaving: %v", err)
+	}
+	close(release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err == nil || !strings.Contains(err.Error(), "503") {
+			t.Errorf("a waiting caller did not get the discovery outcome: %v", err)
+		}
+	}
+	if got := hits.Load(); got != 1 {
+		t.Errorf("discovery was performed %d times for one issuer", got)
+	}
+	// The failure is remembered: Keycloak is not asked again straight away.
+	if _, err := server.oauthProvider(context.Background(), issuer.URL); err == nil || hits.Load() != 1 {
+		t.Errorf("a failed discovery was retried on the next call (err %v, hits %d)", err, hits.Load())
+	}
+	// Once the failure has aged out it is tried again, and a success stays.
+	server.oauthMu.Lock()
+	server.oauthProviders[issuer.URL].until = time.Now().Add(-time.Second)
+	server.oauthMu.Unlock()
+	status.Store(http.StatusOK)
+	for i := 0; i < 3; i++ {
+		if _, err := server.oauthProvider(context.Background(), issuer.URL); err != nil {
+			t.Fatalf("discovery after recovery: %v", err)
+		}
+	}
+	if got := hits.Load(); got != 2 {
+		t.Errorf("after recovery discovery was performed %d times, want 2", got)
 	}
 }

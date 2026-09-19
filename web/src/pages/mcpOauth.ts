@@ -33,8 +33,9 @@ export function mcpMetadataUrl(resource: string): string {
 
 /**
  * Why the switch, once on, would still behave as off. The server refuses the
- * save without an issuer and falls back to the request's Host header without
- * a public URL; the card says so before the operator finds out from a client.
+ * save without an issuer and without a resource identifier (a Host header is
+ * the sender's to choose, so it is never used in its place); the card says so
+ * before the operator finds out from the refused save.
  */
 export function mcpOauthReadiness(
   mcpOauth: SettingGroup,
@@ -51,7 +52,7 @@ export function mcpOauthReadiness(
     return {
       ready: false,
       reason:
-        "Public URL 과 리소스 식별자가 모두 비어 있습니다. 요청의 Host 헤더로 만든 주소를 쓰게 되므로 프록시 뒤에서는 Public URL 을 채우세요.",
+        "Public URL 과 리소스 식별자가 모두 비어 있습니다. 토큰의 aud 를 대조할 주소가 없으면 저장이 거부됩니다. Public URL 을 채우세요.",
     };
   return { ready: true, reason: "" };
 }

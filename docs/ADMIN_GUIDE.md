@@ -186,8 +186,8 @@ Momento는 **리소스 서버**입니다. 로그인은 Keycloak이 하고, Momen
 
 | 키 | 기본값 | 뜻 |
 | :--- | :--- | :--- |
-| `mcp.oauth.enabled` | `false` | 켜기. `oidc.issuer_url`이 비어 있으면 저장이 400으로 거부됩니다 |
-| `mcp.oauth.resource` | 빈 값 | 리소스 식별자(RFC 8707). 비면 `general.public_url` + `/mcp`, 그것도 비면 요청 Host로 만듭니다(마지막 수단 — 프록시 뒤에서는 반드시 Public URL을 채우세요). `/mcp`로 끝나는 절대 URL만 받습니다 |
+| `mcp.oauth.enabled` | `false` | 켜기. `oidc.issuer_url`이 비어 있거나, `general.public_url`과 `mcp.oauth.resource`가 모두 비어 있으면 저장이 400으로 거부됩니다 |
+| `mcp.oauth.resource` | 빈 값 | 리소스 식별자(RFC 8707). 비면 `general.public_url` + `/mcp`. 둘 다 비면 요청 Host로 만들지 않고 SSO 토큰을 받지 않습니다(Host 헤더는 보내는 쪽이 정하므로 `aud` 검사의 기준이 될 수 없습니다). `/mcp`로 끝나는 절대 URL만 받습니다 |
 | `mcp.oauth.audience` | 빈 값 | 공백 구분 허용 대상. 토큰의 `aud` 또는 `azp`와 비교합니다. Audience 매퍼 없이 쓰는 호환 경로입니다 |
 | `mcp.oauth.scopes` | `analytics:read` | 공백 구분. SSO 주체에게 기록되는 범위. 토큰의 `scope`는 보지 않습니다 |
 | (재사용) `oidc.issuer_url` · `oidc.claim_email` | 웹 로그인 설정 | 발급자와 계정 대조 클레임. 새로 만들지 않습니다 |

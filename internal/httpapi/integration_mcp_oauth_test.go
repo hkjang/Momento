@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/hmac"
@@ -10,11 +11,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -223,6 +227,24 @@ func TestARefusedMCPClientIsToldWhereToSignIn(t *testing.T) {
 	if response := f.putSetting(t, "mcp.oauth", map[string]any{"resource": "https://momento.example.test/api"}); response.Code != http.StatusBadRequest {
 		t.Fatalf("a resource that is not the MCP endpoint answered %d, want 400", response.Code)
 	}
+	// And without a resource identifier: with an issuer but neither the public
+	// URL nor the resource set there is nothing to hold a token's audience to,
+	// and the save says which of the two to fill.
+	if response := f.putSetting(t, "oidc", map[string]any{"issuer_url": idp.server.URL, "client_id": "momento-web"}); response.Code != http.StatusOK {
+		t.Fatalf("set the issuer: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.putSetting(t, "general", map[string]any{"public_url": ""}); response.Code != http.StatusOK {
+		t.Fatalf("clear the public url: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.putSetting(t, "mcp.oauth", map[string]any{"enabled": true, "resource": ""}); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "public_url") || !strings.Contains(response.Body.String(), "mcp.oauth.resource") {
+		t.Fatalf("enabling without a resource answered %d %s, want 400 naming public_url and mcp.oauth.resource", response.Code, response.Body.String())
+	}
+	if response := f.putSetting(t, "mcp.oauth", map[string]any{"enabled": true, "resource": "https://mcp.example.test/mcp"}); response.Code != http.StatusOK {
+		t.Fatalf("enabling with a resource in the same write was refused: %d %s", response.Code, response.Body.String())
+	}
+	if response := f.putSetting(t, "mcp.oauth", map[string]any{"enabled": false, "resource": ""}); response.Code != http.StatusOK {
+		t.Fatalf("switching off again: %d %s", response.Code, response.Body.String())
+	}
 
 	switchOnSSO(t, f, idp, "")
 
@@ -300,6 +322,138 @@ func TestARefusedMCPClientIsToldWhereToSignIn(t *testing.T) {
 	}
 }
 
+// A resource identifier is what a token's audience is held to. With neither
+// the public URL nor mcp.oauth.resource set — the state a fresh installation
+// is in, and one an operator can return to by clearing the public URL after
+// switching SSO on — there is nothing of the operator's to hold it to, and the
+// request's Host header is the sender's to choose. So nothing is accepted:
+// not a token whose aud names that host, and the metadata that would point a
+// client at a sign-in is not served either.
+func TestWithoutAResourceIdentifierNoTokenIsAccepted(t *testing.T) {
+	pool := testPool(t)
+	f := seed(t, pool)
+	keepSettings(t, f, "oidc", "general", "mcp.oauth")
+	ctx := context.Background()
+	idp := newFakeIDP(t)
+	switchOnSSO(t, f, idp, "")
+	const subject = "keycloak-subject-admin"
+	if _, err := pool.Exec(ctx, `UPDATE users SET oidc_subject=$1 WHERE email='admin@test.local'`, subject); err != nil {
+		t.Fatalf("link the account: %v", err)
+	}
+	// The save refuses this state, so it is reached the way an operator
+	// reaches it: by clearing the public URL underneath a switched-on card.
+	if _, err := pool.Exec(ctx, `UPDATE settings SET value=jsonb_set(value,'{public_url}','""') WHERE key='general'`); err != nil {
+		t.Fatalf("clear the public url: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE settings SET value=jsonb_set(value,'{resource}','""') WHERE key='mcp.oauth'`); err != nil {
+		t.Fatalf("clear the resource: %v", err)
+	}
+	var enabled bool
+	if err := pool.QueryRow(ctx, `SELECT (value->>'enabled')::bool FROM settings WHERE key='mcp.oauth'`).Scan(&enabled); err != nil || !enabled {
+		t.Fatalf("the switch is not on (%v, %v), so a refusal below proves nothing", enabled, err)
+	}
+
+	for _, host := range []string{"other-app.example.test", "momento.example.test"} {
+		for _, scheme := range []string{"http", "https"} {
+			aud := scheme + "://" + host + "/mcp"
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(listTools))
+			request.Header.Set("Content-Type", "application/json")
+			request.Host = host
+			request.Header.Set("X-Forwarded-Host", host)
+			request.Header.Set("X-Forwarded-Proto", scheme)
+			request.Header.Set("Authorization", "Bearer "+idp.accessToken(t, aud, subject, nil))
+			recorder := httptest.NewRecorder()
+			f.server.Handler().ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Errorf("Host %s: a token whose aud %q was made from the request's own host opened MCP: %d %s", host, aud, recorder.Code, truncateBody(recorder.Body.String()))
+			}
+			if challenge := recorder.Header().Get("WWW-Authenticate"); challenge != "" {
+				t.Errorf("Host %s: the refusal points the client somewhere made from the request: %q", host, challenge)
+			}
+		}
+	}
+	for _, path := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Host = "other-app.example.test"
+		recorder := httptest.NewRecorder()
+		f.server.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), "other-app.example.test") {
+			t.Errorf("%s without a resource identifier answered %d %s, want 404 naming no host", path, recorder.Code, recorder.Body.String())
+		}
+	}
+	// Re-enabling through the console is refused until one of the two is set.
+	if response := f.putSetting(t, "mcp.oauth", map[string]any{"enabled": true}); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "public_url") {
+		t.Errorf("saving the switch in this state answered %d %s, want 400 naming public_url", response.Code, response.Body.String())
+	}
+	// And a personal key is untouched by any of this.
+	if response := f.mcpWith("mom_key_never_issued", listTools); response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "invalid API key") {
+		t.Errorf("a key is no longer examined as a key: %d %s", response.Code, response.Body.String())
+	}
+}
+
+// refusalLog is what the server wrote while one request was handled, so a
+// test can hold the log to the same standard as the response.
+type refusalLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *refusalLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+// take returns everything written since the last take.
+func (l *refusalLog) take() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := l.buf.String()
+	l.buf.Reset()
+	return out
+}
+
+// logging swaps the fixture's server for one whose logger writes to a buffer
+// at every level, sharing the same database, secrets and session.
+func logging(t *testing.T, f fixture) (fixture, *refusalLog) {
+	t.Helper()
+	log := &refusalLog{}
+	f.server = New(f.server.DB, nil, slog.New(slog.NewTextHandler(log, &slog.HandlerOptions{Level: slog.LevelDebug})), f.server.Secrets)
+	return f, log
+}
+
+var requestIDField = regexp.MustCompile(`(?m)\brequest_id=("([^"]*)"|(\S+))`)
+
+// refusalLine finds the one line on which an SSO refusal was logged and holds
+// it to what an operator needs: the library's own words for the cause under
+// error=, and a request id the line can be tied back to the request by.
+func refusalLine(t *testing.T, written, name, cause string) {
+	t.Helper()
+	var line string
+	for _, candidate := range strings.Split(written, "\n") {
+		if strings.Contains(candidate, `msg="mcp sso token refused"`) {
+			if line != "" {
+				t.Errorf("%s: refused twice in one request:\n%s", name, written)
+			}
+			line = candidate
+		}
+	}
+	if line == "" {
+		t.Errorf("%s: no 'mcp sso token refused' line was logged; the log was:\n%s", name, written)
+		return
+	}
+	if !strings.Contains(line, "level=WARN") {
+		t.Errorf("%s: the refusal is not logged as a warning: %s", name, line)
+	}
+	if !strings.Contains(line, "error=") || !strings.Contains(line, cause) {
+		t.Errorf("%s: the refusal line does not carry %q under error=: %s", name, cause, line)
+	}
+	match := requestIDField.FindStringSubmatch(line)
+	if match == nil || strings.TrimSpace(match[2]+match[3]) == "" {
+		t.Errorf("%s: the refusal line has no request_id to tie it to the request: %s", name, line)
+	}
+}
+
 func TestAKeycloakTokenOpensMCPForAnAccountMomentoKnows(t *testing.T) {
 	pool := testPool(t)
 	f := seed(t, pool)
@@ -307,6 +461,7 @@ func TestAKeycloakTokenOpensMCPForAnAccountMomentoKnows(t *testing.T) {
 	ctx := context.Background()
 	idp := newFakeIDP(t)
 	switchOnSSO(t, f, idp, "")
+	f, log := logging(t, f)
 
 	// The fixture's administrator signed in through the web once, which is
 	// what stored the subject.
@@ -346,10 +501,12 @@ func TestAKeycloakTokenOpensMCPForAnAccountMomentoKnows(t *testing.T) {
 		// client carries aud=["account"] and the client in azp. Without a
 		// mapper and without the client in the administrator's list, that is a
 		// token for some other application in the realm.
+		log.take()
 		other := f.mcpWith(idp.accessToken(t, "account", subject, map[string]any{"azp": "some-other-app"}), listTools)
 		if other.Code != http.StatusUnauthorized {
 			t.Fatalf("a token issued to another application opened MCP: %d %s", other.Code, other.Body.String())
 		}
+		refusalLine(t, log.take(), "another application", `audience [account] / azp \"some-other-app\" not accepted`)
 		var envelope struct {
 			Error struct{ Message string } `json:"error"`
 		}
@@ -398,15 +555,23 @@ func TestAKeycloakTokenOpensMCPForAnAccountMomentoKnows(t *testing.T) {
 			}
 			return claims
 		}
-		cases := map[string]string{
-			"expired":         idp.sign(t, with(map[string]any{"exp": time.Now().Add(-time.Hour).Unix()})),
-			"not yet valid":   idp.sign(t, with(map[string]any{"nbf": time.Now().Add(time.Hour).Unix()})),
-			"another issuer":  otherIssuer.sign(t, with(map[string]any{"iss": otherIssuer.server.URL})),
-			"an ID token":     idp.sign(t, with(map[string]any{"typ": "ID"})),
-			"HS256 signed":    signHS256(t, valid, "anything"),
-			"bound to a key":  idp.sign(t, with(map[string]any{"cnf": map[string]any{"jkt": "thumbprint"}})),
-			"without subject": idp.sign(t, with(map[string]any{"sub": ""})),
-			"unsigned":        strings.Join(strings.Split(idp.sign(t, valid), ".")[:2], ".") + ".",
+		signed := strings.Split(idp.sign(t, valid), ".")
+		// Each case is refused, and the refusal is logged with the verifier's own
+		// words for why — go-oidc's where go-oidc decided, this server's where
+		// it did — so an operator reading the log learns what a client was
+		// shown a generic message about.
+		type refused struct{ token, cause string }
+		cases := map[string]refused{
+			"expired":                 {idp.sign(t, with(map[string]any{"exp": time.Now().Add(-time.Hour).Unix()})), "token is expired"},
+			"not yet valid":           {idp.sign(t, with(map[string]any{"nbf": time.Now().Add(time.Hour).Unix()})), "before the nbf"},
+			"another issuer":          {otherIssuer.sign(t, with(map[string]any{"iss": otherIssuer.server.URL})), "failed to verify signature"},
+			"claiming another issuer": {idp.sign(t, with(map[string]any{"iss": otherIssuer.server.URL})), "issued by a different provider"},
+			"an ID token":             {idp.sign(t, with(map[string]any{"typ": "ID"})), "typ=ID"},
+			"HS256 signed":            {signHS256(t, valid, "anything"), `HS256`},
+			"bound to a key":          {idp.sign(t, with(map[string]any{"cnf": map[string]any{"jkt": "thumbprint"}})), "cnf present"},
+			"without subject":         {idp.sign(t, with(map[string]any{"sub": ""})), "sub empty"},
+			"forged signature":        {signed[0] + "." + signed[1] + "." + base64.RawURLEncoding.EncodeToString([]byte("not the realm's signature")), "failed to verify signature"},
+			"claiming no signer":      {jwtSegment(t, map[string]string{"alg": "none", "typ": "JWT"}) + "." + signed[1] + "." + signed[2], `none`},
 		}
 		names := make([]string, 0, len(cases))
 		for name := range cases {
@@ -414,10 +579,23 @@ func TestAKeycloakTokenOpensMCPForAnAccountMomentoKnows(t *testing.T) {
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			response := f.mcpWith(cases[name], listTools)
+			log.take()
+			response := f.mcpWith(cases[name].token, listTools)
 			if response.Code != http.StatusUnauthorized {
 				t.Errorf("a token that is %s answered %d, want 401: %s", name, response.Code, truncateBody(response.Body.String()))
+				continue
 			}
+			refusalLine(t, log.take(), name, cases[name].cause)
+		}
+		// A bearer without a signature segment is not JWT-shaped, so it never
+		// reaches the verifier: it is refused the way any unknown bearer is.
+		log.take()
+		unsigned := f.mcpWith(signed[0]+"."+signed[1]+".", listTools)
+		if unsigned.Code != http.StatusUnauthorized || !strings.Contains(unsigned.Body.String(), "invalid session") {
+			t.Errorf("an unsigned token answered %d %s, want 401 from the session lookup", unsigned.Code, unsigned.Body.String())
+		}
+		if written := log.take(); strings.Contains(written, "mcp sso token refused") {
+			t.Errorf("an unsigned bearer was examined as an SSO token:\n%s", written)
 		}
 	})
 

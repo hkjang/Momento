@@ -579,17 +579,31 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_SETTING", err.Error())
 		return
 	}
-	// Switching SSO tokens on without an issuer to verify them against would be
+	// Switching SSO tokens on without an issuer to verify them against, or
+	// without a resource identifier to hold their audience to, would be
 	// accepted here and then behave as off at /mcp, with the reason only in the
 	// log. Refusing at save time puts the reason in front of the administrator.
 	if enabled, _ := value["enabled"].(bool); key == "mcp.oauth" && enabled {
-		var issuer string
-		if err := s.DB.QueryRow(r.Context(), `SELECT coalesce(value->>'issuer_url','') FROM settings WHERE key='oidc'`).Scan(&issuer); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		var issuer, publicURL, storedResource string
+		if err := s.DB.QueryRow(r.Context(), `SELECT
+			coalesce((SELECT value->>'issuer_url' FROM settings WHERE key='oidc'),''),
+			coalesce((SELECT value->>'public_url' FROM settings WHERE key='general'),''),
+			coalesce((SELECT value->>'resource' FROM settings WHERE key='mcp.oauth'),'')`).Scan(&issuer, &publicURL, &storedResource); err != nil {
 			writeError(w, 500, "SETTING_READ_FAILED", err.Error())
 			return
 		}
 		if strings.TrimSpace(issuer) == "" {
 			writeError(w, 400, "INVALID_SETTING", "MCP SSO tokens need the Keycloak issuer: set oidc.issuer_url first")
+			return
+		}
+		// The resource in this same write counts; the stored one is what a write
+		// that leaves the field alone keeps.
+		resource := storedResource
+		if raw, ok := value["resource"].(string); ok {
+			resource = raw
+		}
+		if strings.TrimSpace(resource) == "" && strings.TrimSpace(publicURL) == "" {
+			writeError(w, 400, "INVALID_SETTING", "MCP SSO tokens need a resource identifier to check the token audience against: set general.public_url or mcp.oauth.resource first")
 			return
 		}
 	}
