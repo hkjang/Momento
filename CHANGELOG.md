@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.34.42
+
+- **방문자 검색의 빈 결과가 수집 장애처럼 읽혔습니다.** 방문자 검색은 `policyRange(90, max_exact_days)` 기간만 조회하는데, 0건이면 `DataTable`의 기본 Empty("아직 데이터가 없습니다 / SDK에서 이벤트가 수집되면…")가 나와 사이트에 아무것도 도착하지 않은 것처럼 보였습니다. 100일 전에만 활동한 사람을 찾는 사용자는 몇 일 안에서 못 찾은 것인지, 정책 상한 때문에 기간이 줄었는지 알 수 없었습니다. `visitorTrace.ts`의 `SEARCH_DAYS`·`searchWindowLabel`·`searchEmptyDescription`이 요청과 같은 상수·같은 `policyRange`를 읽어, 빈 결과는 「검색 결과가 없습니다 — 최근 90일 안에 "kim"과 일치하는 방문자가 없습니다.」(상한이 걸리면 「최근 60일(조회 정책 상한) 안에 …」), 결과가 있으면 표 설명 앞에 같은 기간 문구를 붙입니다. 로딩·오류 분기, `DataTable`, `policyRange`, 서버는 그대로입니다.
+- `web/tsconfig.app.json`에 `allowImportingTsExtensions`를 켰습니다 — 순수 모듈이 처음으로 다른 순수 모듈(`queryError.ts`)을 import 하는데 node:test 의 ESM 로더는 확장자를 추측하지 않습니다(`tsconfig.node.json`과 같은 설정).
+
 ## v0.34.41
 
 - **정책 초과 안내에 관리자용 「조회 정책 바꾸기」 링크가 붙습니다.** `RANGE_EXCEEDS_POLICY` 안내는 "관리자가 정한 최대 정확 조회 기간"을 말하면서 그 정책이 어디에 있는지는 알려주지 않았습니다. 방문자 추적·검색·변경 달력처럼 기간 조절이 없는 화면에서는 관리자가 손댈 수 있는 것이 정책뿐인데 누를 것이 없었습니다. `ErrorState`가 관리자 페이지와 같은 역할 게이트로 `canEditPolicy`를 넘기고, `describeQueryError`가 Query Cost 패널(`/admin/analytics-engineering?panel=query-cost`) 링크를 기간 줄이기 다음·정기 배달 앞에 둡니다. analyst·viewer에게는 열리지 않는 페이지이므로 링크를 주지 않습니다.
