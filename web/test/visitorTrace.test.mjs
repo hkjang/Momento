@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  SEARCH_DAYS,
   buildTraceMarkdown,
   entryExit,
   formatDuration,
   formatGap,
+  searchEmptyDescription,
+  searchWindowLabel,
   sessionTitle,
 } from "../src/pages/visitorTrace.ts";
+import { policyRange } from "../src/components/queryError.ts";
 
 const session = {
   session_id: "sess-1",
@@ -178,6 +182,33 @@ test("활동이 없으면 빈 타임라인임을 명시한다", () => {
   assert.match(markdown, /선택한 기간에 활동이 없습니다/);
   assert.doesNotMatch(markdown, /## 식별 연결/);
   assert.doesNotMatch(markdown, /이전 기록이 더 있습니다/);
+});
+
+test("검색 기간 문구는 요청에 쓰는 policyRange와 같은 일수를 읽는다", () => {
+  assert.equal(SEARCH_DAYS, 90);
+  assert.equal(searchWindowLabel(SEARCH_DAYS), "최근 90일");
+  assert.equal(searchWindowLabel(SEARCH_DAYS, 0), "최근 90일", "상한 0은 상한 없음이다");
+  assert.equal(
+    searchWindowLabel(SEARCH_DAYS, 60),
+    "최근 60일(조회 정책 상한)",
+    "정책 상한이 더 짧으면 그 값과 이유를 함께 적는다",
+  );
+  assert.equal(searchWindowLabel(SEARCH_DAYS, 180), "최근 90일", "상한이 더 크면 표기하지 않는다");
+  // The label and the request must never disagree on the number of days.
+  for (const max of [undefined, 0, 60, 90, 180]) {
+    assert.match(searchWindowLabel(SEARCH_DAYS, max), new RegExp(`^최근 ${policyRange(SEARCH_DAYS, max)}일`));
+  }
+});
+
+test("빈 검색 결과 문구에 검색어와 실제 조회 기간이 들어간다", () => {
+  assert.equal(
+    searchEmptyDescription("kim", SEARCH_DAYS),
+    '최근 90일 안에 "kim"과 일치하는 방문자가 없습니다.',
+  );
+  assert.equal(
+    searchEmptyDescription("kim", SEARCH_DAYS, 60),
+    '최근 60일(조회 정책 상한) 안에 "kim"과 일치하는 방문자가 없습니다.',
+  );
 });
 
 test("익명 방문자는 Visitor ID를 제목으로 쓴다", () => {

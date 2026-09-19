@@ -1,3 +1,7 @@
+// The extension is spelled out because node:test loads this module directly,
+// and Node's ESM loader does not guess extensions the way the bundler does.
+import { policyRange } from "../components/queryError.ts";
+
 export interface TraceEvent {
   event_id: string;
   event_name: string;
@@ -102,6 +106,31 @@ export interface VisitorSearchResult {
   events?: number;
   sessions?: number;
   conversions?: number;
+}
+
+/**
+ * SEARCH_DAYS is the period the visitor search asks for. The request and every
+ * sentence that describes it read this one constant so they cannot drift.
+ */
+export const SEARCH_DAYS = 90;
+
+/**
+ * searchWindowLabel says how far back the search actually looked. It reads the
+ * same policyRange as the request, so a site whose policy shortens the period
+ * shows the shortened number — and says why — rather than the nominal one.
+ */
+export function searchWindowLabel(days: number, maxExactDays?: number): string {
+  const effective = policyRange(days, maxExactDays);
+  return effective < days ? `최근 ${effective}일(조회 정책 상한)` : `최근 ${effective}일`;
+}
+
+/**
+ * searchEmptyDescription explains an empty search as "not found in this period"
+ * rather than "no data on this site", which is what the table's default empty
+ * state reads as.
+ */
+export function searchEmptyDescription(query: string, days: number, maxExactDays?: number): string {
+  return `${searchWindowLabel(days, maxExactDays)} 안에 "${query}"과 일치하는 방문자가 없습니다.`;
 }
 
 export const matchedByLabel: Record<VisitorSearchResult["matched_by"], string> = {
