@@ -25,13 +25,16 @@ import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { policyRange } from "../components/queryError";
-import { ErrorState, Loading, NoSite } from "../components/States";
+import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
+  SEARCH_DAYS,
   buildTraceMarkdown,
   entryExit,
   formatDuration,
   formatGap,
   matchedByLabel,
+  searchEmptyDescription,
+  searchWindowLabel,
   type TraceSession,
   type VisitorSearchResult,
   type VisitorTrace,
@@ -66,7 +69,7 @@ export default function UserExplorerPage() {
     enabled: !!site && query.length >= 2,
     queryFn: () =>
       get<{ results: VisitorSearchResult[] }>(
-        `/api/v1/sites/${site!.site_id}/visitor-search?q=${encodeURIComponent(query)}&${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/visitor-search?q=${encodeURIComponent(query)}&${rangeQuery(policyRange(SEARCH_DAYS, site!.max_exact_days), site!.timezone)}`,
       ),
   });
   const trace = useQuery({
@@ -168,10 +171,18 @@ export default function UserExplorerPage() {
               <Loading />
             ) : search.error ? (
               <ErrorState error={search.error} />
+            ) : search.data && search.data.results.length === 0 ? (
+              // The table's default empty state reads as "this site has no
+              // data". An empty search means "nobody matched in this period",
+              // and the period is the part the reader needs to see.
+              <Empty
+                title="검색 결과가 없습니다"
+                description={searchEmptyDescription(query, SEARCH_DAYS, site.max_exact_days)}
+              />
             ) : (
               <DataTable
                 title={`검색 결과 · "${query}"`}
-                description="최근 활동 순입니다. 행을 클릭하면 사람 단위로 추적을 시작합니다."
+                description={`${searchWindowLabel(SEARCH_DAYS, site.max_exact_days)} 안의 활동을 최근 순으로 보여줍니다. 행을 클릭하면 사람 단위로 추적을 시작합니다.`}
                 rows={(search.data?.results || []) as unknown as Record<string, unknown>[]}
                 exportFilename="momento-visitor-search"
                 columns={[
