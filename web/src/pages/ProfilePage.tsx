@@ -27,6 +27,7 @@ import { del, get, patch, post } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import DataTable from "../components/DataTable";
 import { Loading } from "../components/States";
+import { PASSWORD_RULE } from "./passwordRule";
 interface APIKey {
   id: string;
   name: string;
@@ -123,7 +124,7 @@ function ProfileForm() {
             type="password"
             value={form.new_password}
             onChange={(e) => setForm({ ...form, new_password: e.target.value })}
-            helperText="12자 이상"
+            helperText={PASSWORD_RULE}
           />
           {save.error && <Alert severity="error">{save.error.message}</Alert>}
           {save.isSuccess && <Alert severity="success">저장했습니다.</Alert>}

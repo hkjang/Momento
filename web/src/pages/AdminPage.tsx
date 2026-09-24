@@ -64,6 +64,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { policyRange } from "../components/queryError";
+import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
   buildCSPGuidance,
@@ -3136,12 +3137,16 @@ interface AdminUser {
 }
 function UsersAdmin() {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const q = useQuery({
     queryKey: ["users"],
     queryFn: () => get<AdminUser[]>("/api/v1/users"),
   });
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<AdminUser | null>(null);
+  // The reset password is kept apart from the row being edited: it is sent
+  // only when typed, and a row never carries one back from the server.
+  const [resetPassword, setResetPassword] = useState("");
   const [form, setForm] = useState({
     email: "",
     display_name: "",
@@ -3165,12 +3170,18 @@ function UsersAdmin() {
         organization_name: edit!.organization_name,
         role: edit!.role,
         active: edit!.active,
+        ...(resetPassword ? { password: resetPassword } : {}),
       }),
     onSuccess: () => {
       setEdit(null);
+      setResetPassword("");
       qc.invalidateQueries({ queryKey: ["users"] });
     },
   });
+  const closeEdit = () => {
+    setEdit(null);
+    setResetPassword("");
+  };
   if (q.isLoading) return <Loading />;
   return (
     <>
@@ -3286,7 +3297,7 @@ function UsersAdmin() {
               type="password"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              helperText="12자 이상"
+              helperText={PASSWORD_RULE}
             />
             {create.error && (
               <Alert severity="error">{create.error.message}</Alert>
@@ -3297,19 +3308,14 @@ function UsersAdmin() {
           <Button onClick={() => setOpen(false)}>취소</Button>
           <Button
             variant="contained"
-            disabled={!form.email || form.password.length < 12}
+            disabled={!form.email || !passwordWithinBounds(form.password)}
             onClick={() => create.mutate()}
           >
             생성
           </Button>
         </DialogActions>
       </Dialog>
-      <Dialog
-        open={!!edit}
-        onClose={() => setEdit(null)}
-        fullWidth
-        maxWidth="sm"
-      >
+      <Dialog open={!!edit} onClose={closeEdit} fullWidth maxWidth="sm">
         <DialogTitle>사용자 권한 편집</DialogTitle>
         <DialogContent>
           {edit && (
@@ -3369,6 +3375,16 @@ function UsersAdmin() {
                 }
                 label="계정 활성화"
               />
+              {!edit.oidc && edit.id !== user?.id && (
+                <TextField
+                  label="비밀번호 재설정"
+                  type="password"
+                  autoComplete="new-password"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  helperText={`비워 두면 그대로. ${PASSWORD_RULE} 재설정하면 이 사용자의 로그인 세션이 모두 끝납니다.`}
+                />
+              )}
               {update.error && (
                 <Alert severity="error">{update.error.message}</Alert>
               )}
@@ -3376,11 +3392,14 @@ function UsersAdmin() {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEdit(null)}>취소</Button>
+          <Button onClick={closeEdit}>취소</Button>
           <Button
             variant="contained"
             onClick={() => update.mutate()}
-            disabled={update.isPending}
+            disabled={
+              update.isPending ||
+              (resetPassword.length > 0 && !passwordWithinBounds(resetPassword))
+            }
           >
             저장
           </Button>

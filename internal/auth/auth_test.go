@@ -42,4 +42,13 @@ func TestPasswordProblemTracksWhatBcryptAccepts(t *testing.T) {
 	if problem := PasswordProblem("short"); problem == "" {
 		t.Fatal("a five-character password was accepted")
 	}
+	// The minimum is in characters, as the console says. Four Korean characters
+	// are twelve bytes and used to pass; twelve of them are thirty-six bytes and
+	// must pass.
+	if problem := PasswordProblem(strings.Repeat("가", 4)); problem == "" {
+		t.Fatal("a four-character passphrase was accepted because it is twelve bytes")
+	}
+	if problem := PasswordProblem(strings.Repeat("가", MinPasswordLength)); problem != "" {
+		t.Fatalf("%d Korean characters were refused: %q", MinPasswordLength, problem)
+	}
 }
