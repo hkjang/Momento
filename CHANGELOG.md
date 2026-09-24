@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.34.44
+
+- **`/mcp`가 개인 키로만 열렸습니다.** MCP 클라이언트를 붙이려면 사람마다 `mom_key_` 키를 만들어 건네야 했고, 그 키는 만료도 폐기 경로도 Keycloak과 무관했습니다. MCP 인가 규격(2025-06-18)은 OAuth 2.1이라 클라이언트에 URL 하나만 주면 스스로 로그인해 토큰을 받아 옵니다. Momento가 **리소스 서버**가 됩니다 — `/authorize`·`/token`·동적 등록은 하지 않고, 토큰은 저장하지 않고 요청마다 검사합니다. 기본은 꺼짐이고, 켜도 키는 그대로 함께 동작합니다.
+- **`/.well-known/oauth-protected-resource`와 `…/mcp`** 가 인증 없이 메타데이터(`resource`·`authorization_servers`·`bearer_methods_supported`·`scopes_supported`·`resource_name`)를 CORS `*`로 냅니다. `/mcp`의 401에는 `WWW-Authenticate: Bearer realm="Momento", resource_metadata="…"`(토큰이 있었으면 `error="invalid_token"`)가 붙어, 거절이 막다른 길이 아니라 로그인 시작점이 됩니다. MCP 경로에서만이고 REST 401은 그대로입니다.
+- **토큰 검사는 Keycloak JWKS로** 서명(RS/ES/PS만)·`iss`·`exp`·`nbf`·`typ`(ID 토큰 거부)·`cnf`(있으면 거부)·`sub`·대상을 봅니다. 대상은 `aud`에 리소스 식별자가 있거나 `aud`/`azp`가 `mcp.oauth.audience`에 있어야 하며, 거부 메시지가 **본 `aud`/`azp`와 고칠 값**을 적습니다. 계정은 만들지 않습니다 — `sub`(`oidc_subject`), 없으면 `oidc.claim_email`로 **이미 등록된 활성 계정만** 찾고 없으면 "웹으로 먼저 로그인"으로 거부합니다. 토큰의 `role`은 보지 않습니다.
+- **리소스 식별자가 없으면 SSO 토큰을 아예 받지 않습니다.** 예전에는 `mcp.oauth.resource`와 `general.public_url`이 모두 비면 **요청의 Host 헤더**로 식별자를 만들었는데, Host는 보내는 쪽이 정하므로 그것에 맞춘 `aud`는 아무것도 증명하지 못하고 도전 응답의 메타데이터 주소도 헤더가 말한 곳을 가리켰습니다. 이제 둘 다 비면 `mcp.oauth.enabled` 저장이 400으로 거부되고, 이미 켜져 있었다면 꺼진 것처럼 동작하며 그 이유를 로그에 적습니다.
+- **OIDC discovery가 락 밖에서 발급자당 한 번만** 돕니다. 예전에는 뮤텍스를 쥔 채 Keycloak 왕복을 해서, Keycloak이 느리면 MCP 요청 전체가 한 줄로 기다렸습니다. 먼저 도착한 요청이 자기 컨텍스트로 discovery 하고 나머지는 그 결과나 자기 컨텍스트 중 먼저 끝나는 쪽을 기다립니다. 실패는 **30초** 동안 기억해 Keycloak 장애가 매 요청 왕복이 되지 않게 하고, 그 요청이 취소돼 끝난 결과는 다음 호출자가 다시 시도합니다.
+- **`admin`·`orgAdmin` 게이트가 "API 키인가"를 묻던 것을 `Principal.Programmatic` 하나로** 모았습니다 — 그렇게 묻는 방식이었다면 세 번째 자격(OAuth)이 관리자 문을 그냥 지났습니다. OAuth 토큰은 `/mcp`에서만 받으며, 라우터를 순회해 모든 `/api/v1` 경로가 유효한 토큰에 401을 주는지 확인합니다. 모든 거절은 `requireMCPAuth` 한 곳에서 하위 원인·`client_ip`·**`request_id`** 와 함께 로그에 남습니다(`middleware.RequestID` 추가).
+- 설정은 settings `mcp.oauth` 그룹(`enabled`·`resource`·`audience`·`scopes`, **018 마이그레이션**)이고 `oidc.issuer_url`·`oidc.claim_email`·`general.public_url`을 재사용합니다. 관리 화면 `SSO · 일반`에 「MCP SSO (OAuth)」 카드가 붙어 켜도 꺼진 것처럼 동작할 이유를 저장 전에 말합니다. `docs/ADMIN_GUIDE.md` 3.5에 설정 표·Keycloak 클라이언트/Audience 매퍼·`curl` 확인·거부 메시지별 조치를, `docs/MCP.md`에 「키 없이 SSO 로 연결하기」를, `docs/openapi.yaml`에 새 경로를 적었습니다.
+
 ## v0.34.43
 
 - **비밀번호를 잃은 사람을 다시 들여보내는 길이 데이터베이스 직접 수정뿐이었습니다.** 비밀번호를 바꾸는 경로는 현재 비밀번호를 묻는 프로필 하나뿐이라, 그것을 잊은 사람이나 비밀번호를 더 믿을 수 없게 된 계정은 관리자가 `users` 테이블을 직접 고쳐야 했습니다. `PATCH /users/{id}`가 선택 항목 `password`를 받아 프로필과 같은 검사(`PasswordProblem`)를 거쳐 저장하고, **그 사용자의 로그인 세션을 모두 끝내며**, 감사 로그 `user.update`에 `password_reset`을 적습니다. 해시는 행을 건드리기 전에 확정되므로 만들 수 없는 해시가 행에 닿지 않습니다.
