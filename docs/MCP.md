@@ -10,6 +10,21 @@ Content-Type: application/json
 
 개인화 화면의 **API 키 · MCP**에서 키를 발급하고 회전/폐기할 수 있습니다. 키 원문은 발급 직후 한 번만 표시되고 서버에는 SHA-256 digest만 저장됩니다.
 
+## 키 없이 SSO 로 연결하기
+
+관리자가 `MCP SSO (OAuth)`를 켜 둔 곳에서는 키를 만들 필요가 없습니다. MCP 클라이언트(Claude, Cursor 등)에 **`/mcp` 주소 하나**만 넣으면, 클라이언트가 `401`의 `WWW-Authenticate`를 따라 `/.well-known/oauth-protected-resource/mcp`를 읽고 사내 Keycloak 로그인 화면을 띄워 토큰을 받아 옵니다. 이미 Keycloak에 로그인한 브라우저라면 화면은 거의 보이지 않습니다.
+
+```text
+MCP URL:  https://momento.example.com/mcp
+인증:      OAuth (클라이언트가 자동으로 진행) — 키 입력 없음
+```
+
+- **먼저 웹으로 한 번 로그인**해야 합니다. SSO 토큰은 이미 등록된 활성 계정만 통과시키고, 계정을 만들지 않습니다. "sign in to the web console once first"가 나오면 그 뜻입니다.
+- 토큰으로 할 수 있는 일은 **키로 할 수 있는 일과 같습니다** — 위의 조회 도구 전부이고, 관리 기능은 없습니다. 자신이 볼 수 있는 사이트만 보입니다.
+- SSO 토큰은 `/mcp`에서만 받습니다. REST API를 스크립트로 부를 때는 지금처럼 개인 키를 씁니다.
+- "not issued for this server (aud …, azp …)"가 나오면 관리자에게 그 메시지를 그대로 전달하세요. 허용 대상에 클라이언트 ID를 적으면 끝납니다(관리자 가이드 3.5).
+- 폐쇄망이나 자동화 스크립트처럼 로그인 화면을 띄울 수 없는 곳은 계속 키를 씁니다. 두 방식은 같은 `Authorization: Bearer` 헤더를 쓰고, 서버가 값의 모양으로 가립니다.
+
 지원 도구:
 
 - `query_metrics`: 기간별 users, new_users, sessions, page_views, events, engagement_rate, conversions, revenue

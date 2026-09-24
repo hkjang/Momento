@@ -48,6 +48,9 @@ type Server struct {
 	trustedProxies  []*net.IPNet
 	connectOrigins  []string
 	maxPayloadBytes int64
+	// oauthProviders caches OIDC discovery per issuer for MCP token checks.
+	oauthMu        sync.Mutex
+	oauthProviders map[string]*oauthDiscovery
 }
 
 func New(db *pgxpool.Pool, web fs.FS, logger *slog.Logger, secrets *secret.Cipher) *Server {
@@ -70,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	// wire. Only compressible types are touched, and a client that does not ask
 	// for an encoding still gets the response uncompressed.
 	r.Use(middleware.Compress(5))
+	// A request id, so a refusal logged deep in a handler can be tied to the
+	// request that produced it.
+	r.Use(middleware.RequestID)
 	r.Use(s.recoverer, s.requestLog, s.securityHeaders)
 	r.Get("/health/live", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]string{"status": "ok"}) })
 	r.Get("/health/ready", s.ready)
@@ -206,8 +212,13 @@ func (s *Server) Handler() http.Handler {
 		api.Post("/api/v1/funnel", s.funnel)
 		api.Get("/api/v1/sites/{siteID}/path", s.pathReport)
 		api.Get("/api/v1/sites/{siteID}/export", s.exportEvents)
-		api.Post("/mcp", s.mcp)
 	})
+	// MCP has its own gate: the same keys and sessions as above, plus — only
+	// here — a Keycloak access token. The metadata that tells an MCP client
+	// where to sign in is public by design and answered as bare JSON.
+	r.With(s.requireMCPAuth).Post("/mcp", s.mcp)
+	r.Get("/.well-known/oauth-protected-resource", s.protectedResourceMetadata)
+	r.Get("/.well-known/oauth-protected-resource/mcp", s.protectedResourceMetadata)
 	if s.Web != nil {
 		r.Handle("/*", s.spaHandler())
 	}
@@ -225,10 +236,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
+// admin, orgAdmin and sessionOnly are the three gates between a program holding
+// a credential and what only a person at the console may do. All three ask
+// Principal.Programmatic, not the credential's name: two of them used to ask
+// "is this an API key", which is a question an SSO token answers "no" to.
 func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())
-		if p.AuthType == "api_key" || !auth.RoleAtLeast(p.Role, "workspace_admin") {
+		if p.Programmatic() || !auth.RoleAtLeast(p.Role, "workspace_admin") {
 			writeError(w, 403, "FORBIDDEN", "administrator permission required")
 			return
 		}
@@ -245,7 +260,7 @@ func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) orgAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())
-		if p.AuthType == "api_key" || !auth.RoleAtLeast(p.Role, "organization_admin") {
+		if p.Programmatic() || !auth.RoleAtLeast(p.Role, "organization_admin") {
 			writeError(w, 403, "FORBIDDEN", "organization administrator permission required")
 			return
 		}
@@ -256,7 +271,7 @@ func (s *Server) orgAdmin(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) sessionOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, _ := auth.FromContext(r.Context())
-		if p.AuthType != "session" {
+		if p.Programmatic() {
 			writeError(w, 403, "SESSION_REQUIRED", "this operation requires an interactive session")
 			return
 		}

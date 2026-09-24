@@ -74,6 +74,7 @@ import {
   signalInstrumentation,
   type SDKTrackingMode,
 } from "./sdkGuide";
+import { mcpMetadataUrl, mcpOauthReadiness, mcpResource } from "./mcpOauth";
 
 const adminSections = [
   {
@@ -205,7 +206,9 @@ export default function AdminPage() {
     section === "sites" ? (
       <SitesAdmin />
     ) : section === "settings" ? (
-      <SettingsAdmin groups={["general", "oidc", "storage", "security"]} />
+      <SettingsAdmin
+        groups={["general", "oidc", "mcp.oauth", "storage", "security"]}
+      />
     ) : section === "privacy" ? (
       <PrivacyAdmin />
     ) : section === "retention" ? (
@@ -2109,8 +2112,13 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
     setEdits((v) => ({ ...v, [group]: { ...value(group), [key]: next } }));
   const general = value("general"),
     oidc = value("oidc"),
+    mcpOauth = value("mcp.oauth"),
     storage = value("storage"),
     security = value("security");
+  // What /mcp will claim, derived the way the server derives it, so the
+  // addresses the card offers to copy are the ones a client will be told.
+  const mcpUrl = mcpResource(mcpOauth, general);
+  const mcpOauthState = mcpOauthReadiness(mcpOauth, oidc, general);
   return (
     <>
       <Card sx={{ p: 3 }}>
@@ -2190,6 +2198,52 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
                 />
               ))}
             </Box>
+          </Section>
+          <Divider />
+          <Section
+            title="MCP SSO (OAuth)"
+            desc="개인 키 없이 Keycloak 액세스 토큰으로 /mcp 에 연결합니다. MCP 클라이언트에는 아래 MCP URL 하나만 주면 스스로 로그인해 토큰을 받아 옵니다. 계정은 만들지 않으며, 웹으로 한 번 로그인한 활성 계정만 통과합니다."
+          >
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={Boolean(mcpOauth.enabled)}
+                  onChange={(e) =>
+                    change("mcp.oauth", "enabled", e.target.checked)
+                  }
+                />
+              }
+              label="SSO 액세스 토큰으로 MCP 연결 허용"
+            />
+            {Boolean(mcpOauth.enabled) && !mcpOauthState.ready && (
+              <Alert severity="warning">{mcpOauthState.reason}</Alert>
+            )}
+            <TextField
+              label="리소스 식별자"
+              value={String(mcpOauth.resource || "")}
+              onChange={(e) => change("mcp.oauth", "resource", e.target.value)}
+              placeholder={mcpUrl || "https://analytics.company.local/mcp"}
+              helperText="비우면 Public URL + /mcp 입니다. Keycloak Audience 매퍼의 Included Custom Audience 에 넣는 값이며 /mcp 로 끝나야 합니다."
+            />
+            <TextField
+              label="허용 대상 (aud / azp)"
+              value={String(mcpOauth.audience || "")}
+              onChange={(e) => change("mcp.oauth", "audience", e.target.value)}
+              placeholder="claude-mcp cursor-mcp"
+              helperText="공백으로 구분한 Keycloak 클라이언트 ID. Audience 매퍼 없이 쓰는 호환 경로로, 토큰의 aud 또는 azp 와 비교합니다. 거부 메시지에 적힌 값을 그대로 넣으면 됩니다."
+            />
+            <TextField
+              label="범위"
+              value={String(mcpOauth.scopes || "")}
+              onChange={(e) => change("mcp.oauth", "scopes", e.target.value)}
+              placeholder="analytics:read"
+              helperText="SSO 로 들어온 주체에게 주는 범위(공백 구분). 토큰의 scope 가 아니라 이 값이 적용되며, 개인 키와 같은 문을 지납니다."
+            />
+            <CopyField label="MCP URL (클라이언트에 줄 주소)" value={mcpUrl} />
+            <CopyField
+              label="메타데이터 URL (/.well-known/oauth-protected-resource/mcp)"
+              value={mcpMetadataUrl(mcpUrl)}
+            />
           </Section>
           <Divider />
           <Section

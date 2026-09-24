@@ -23,7 +23,7 @@ import (
 
 // apiPathPattern is the surface the document is expected to describe. Health and
 // version endpoints are deliberately outside it.
-var apiPathPattern = regexp.MustCompile(`^/(api/v1|collect/v1|mcp)`)
+var apiPathPattern = regexp.MustCompile(`^/(api/v1|collect/v1|mcp|\.well-known/)`)
 
 // normalisePath makes a router template comparable to a document template. The
 // two use different names for the same parameter — {siteID} against {siteId} —
