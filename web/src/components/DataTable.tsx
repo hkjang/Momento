@@ -19,6 +19,7 @@ import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
 import { Empty } from "./States";
 import { buildCSV, cellText } from "./csvExport";
+import { clampPage } from "./tablePaging";
 
 export interface Column {
   key: string;
@@ -84,7 +85,13 @@ export default function DataTable({
     );
   }, [columns, query, rows]);
   useEffect(() => setPage(0), [query, rows.length]);
-  const paged = filtered.slice(page * pageSize, page * pageSize + pageSize);
+  // 페이지를 0으로 돌리는 위 effect 는 렌더 뒤에 돌고, 행 수가 그대로인 채 내용만
+  // 바뀐 재조회에서는 돌지 않는다. 자르기 전에 범위 안으로 끌어와 빈 표를 막는다.
+  const safePage = clampPage(page, pageSize, filtered.length);
+  const paged = filtered.slice(
+    safePage * pageSize,
+    safePage * pageSize + pageSize,
+  );
   const showToolbar = !!title || hasSearch || !!exportFilename;
   const minWidth = columns.reduce(
     (width, column) => width + (column.minWidth || 132),
@@ -100,7 +107,7 @@ export default function DataTable({
           row.page ||
           row.visitor_id ||
           row.name ||
-          `${page}-${index}`,
+          `${safePage}-${index}`,
       ));
 
   return (
@@ -206,10 +213,7 @@ export default function DataTable({
         <TablePagination
           component="div"
           count={filtered.length}
-          page={Math.min(
-            page,
-            Math.max(0, Math.ceil(filtered.length / pageSize) - 1),
-          )}
+          page={safePage}
           onPageChange={(_, value) => setPage(value)}
           rowsPerPage={pageSize}
           onRowsPerPageChange={(event) => {
