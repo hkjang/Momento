@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.34.46
+
+- **뒤쪽 페이지에 있다가 결과가 줄면 행도 안내문도 없는 빈 표가 남았습니다.** `DataTable`은 `filtered.slice(page * pageSize, …)`로 자르면서 `page`를 범위 안으로 끌어오지 않았고, `Math.min`으로 clamp한 것은 화면에 **표시되는 페이지 번호**뿐이었습니다. 그래서 4페이지를 보던 중 일치가 5건으로 줄면 잘라낸 배열이 비는데, Empty 안내문은 필터 결과가 **아예 없을 때만** 나오므로 표는 행도 설명도 없이 남았습니다.
+- **빠져나올 수 없는 경우가 있었습니다.** 페이지를 0으로 돌리는 effect는 `[query, rows.length]`에 걸려 있어 렌더 뒤에 돕니다 — 검색 직후에는 한 프레임 깜빡이고, **행 수가 그대로인 채 내용만 바뀐 재조회**에서는 아예 돌지 않습니다. 결과가 10건 이하이면 페이지 이동 컨트롤도 사라지므로 되돌아갈 방법이 없었습니다.
+- **자르기 전에 페이지를 범위 안으로 끌어옵니다.** 새 순수 모듈 `web/src/components/tablePaging.ts`의 `clampPage(page, pageSize, total)` 하나를 두고, `slice`·`TablePagination`의 페이지 번호·기본 `rowKey` fallback이 **모두 같은 값**을 읽습니다. 행이 없거나 `pageSize`가 0 이하이면 첫 페이지를 돌려주므로 호출자는 언제나 유효한 시작 위치를 얻습니다. effect의 의존성 배열, Empty 분기, 10건 임계, `onPageChange`/`onRowsPerPageChange`, CSV 내보내기는 그대로입니다.
+- `web/test/tablePaging.test.mjs`가 순수 함수를 순회로 고정합니다. 그에 더해 vite dev로 **진짜 `DataTable`** 을 실제 React·MUI로 마운트하고 headless Chrome으로 결함 시나리오를 재현해, 수정 전 `{"rows":0,"empty":false,"pager":null}`이던 것이 수정 후 5행으로 채워지는 것을 확인했습니다. `DataTable`을 쓰는 62곳이 같은 수정을 받습니다. Go·SDK·API·데이터베이스 변경은 없습니다.
+
 ## v0.34.45
 
 - **사용자 관리가 서버가 이미 거절할 편집을 계속 내주었습니다.** `createUser`·`updateUser`는 `auth.RoleAbove`로 자기보다 높은 역할의 계정을 `ROLE_ABOVE_CALLER`(403)로 막는데, 화면은 모든 행에 편집 버튼을 주고 「사용자 추가」·「사용자 편집」 두 다이얼로그가 다섯 역할을 그대로 하드코딩해 보여 줬습니다. `organization_admin`이 `super_admin` 행을 열거나 그 역할을 고르면, 값을 다 채우고 저장을 누른 뒤에야 한국어 화면 위에 영문 오류를 만났습니다 — 막힌 조작이 실패한 조작처럼 보였습니다.
