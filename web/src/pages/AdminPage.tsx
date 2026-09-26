@@ -24,6 +24,7 @@ import {
   Tab,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddRounded from "@mui/icons-material/AddRounded";
@@ -65,6 +66,7 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
+import { assignableRoles, canAdministerRole } from "./roleScope";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
   buildCSPGuidance,
@@ -3276,15 +3278,32 @@ function UsersAdmin() {
             key: "id",
             label: "",
             align: "right",
-            format: (_, row) => (
-              <IconButton
-                size="small"
-                title="사용자 편집"
-                onClick={() => setEdit(row as unknown as AdminUser)}
-              >
-                <EditOutlined />
-              </IconButton>
-            ),
+            format: (_, row) => {
+              // The server answers this edit with 403 ROLE_ABOVE_CALLER
+              // (updateUser, internal/httpapi/admin.go), so opening the dialog
+              // only leads to an English error on save. Refuse it here instead.
+              if (!canAdministerRole(user?.role ?? "", String(row.role)))
+                return (
+                  <Tooltip title="내 권한보다 높은 계정은 편집할 수 없습니다">
+                    {/* A disabled button fires no pointer events, so the
+                        tooltip needs an element of its own to listen on. */}
+                    <span>
+                      <IconButton size="small" disabled>
+                        <EditOutlined />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                );
+              return (
+                <IconButton
+                  size="small"
+                  title="사용자 편집"
+                  onClick={() => setEdit(row as unknown as AdminUser)}
+                >
+                  <EditOutlined />
+                </IconButton>
+              );
+            },
           },
         ]}
         rows={q.data as unknown as Record<string, unknown>[]}
@@ -3334,13 +3353,7 @@ function UsersAdmin() {
               value={form.role}
               onChange={(e) => setForm({ ...form, role: e.target.value })}
             >
-              {[
-                "viewer",
-                "analyst",
-                "workspace_admin",
-                "organization_admin",
-                "super_admin",
-              ].map((x) => (
+              {assignableRoles(user?.role ?? "").map((x) => (
                 <MenuItem key={x} value={x}>
                   {x}
                 </MenuItem>
@@ -3406,13 +3419,7 @@ function UsersAdmin() {
                 value={edit.role}
                 onChange={(e) => setEdit({ ...edit, role: e.target.value })}
               >
-                {[
-                  "viewer",
-                  "analyst",
-                  "workspace_admin",
-                  "organization_admin",
-                  "super_admin",
-                ].map((x) => (
+                {assignableRoles(user?.role ?? "").map((x) => (
                   <MenuItem key={x} value={x}>
                     {x}
                   </MenuItem>
