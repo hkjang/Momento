@@ -20,6 +20,7 @@ import SearchRounded from "@mui/icons-material/SearchRounded";
 import { Empty } from "./States";
 import { buildCSV, cellText } from "./csvExport";
 import { clampPage } from "./tablePaging";
+import { tableCaption } from "./tableSummary";
 
 export interface Column {
   key: string;
@@ -127,8 +128,12 @@ export default function DataTable({
           <Box sx={{ minWidth: 0, flex: 1 }}>
             {title && <Typography fontWeight={720}>{title}</Typography>}
             <Typography variant="caption" color="text.secondary">
-              {description ||
-                `${Intl.NumberFormat("ko-KR").format(filtered.length)}개 항목`}
+              {tableCaption({
+                description,
+                total: rows.length,
+                matched: filtered.length,
+                searching: !!query.trim(),
+              })}
             </Typography>
           </Box>
           {hasSearch && (
