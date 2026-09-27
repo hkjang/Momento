@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.34.47
+
+- **설명이 있는 표는 검색해도 몇 건을 찾았는지 말해 주지 않았습니다.** `DataTable` 의 캡션은 `description` 과 `N개 항목` 중 하나를 `||` 로 골랐으므로, `description` 을 넘긴 표에서 건수 쪽은 **닿지 않는 가지**였습니다. 1,240건이 3건으로 줄어도 캡션은 검색 전과 글자 하나 다르지 않았습니다.
+- **건수가 남아 있을 다른 자리도 함께 사라졌습니다.** 일치 건수를 말해 줄 수 있는 곳은 `TablePagination` 의 `1–N / N` 뿐인데 그것은 `filtered.length > 10` 일 때만 붙습니다. 일치가 10건 이하로 좁혀지면 — 즉 숫자가 가장 필요한 순간에 — 규모를 알 수단이 **0** 이 되어 0건과 3건과 「검색이 안 걸렸나」를 화면만 보고 구별할 수 없었습니다. `description` 을 넘기는 표는 **16곳**이고(`FunnelPage.tsx:350`, `VisitorInsightsPage.tsx:764`, `EnterpriseAdminPage.tsx` 의 9개 표 등), 검색 상자는 `searchable ?? rows.length > 8` 로 **행이 8개를 넘으면 기본으로** 켜집니다.
+- **검색 중에는 설명과 건수를 둘 다 보여줍니다.** 새 순수 모듈 `web/src/components/tableSummary.ts` 의 `tableCaption({description, total, matched, searching})` 하나가 캡션을 정하고 `DataTable.tsx` 는 그 호출로 바뀐 한 줄입니다. 검색 중이면 `설명 · 전체 1,240개 중 3개 일치`(description 이 없으면 건수만), 일치가 0건이어도 전체 규모와 0을 함께 말합니다. **검색 전 출력은 이전과 한 글자도 같습니다.** `searching` 은 `query.trim()` 으로 판정하므로 공백만 입력해도 캡션이 움직이지 않습니다. `filtered` 의 useMemo, 페이지를 되돌리는 effect, `clampPage`/`safePage`/`slice`, 기본 `rowKey`, Empty 분기, 10건 페이저 조건, CSV 내보내기는 그대로입니다.
+- `web/test/tableSummary.test.mjs` 가 순수 함수를 고정합니다(121 → 130건). 그에 더해 vite dev 로 **진짜 `DataTable`** 을 실제 React·MUI 로 마운트하고 headless Chrome 으로 1,240행 표를 여섯 경우 확인해, 수정 전 `{"caption":"첫 페이지별 … 대상입니다.","pager":null,"rows":3}` 이던 것이 수정 후 `… · 전체 1,240개 중 3개 일치` 가 되는 것을 DOM 에서 읽었습니다. Go·SDK·API·데이터베이스 변경은 없습니다.
+
 ## v0.34.46
 
 - **뒤쪽 페이지에 있다가 결과가 줄면 행도 안내문도 없는 빈 표가 남았습니다.** `DataTable`은 `filtered.slice(page * pageSize, …)`로 자르면서 `page`를 범위 안으로 끌어오지 않았고, `Math.min`으로 clamp한 것은 화면에 **표시되는 페이지 번호**뿐이었습니다. 그래서 4페이지를 보던 중 일치가 5건으로 줄면 잘라낸 배열이 비는데, Empty 안내문은 필터 결과가 **아예 없을 때만** 나오므로 표는 행도 설명도 없이 남았습니다.
