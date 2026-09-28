@@ -5,6 +5,7 @@ import {
   assignableRoles,
   canAdministerRole,
   roleRank,
+  selfAccountLimits,
 } from "../src/pages/roleScope.ts";
 
 // internal/auth/auth.go:239 그대로 옮긴 것. 화면이 서버와 어긋나면 이 복제본과
@@ -108,4 +109,116 @@ test("목록을 고쳐도 ROLE_ORDER 원본은 그대로다", () => {
   list.pop();
   assert.equal(ROLE_ORDER.length, 5);
   assert.equal(assignableRoles("super_admin").length, 5);
+});
+
+// ---------------------------------------------------------------------------
+// selfAccountLimits — updateUser(internal/httpapi/admin.go) 의 자기 계정 분기
+// (SELF_DISABLE·SELF_ROLE·SELF_PASSWORD) 를 화면이 미리 거울로 보여주는지.
+// ---------------------------------------------------------------------------
+
+/**
+ * updateUser 의 자기 계정 분기 세 개를 그대로 옮긴 복제본.
+ *   SELF_DISABLE: id == p.ID && in.Active != nil && !*in.Active
+ *   SELF_ROLE:    id == p.ID && current != in.Role
+ *   SELF_PASSWORD:id == p.ID && in.Password != ""
+ * 화면이 서버와 갈라지면 아래 순회가 잡는다.
+ */
+const serverRefuses = (kind, callerId, targetId, req) => {
+  const isSelf = callerId === targetId;
+  if (!isSelf) return false;
+  if (kind === "active") return req.wantActive === false;
+  if (kind === "role") return req.newRole !== req.currentRole;
+  if (kind === "password") return req.password !== "";
+  throw new Error(`알 수 없는 분기: ${kind}`);
+};
+
+const ME = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+const OTHER = "0fedcba9-8765-4321-0fed-cba987654321";
+
+test("자기 계정을 편집할 때는 역할·중지·비밀번호 셋 다 막힌다", () => {
+  assert.deepEqual(selfAccountLimits(ME, ME), {
+    canChangeRole: false,
+    canDeactivate: false,
+    canResetPassword: false,
+  });
+});
+
+test("남의 계정을 편집할 때는 셋 다 열려 있다", () => {
+  assert.deepEqual(selfAccountLimits(ME, OTHER), {
+    canChangeRole: true,
+    canDeactivate: true,
+    canResetPassword: true,
+  });
+});
+
+test("자기/남 두 경우에 세 제약이 서버 분기와 일치한다", () => {
+  for (const target of [ME, OTHER]) {
+    const limits = selfAccountLimits(ME, target);
+    // 역할: 지금과 다른 역할을 고르는 것이 서버에서 거절되면 select 를 열지 않는다.
+    for (const currentRole of ROLE_ORDER) {
+      for (const newRole of ROLE_ORDER) {
+        if (newRole === currentRole) continue;
+        assert.equal(
+          limits.canChangeRole,
+          !serverRefuses("role", ME, target, { currentRole, newRole }),
+          `target=${target} ${currentRole}→${newRole}`,
+        );
+      }
+      // 같은 역할을 그대로 보내는 것은 자기 계정이라도 서버가 받는다 —
+      // 그래서 select 를 disabled 로 두어도 저장 자체는 막히지 않는다.
+      assert.equal(
+        serverRefuses("role", ME, target, {
+          currentRole,
+          newRole: currentRole,
+        }),
+        false,
+        `target=${target} ${currentRole} 유지`,
+      );
+    }
+    // 활성: 서버는 끄는 것만 막는다. 켜는 것은 자기 계정이라도 거절하지 않으므로
+    // 체크박스를 통째로 잠그면 서버보다 좁아진다.
+    assert.equal(
+      limits.canDeactivate,
+      !serverRefuses("active", ME, target, { wantActive: false }),
+      `target=${target} 중지`,
+    );
+    assert.equal(
+      serverRefuses("active", ME, target, { wantActive: true }),
+      false,
+      `target=${target} 활성화`,
+    );
+    // 비밀번호: 값이 있을 때만 서버가 본다.
+    assert.equal(
+      limits.canResetPassword,
+      !serverRefuses("password", ME, target, { password: "s3cret-passphrase" }),
+      `target=${target} 비밀번호`,
+    );
+    assert.equal(
+      serverRefuses("password", ME, target, { password: "" }),
+      false,
+      `target=${target} 빈 비밀번호`,
+    );
+  }
+});
+
+test("호출자를 모르면 제약을 걸지 않는다", () => {
+  // 세션이 아직 확정되지 않은 구간에서 useAuth().user 는 null 이라 undefined 가
+  // 들어온다. 주체 없이는 서버가 이 라우트에 닿지 않으므로 화면이 먼저 잠글
+  // 이유가 없고, 잠그면 남의 계정까지 잘못 막는다.
+  assert.deepEqual(selfAccountLimits(undefined, ME), {
+    canChangeRole: true,
+    canDeactivate: true,
+    canResetPassword: true,
+  });
+  assert.deepEqual(selfAccountLimits(undefined, ""), {
+    canChangeRole: true,
+    canDeactivate: true,
+    canResetPassword: true,
+  });
+});
+
+test("자기 판정은 id 만 보고 대소문자·공백을 봐주지 않는다", () => {
+  // 서버는 id == p.ID 한 번뿐이라 화면도 같은 엄밀함이어야 한다.
+  assert.equal(selfAccountLimits(ME, ME.toUpperCase()).canChangeRole, true);
+  assert.equal(selfAccountLimits(ME, ` ${ME}`).canChangeRole, true);
 });
