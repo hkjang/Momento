@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.34.48
+
+- **자기 계정을 편집하면 저장한 뒤에야 영문 오류를 만났습니다.** `updateUser` 는 요청을 보낸 사람이 자기 계정의 역할을 바꾸거나(`SELF_ROLE`) 자기 계정을 끄면(`SELF_DISABLE`) **400** 으로 거절하는데, 「사용자 편집」 다이얼로그는 자기 행을 열어도 권한 select 와 「계정 활성화」 체크박스를 그대로 열어 두었습니다. 세 제약 중 비밀번호 재설정만 거울이 있었고, 그것도 다이얼로그 본문에 `edit.id !== user?.id` 로 **인라인으로 박혀** 있어 나머지 둘이 빠진 것이 보이지 않았습니다.
+- **판정을 한 곳으로 모았습니다.** 세 분기가 모두 "자기 계정이냐" 하나로 갈리므로 `web/src/pages/roleScope.ts` 에 순수 함수 `selfAccountLimits(callerId, targetId)` 를 두고, 권한 select(`disabled` + 「자기 계정의 권한은 바꿀 수 없습니다.」)·활성화 체크박스·비밀번호 필드가 **같은 답**을 읽습니다. 안내 문구는 `helperText` 가 아니라 `Typography variant="caption"` 입니다 — MUI 는 `helperText` 를 disabled 된 필드와 함께 흐리게 만드는데, 이유를 말하는 유일한 줄이 그렇게 되어서는 안 됩니다.
+- **서버보다 넓지도 좁지도 않습니다.** 서버가 막지 않는 것은 화면도 막지 않습니다 — 역할을 그대로 둔 채 다른 항목만 고쳐 저장하는 것, **중지된 자기 계정을 다시 켜는 것**(체크박스는 `edit.active && !limits.canDeactivate` 이므로 이미 꺼져 있으면 열립니다), 비밀번호 칸을 비워 두는 것은 그대로입니다. `callerId` 가 아직 없는 상태에서는 아무것도 제한하지 않습니다. 서버·`internal/auth`·역할 서열 함수·사용자 생성 다이얼로그는 손대지 않았습니다(서버 검사가 권한의 정본). 프로덕션 파일은 **두 개**입니다.
+- `web/test/roleScope.test.mjs` 가 순수 함수를 고정합니다(130 → 135건). 그에 더해 `npm run build` 의 dist 를 `/api/v1/me`·`/api/v1/users` 를 흉내 낸 서버에 올리고 headless Chrome 으로 **실제 배선**을 확인했습니다 — 자기 행 `{"roleDisabled":true,"roleClickOpensMenu":false,"roleNote":true,"checkboxDisabled":true,"activeNote":true,"passwordFieldShown":false}`, 남의 행은 여섯 값이 모두 반대이며, 수정 전에는 자기 행도 남의 행과 같았습니다. Go·SDK·API·데이터베이스 변경은 없습니다.
+
 ## v0.34.47
 
 - **설명이 있는 표는 검색해도 몇 건을 찾았는지 말해 주지 않았습니다.** `DataTable` 의 캡션은 `description` 과 `N개 항목` 중 하나를 `||` 로 골랐으므로, `description` 을 넘긴 표에서 건수 쪽은 **닿지 않는 가지**였습니다. 1,240건이 3건으로 줄어도 캡션은 검색 전과 글자 하나 다르지 않았습니다.
