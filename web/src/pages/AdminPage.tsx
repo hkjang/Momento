@@ -66,7 +66,11 @@ import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
-import { assignableRoles, canAdministerRole } from "./roleScope";
+import {
+  assignableRoles,
+  canAdministerRole,
+  selfAccountLimits,
+} from "./roleScope";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
   buildCSPGuidance,
@@ -3200,6 +3204,10 @@ function UsersAdmin() {
   });
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<AdminUser | null>(null);
+  // Whether this row is the caller's own account, answered once for the whole
+  // edit dialog so the three self-account limits cannot drift apart. With no
+  // row open the target is "" and no id matches it, so every limit stays open.
+  const limits = selfAccountLimits(user?.id, edit?.id ?? "");
   // The reset password is kept apart from the row being edited: it is sent
   // only when typed, and a row never carries one back from the server.
   const [resetPassword, setResetPassword] = useState("");
@@ -3413,10 +3421,15 @@ function UsersAdmin() {
                   }
                 />
               </Box>
+              {/* The server answers SELF_ROLE 400 to a caller changing its own
+                  role, so the select is shown holding the current role rather
+                  than offering ones that cannot be saved. Sending the role
+                  unchanged is still accepted, so the rest of the form saves. */}
               <TextField
                 select
                 label="권한"
                 value={edit.role}
+                disabled={!limits.canChangeRole}
                 onChange={(e) => setEdit({ ...edit, role: e.target.value })}
               >
                 {assignableRoles(user?.role ?? "").map((x) => (
@@ -3425,10 +3438,21 @@ function UsersAdmin() {
                   </MenuItem>
                 ))}
               </TextField>
+              {!limits.canChangeRole && (
+                // Not the select's helperText: MUI greys that out along with the
+                // disabled field, and this is the one line explaining why.
+                <Typography variant="caption" color="text.secondary" mt={-1.5}>
+                  자기 계정의 권한은 바꿀 수 없습니다.
+                </Typography>
+              )}
               <FormControlLabel
                 control={
                   <Checkbox
                     checked={edit.active}
+                    // SELF_DISABLE only refuses turning one's own account off,
+                    // so an already-inactive box stays usable — the same
+                    // direction as the server's `in.Active != nil && !*in.Active`.
+                    disabled={edit.active && !limits.canDeactivate}
                     onChange={(e) =>
                       setEdit({ ...edit, active: e.target.checked })
                     }
@@ -3436,7 +3460,12 @@ function UsersAdmin() {
                 }
                 label="계정 활성화"
               />
-              {!edit.oidc && edit.id !== user?.id && (
+              {edit.active && !limits.canDeactivate && (
+                <Typography variant="caption" color="text.secondary" mt={-1.5}>
+                  자기 계정은 중지할 수 없습니다.
+                </Typography>
+              )}
+              {!edit.oidc && limits.canResetPassword && (
                 <TextField
                   label="비밀번호 재설정"
                   type="password"
