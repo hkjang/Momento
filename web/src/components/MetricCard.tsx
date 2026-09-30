@@ -1,4 +1,4 @@
-import { Box, Card, Chip, Stack, Typography } from "@mui/material";
+import { Box, Card, Chip, Stack, Tooltip, Typography } from "@mui/material";
 import NorthEastRounded from "@mui/icons-material/NorthEastRounded";
 import SouthEastRounded from "@mui/icons-material/SouthEastRounded";
 import RemoveRounded from "@mui/icons-material/RemoveRounded";
@@ -61,16 +61,25 @@ export default function MetricCard({
           <Typography variant="body2" color="text.secondary" fontWeight={580}>
             {label}
           </Typography>
-          <Typography
-            sx={{
-              fontSize: 26,
-              fontWeight: 750,
-              mt: 0.8,
-              letterSpacing: "-.035em",
-            }}
+          {/* 10만 이상은 「12.3만」 처럼 줄여 보이므로 정확한 값은 올려서 본다. */}
+          <Tooltip
+            title={
+              !type && value >= 100000
+                ? Intl.NumberFormat("ko-KR").format(value)
+                : ""
+            }
           >
-            {formatMetric(value, type)}
-          </Typography>
+            <Typography
+              sx={{
+                fontSize: 26,
+                fontWeight: 750,
+                mt: 0.8,
+                letterSpacing: "-.035em",
+              }}
+            >
+              {formatMetric(value, type)}
+            </Typography>
+          </Tooltip>
         </Box>
         {icon && (
           <Box

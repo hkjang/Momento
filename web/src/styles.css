@@ -98,3 +98,36 @@ body {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Printing a report: the page is the content, not the console around it. The
+   sidebar, header, pager and icon buttons have nothing to do on paper, cards
+   should not split across pages, and the width the sidebar held goes to the
+   report. */
+@media print {
+  .MuiDrawer-root,
+  header.MuiAppBar-root,
+  .MuiIconButton-root,
+  .MuiTablePagination-root,
+  .MuiSnackbar-root,
+  a[href="#main-content"] {
+    display: none !important;
+  }
+  .app-content {
+    margin-left: 0 !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  body {
+    background: #fff !important;
+  }
+  .MuiCard-root {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+  .MuiTableContainer-root {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}

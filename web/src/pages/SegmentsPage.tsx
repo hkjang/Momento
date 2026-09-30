@@ -23,6 +23,7 @@ import SegmentBuilder, {
 } from "../components/SegmentBuilder";
 import DataTable from "../components/DataTable";
 import { useConfirm } from "../components/ConfirmDialog";
+import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -58,6 +59,13 @@ export default function SegmentsPage() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState(initialForm);
+  // 마지막으로 불러오거나 저장한 모양. 이것과 다르면 저장하지 않은 변경이다.
+  const [baseline, setBaseline] = useState(() => JSON.stringify(form));
+  const resetForm = (next: typeof form) => {
+    setForm(next);
+    setBaseline(JSON.stringify(next));
+  };
+  useUnsavedWarning(JSON.stringify(form) !== baseline);
   const query = useQuery({
     queryKey: ["segments", site?.site_id],
     queryFn: ({ signal }) =>
@@ -69,7 +77,7 @@ export default function SegmentsPage() {
   });
   const openSegment = (segment: Segment) => {
     setSelected(segment.id);
-    setForm({
+    resetForm({
       name: segment.name,
       description: segment.description,
       shared: segment.shared,
@@ -87,7 +95,9 @@ export default function SegmentsPage() {
   });
   useEffect(() => {
     setSelected(null);
-    setForm(initialForm());
+    const next = initialForm();
+    setForm(next);
+    setBaseline(JSON.stringify(next));
   }, [site?.site_id]);
   const save = useMutation({
     meta: { successMessage: "Segment를 저장했습니다." },
@@ -100,7 +110,7 @@ export default function SegmentsPage() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["segments", site?.site_id] });
       setSelected(null);
-      setForm(initialForm());
+      resetForm(initialForm());
     },
   });
   const remove = useMutation({
@@ -109,7 +119,7 @@ export default function SegmentsPage() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["segments", site?.site_id] });
       setSelected(null);
-      setForm(initialForm());
+      resetForm(initialForm());
     },
   });
   const preview = useMutation({
@@ -160,7 +170,7 @@ export default function SegmentsPage() {
               color="primary"
               onClick={() => {
                 setSelected(null);
-                setForm(initialForm());
+                resetForm(initialForm());
               }}
             >
               <AddRounded />

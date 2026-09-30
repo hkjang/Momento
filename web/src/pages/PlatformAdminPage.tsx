@@ -47,6 +47,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import TimeText from "../components/TimeText";
 import { useConfirm } from "../components/ConfirmDialog";
 import { policyRange } from "../components/queryError";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -1340,7 +1341,7 @@ function Automation() {
               {
                 key: "started_at",
                 label: "시작",
-                format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+                format: (v) => <TimeText value={v} />,
               },
               {
                 key: "status",
@@ -1374,7 +1375,7 @@ function Automation() {
                 key: "finished_at",
                 label: "종료",
                 format: (v) =>
-                  v ? new Date(String(v)).toLocaleString("ko-KR") : "—",
+                  <TimeText value={v} />,
               },
             ]}
           />

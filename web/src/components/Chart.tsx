@@ -20,6 +20,15 @@ echarts.use([
   CanvasRenderer,
 ]);
 
+// 움직임을 줄이도록 설정한 사람에게는 진입·전환 애니메이션을 보이지 않는다.
+function withMotionPreference(option: unknown): EChartsCoreOption {
+  const reduce =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const base = option as EChartsCoreOption;
+  return reduce ? { ...base, animation: false } : base;
+}
+
 export default function Chart({
   option,
   style,
@@ -36,7 +45,7 @@ export default function Chart({
     if (!ref.current) return;
     const chart = echarts.init(ref.current);
     instance.current = chart;
-    chart.setOption(latest.current as EChartsCoreOption);
+    chart.setOption(withMotionPreference(latest.current));
     const observer = new ResizeObserver(() => chart.resize());
     observer.observe(ref.current);
     return () => {
@@ -52,7 +61,7 @@ export default function Chart({
   useEffect(() => {
     if (!instance.current || drawn.current === signature) return;
     drawn.current = signature;
-    instance.current.setOption(latest.current as EChartsCoreOption, {
+    instance.current.setOption(withMotionPreference(latest.current), {
       notMerge: true,
     });
   }, [signature]);

@@ -7,6 +7,7 @@ import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { usePeriodParam } from "../components/usePeriodParam";
 import DataTable, { type Column } from "../components/DataTable";
+import TimeText from "../components/TimeText";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import AnalysisToolbar from "../components/AnalysisToolbar";
 type Kind = "acquisition" | "pages" | "events" | "visitors" | "sessions";
@@ -31,7 +32,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
     {
       key: "last_seen",
       label: "마지막 수집",
-      format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+      format: (v) => <TimeText value={v} />,
     },
   ],
   sessions: [
@@ -48,7 +49,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
     {
       key: "started_at",
       label: "시작",
-      format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+      format: (v) => <TimeText value={v} />,
     },
     {
       key: "duration_seconds",
@@ -111,7 +112,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
     {
       key: "last_seen",
       label: "마지막 활동",
-      format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+      format: (v) => <TimeText value={v} />,
     },
     {
       key: "visitor_id",

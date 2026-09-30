@@ -69,7 +69,9 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import TimeText from "../components/TimeText";
 import { useConfirm } from "../components/ConfirmDialog";
+import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import {
@@ -2158,6 +2160,9 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
   const [edits, setEdits] = useState<Record<string, Record<string, unknown>>>(
     {},
   );
+  // 저장한 편집은 더는 「저장하지 않은 변경」이 아니다.
+  const [savedEdits, setSavedEdits] = useState(edits);
+  useUnsavedWarning(edits !== savedEdits && Object.keys(edits).length > 0);
   const save = useMutation({
     meta: { successMessage: "저장했습니다." },
     mutationFn: async () => {
@@ -2165,7 +2170,10 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
         if (edits[key]) await put(`/api/v1/settings/${key}`, edits[key]);
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: () => {
+      setSavedEdits(edits);
+      return qc.invalidateQueries({ queryKey: ["settings"] });
+    },
   });
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
@@ -2529,10 +2537,17 @@ function PrivacyAdmin() {
     queryFn: ({ signal }) => get<Settings>("/api/v1/settings", { signal }),
   });
   const [local, setLocal] = useState<Record<string, unknown> | null>(null);
+  const [savedLocal, setSavedLocal] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  useUnsavedWarning(local !== null && local !== savedLocal);
   const save = useMutation({
     meta: { successMessage: "저장했습니다." },
     mutationFn: () => put("/api/v1/settings/privacy", local),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: () => {
+      setSavedLocal(local);
+      return qc.invalidateQueries({ queryKey: ["settings"] });
+    },
   });
   if (q.isLoading) return <Loading />;
   // Every control on this form is a protection, and an empty object draws all of
@@ -2840,6 +2855,7 @@ function RetentionAdmin() {
     enabled: !!site,
   });
   const [local, setLocal] = useState<RetentionPolicy | null>(null);
+  useUnsavedWarning(local !== null);
   const current = local || query.data?.policy;
   const save = useMutation({
     meta: { successMessage: "저장했습니다." },
@@ -3769,7 +3785,7 @@ function DebuggerAdmin() {
             {
               key: "created_at",
               label: "수신 시각",
-              format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+              format: (v) => <TimeText value={v} />,
             },
           ]}
           rows={q.data.errors}
@@ -3867,7 +3883,7 @@ function AuditAdmin() {
               {
                 key: "created_at",
                 label: "시각",
-                format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+                format: (v) => <TimeText value={v} />,
               },
               {
                 key: "actor",

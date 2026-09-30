@@ -26,6 +26,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, patch, post } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import DataTable from "../components/DataTable";
+import TimeText from "../components/TimeText";
 import { useConfirm } from "../components/ConfirmDialog";
 import { Loading } from "../components/States";
 import { PASSWORD_RULE } from "./passwordRule";
@@ -243,7 +244,7 @@ function Keys() {
             key: "last_used_at",
             label: "마지막 사용",
             format: (v) =>
-              v ? new Date(String(v)).toLocaleString("ko-KR") : "사용 전",
+              <TimeText value={v} empty="사용 전" />,
           },
           {
             key: "expires_at",

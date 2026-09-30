@@ -24,6 +24,7 @@ import { useSearchParams } from "react-router-dom";
 import { get, rangeQuery } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import TimeText from "../components/TimeText";
 import { policyRange } from "../components/queryError";
 import { Empty, ErrorState, Loading, NoSite } from "../components/States";
 import {
@@ -151,6 +152,8 @@ export default function UserExplorerPage() {
               setQuery(input.trim());
             }}
             sx={{ minWidth: 320, flex: 1 }}
+            // `/` 단축키가 이 화면에서는 사람 검색으로 온다.
+            slotProps={{ htmlInput: { "data-page-search": true } }}
           />
           <Button
             variant="contained"
@@ -224,7 +227,7 @@ export default function UserExplorerPage() {
                   {
                     key: "last_seen",
                     label: "최근 활동",
-                    format: (v) => (v ? new Date(String(v)).toLocaleString("ko-KR") : "—"),
+                    format: (v) => <TimeText value={v} />,
                   },
                   {
                     key: "visitor_id",

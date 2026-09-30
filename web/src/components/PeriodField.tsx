@@ -9,9 +9,11 @@ import {
   MenuItem,
   Stack,
   TextField,
+  Typography,
 } from "@mui/material";
 import { dateRangeValues } from "../api/client";
 import { rangeProblem, type DateRange } from "./periodParam";
+import CopyLinkButton from "./CopyLinkButton";
 
 const CUSTOM = "custom";
 
@@ -37,6 +39,7 @@ export default function PeriodField({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
   const today = dateRangeValues(1, timezone).to;
+  const presetRange = dateRangeValues(days, timezone);
   const problem = rangeProblem(draft, today, maxExactDays);
   const custom = !!(setRange && range);
   const openPicker = () => {
@@ -68,6 +71,13 @@ export default function PeriodField({
           </MenuItem>
         )}
       </TextField>
+      {/* 「최근 30일」이 어느 날부터인지는 시간대까지 셈해야 알 수 있었다. */}
+      {!custom && (
+        <Typography variant="caption" color="text.secondary" noWrap>
+          {`${presetRange.from} ~ ${presetRange.to}`}
+        </Typography>
+      )}
+      <CopyLinkButton />
       {setRange && (
         <Dialog open={open} onClose={() => setOpen(false)} maxWidth="xs" fullWidth>
           <DialogTitle>분석 기간 직접 선택</DialogTitle>
