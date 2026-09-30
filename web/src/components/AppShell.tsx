@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Alert,
   AppBar,
   Avatar,
   Box,
@@ -8,6 +9,7 @@ import {
   Collapse,
   Dialog,
   DialogContent,
+  DialogTitle,
   Divider,
   Drawer,
   FormControl,
@@ -51,6 +53,11 @@ import ScheduleOutlined from "@mui/icons-material/ScheduleOutlined";
 import PersonOutlineRounded from "@mui/icons-material/PersonOutlineRounded";
 import PsychologyRounded from "@mui/icons-material/PsychologyRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
+import StarBorderRounded from "@mui/icons-material/StarBorderRounded";
+import StarRounded from "@mui/icons-material/StarRounded";
+import MenuOpenRounded from "@mui/icons-material/MenuOpenRounded";
+import KeyboardRounded from "@mui/icons-material/KeyboardRounded";
+import CloudOffRounded from "@mui/icons-material/CloudOffRounded";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
 import TuneRounded from "@mui/icons-material/TuneRounded";
 import VisibilityOutlined from "@mui/icons-material/VisibilityOutlined";
@@ -74,6 +81,22 @@ import {
   rememberRoute,
   routeFor,
 } from "./commandPalette";
+import { readPreference, usePreference, writePreference } from "./preference";
+import {
+  NAV_COLLAPSED_KEY,
+  NAV_EXPANDED_KEY,
+  NAV_FAVORITES_KEY,
+  parseExpanded,
+  parseFavorites,
+  toggleFavorite,
+} from "./navPrefs";
+import {
+  GO_TARGETS,
+  isTypingTarget,
+  readShortcut,
+  type ShortcutState,
+} from "./shortcuts";
+import { useOnline } from "./useOnline";
 
 const drawerWidth = 272;
 
@@ -489,17 +512,101 @@ function matchesPath(pathname: string, to: string) {
   return path === "/" ? pathname === "/" : pathname === path;
 }
 
+function NavItemLink({
+  item,
+  close,
+  favorite,
+  toggle,
+}: {
+  item: NavItem;
+  close(): void;
+  favorite: boolean;
+  toggle(): void;
+}) {
+  return (
+    <Box
+      sx={{
+        position: "relative",
+        "&:hover .nav-star, & .nav-star:focus-visible": { opacity: 1 },
+      }}
+    >
+      <ListItemButton
+        component={NavLink}
+        to={item.to}
+        onClick={close}
+        end={item.to === "/"}
+        sx={{
+          minHeight: 38,
+          borderRadius: 1.8,
+          mb: 0.2,
+          pr: 4.5,
+          color: "#929DB1",
+          "&.active": {
+            color: "#FFFFFF",
+            bgcolor: "rgba(109,111,241,.22)",
+            boxShadow: "inset 3px 0 #9294FF",
+          },
+          "&:hover": {
+            bgcolor: "rgba(255,255,255,.06)",
+            color: "white",
+          },
+        }}
+      >
+        <ListItemText
+          primary={item.label}
+          primaryTypographyProps={{
+            fontSize: 13.5,
+            fontWeight: 580,
+            noWrap: true,
+          }}
+        />
+      </ListItemButton>
+      <IconButton
+        className="nav-star"
+        size="small"
+        aria-label={favorite ? `${item.label} 즐겨찾기 해제` : `${item.label} 즐겨찾기`}
+        aria-pressed={favorite}
+        onClick={toggle}
+        sx={{
+          position: "absolute",
+          right: 4,
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: favorite ? "#FFC857" : "#6F7B90",
+          opacity: favorite ? 1 : 0,
+          transition: "opacity .15s",
+          "&:hover": { color: "#FFC857" },
+        }}
+      >
+        {favorite ? (
+          <StarRounded sx={{ fontSize: 17 }} />
+        ) : (
+          <StarBorderRounded sx={{ fontSize: 17 }} />
+        )}
+      </IconButton>
+    </Box>
+  );
+}
+
 function Navigation({ close }: { close(): void }) {
   const location = useLocation();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(
+  // 펼쳐 둔 그룹은 기억한다(navPrefs.ts). 처음이면 첫 그룹과 지금 화면의 그룹만 펼친다.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({
+    ...Object.fromEntries(
       navGroups.map((group, index) => [
         group.label,
         index === 0 ||
           group.items.some((item) => matchesPath(location.pathname, item.to)),
       ]),
     ),
-  );
+    ...parseExpanded(readPreference(NAV_EXPANDED_KEY)),
+  }));
+  const setGroup = (label: string, open: boolean) =>
+    setExpanded((current) => {
+      const next = { ...current, [label]: open };
+      writePreference(NAV_EXPANDED_KEY, JSON.stringify(next));
+      return next;
+    });
   useEffect(() => {
     const active = navGroups.find((group) =>
       group.items.some((item) => matchesPath(location.pathname, item.to)),
@@ -507,9 +614,41 @@ function Navigation({ close }: { close(): void }) {
     if (active)
       setExpanded((current) => ({ ...current, [active.label]: true }));
   }, [location.pathname]);
+  const allItems = navGroups.flatMap((group) => group.items);
+  const [favoritesRaw, setFavoritesRaw] = usePreference(NAV_FAVORITES_KEY);
+  const favorites = parseFavorites(
+    favoritesRaw,
+    allItems.map((item) => item.to),
+  );
+  const toggle = (to: string) =>
+    setFavoritesRaw(JSON.stringify(toggleFavorite(favorites, to)));
 
   return (
     <Box sx={{ px: 1.25, mt: 0.5, flex: 1, overflowY: "auto" }}>
+      {favorites.length > 0 && (
+        <Box sx={{ mb: 1 }}>
+          <Typography
+            variant="caption"
+            sx={{ px: 1.5, color: "#6F7B90", fontWeight: 700 }}
+          >
+            즐겨찾기
+          </Typography>
+          <List dense disablePadding sx={{ mt: 0.25 }}>
+            {favorites.map((to) => {
+              const item = allItems.find((candidate) => candidate.to === to)!;
+              return (
+                <NavItemLink
+                  key={`favorite-${to}`}
+                  item={item}
+                  close={close}
+                  favorite
+                  toggle={() => toggle(to)}
+                />
+              );
+            })}
+          </List>
+        </Box>
+      )}
       {navGroups.map((group) => {
         const active = group.items.some((item) =>
           matchesPath(location.pathname, item.to),
@@ -518,9 +657,7 @@ function Navigation({ close }: { close(): void }) {
         return (
           <Box key={group.label} sx={{ mb: 0.5 }}>
             <ListItemButton
-              onClick={() =>
-                setExpanded((current) => ({ ...current, [group.label]: !open }))
-              }
+              onClick={() => setGroup(group.label, !open)}
               aria-expanded={open}
               sx={{
                 minHeight: 42,
@@ -564,37 +701,13 @@ function Navigation({ close }: { close(): void }) {
                 }}
               >
                 {group.items.map((item) => (
-                  <ListItemButton
+                  <NavItemLink
                     key={item.to}
-                    component={NavLink}
-                    to={item.to}
-                    onClick={close}
-                    end={item.to === "/"}
-                    sx={{
-                      minHeight: 38,
-                      borderRadius: 1.8,
-                      mb: 0.2,
-                      color: "#929DB1",
-                      "&.active": {
-                        color: "#FFFFFF",
-                        bgcolor: "rgba(109,111,241,.22)",
-                        boxShadow: "inset 3px 0 #9294FF",
-                      },
-                      "&:hover": {
-                        bgcolor: "rgba(255,255,255,.06)",
-                        color: "white",
-                      },
-                    }}
-                  >
-                    <ListItemText
-                      primary={item.label}
-                      primaryTypographyProps={{
-                        fontSize: 13.5,
-                        fontWeight: 580,
-                        noWrap: true,
-                      }}
-                    />
-                  </ListItemButton>
+                    item={item}
+                    close={close}
+                    favorite={favorites.includes(item.to)}
+                    toggle={() => toggle(item.to)}
+                  />
                 ))}
               </List>
             </Collapse>
@@ -808,6 +921,80 @@ function CommandPalette({
   );
 }
 
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <Box
+      component="kbd"
+      sx={{
+        px: 0.8,
+        py: 0.2,
+        minWidth: 22,
+        display: "inline-block",
+        textAlign: "center",
+        border: "1px solid",
+        borderColor: "divider",
+        borderBottomWidth: 2,
+        borderRadius: 1,
+        fontFamily: "inherit",
+        fontSize: 12,
+        fontWeight: 700,
+        bgcolor: "#F8F9FC",
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+
+function ShortcutHelp({
+  open,
+  close,
+  isAdmin,
+}: {
+  open: boolean;
+  close(): void;
+  isAdmin: boolean;
+}) {
+  const rows: [ReactNode, string][] = [
+    [<><Kbd>Ctrl/⌘</Kbd> <Kbd>K</Kbd></>, "메뉴·기능 검색"],
+    [<Kbd>/</Kbd>, "이 화면의 표 검색으로 이동 (없으면 메뉴 검색)"],
+    [<Kbd>?</Kbd>, "이 도움말"],
+    [<Kbd>Esc</Kbd>, "검색어 지우기 · 창 닫기"],
+    ...GO_TARGETS.filter((item) => !item.adminOnly || isAdmin).map(
+      (item): [ReactNode, string] => [
+        <>
+          <Kbd>g</Kbd> <Kbd>{item.key}</Kbd>
+        </>,
+        `${item.label}로 이동`,
+      ],
+    ),
+  ];
+  return (
+    <Dialog open={open} onClose={close} maxWidth="xs" fullWidth>
+      <DialogTitle>키보드 단축키</DialogTitle>
+      <DialogContent>
+        <Stack spacing={1}>
+          {rows.map(([keys, label], index) => (
+            <Stack
+              key={index}
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              gap={2}
+            >
+              <Typography variant="body2">{label}</Typography>
+              <Box sx={{ whiteSpace: "nowrap" }}>{keys}</Box>
+            </Stack>
+          ))}
+          <Typography variant="caption" color="text.secondary" pt={1}>
+            입력 칸에 글자를 쓰는 중에는 단축키가 동작하지 않습니다.
+          </Typography>
+        </Stack>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function AppShell({ children }: { children: ReactNode }) {
   const theme = useTheme();
   const desktop = useMediaQuery(theme.breakpoints.up("lg"));
@@ -869,6 +1056,55 @@ export default function AppShell({ children }: { children: ReactNode }) {
     navGroups.find((group) =>
       group.items.some((item) => matchesPath(location.pathname, item.to)),
     )?.label || (location.pathname.startsWith("/admin") ? "관리" : "Momento");
+
+  // 브라우저 탭마다 「Momento」 만 보였으므로 탭 여러 개를 띄우면 구별할 수 없었다.
+  const pageName = title[0];
+  useEffect(() => {
+    document.title = [pageName === "Momento" ? "" : pageName, site?.name, "Momento"]
+      .filter(Boolean)
+      .join(" · ");
+  }, [pageName, site?.name]);
+  // 화면을 옮겨도 이전 화면의 스크롤 위치에서 시작했다 — 긴 표 아래에서 메뉴를 누르면
+  // 새 화면의 중간이 보였다.
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [location.pathname]);
+
+  // 데스크톱에서 사이드바를 접어 표와 차트에 폭을 내준다. 기억한다.
+  const [collapsedRaw, setCollapsedRaw] = usePreference(NAV_COLLAPSED_KEY);
+  const collapsed = desktop && collapsedRaw === "1";
+  const online = useOnline();
+  const [helpOpen, setHelpOpen] = useState(false);
+  const shortcutState = useRef<ShortcutState>({ pendingSince: null });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
+        return;
+      if (isTypingTarget(event.target as HTMLElement | null)) return;
+      // 열린 다이얼로그·메뉴는 자기 키를 가진다.
+      if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]'))
+        return;
+      const step = readShortcut(shortcutState.current, event.key, Date.now(), isAdmin);
+      shortcutState.current = step.state;
+      const action = step.action;
+      if (action.kind === "go") {
+        event.preventDefault();
+        navigate(action.to);
+      } else if (action.kind === "search") {
+        event.preventDefault();
+        const input = [
+          ...document.querySelectorAll<HTMLInputElement>("[data-page-search]"),
+        ].find((element) => element.offsetParent !== null);
+        if (input) input.focus();
+        else setCommandOpen(true);
+      } else if (action.kind === "help") {
+        event.preventDefault();
+        setHelpOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isAdmin, navigate]);
 
   const drawer = (
     <Box
@@ -972,6 +1208,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <Box sx={{ minHeight: "100vh" }}>
+      {/* 키보드 사용자가 사이드바의 링크 수십 개를 지나지 않고 본문으로 간다. */}
+      <Box
+        component="a"
+        href="#main-content"
+        sx={{
+          position: "fixed",
+          left: 12,
+          top: -60,
+          zIndex: 2000,
+          px: 2,
+          py: 1,
+          borderRadius: 1.5,
+          bgcolor: "primary.main",
+          color: "white",
+          fontWeight: 700,
+          textDecoration: "none",
+          "&:focus": { top: 12 },
+        }}
+      >
+        본문으로 건너뛰기
+      </Box>
+      <ShortcutHelp open={helpOpen} close={() => setHelpOpen(false)} isAdmin={isAdmin} />
       <CommandPalette
         open={commandOpen}
         close={() => setCommandOpen(false)}
@@ -979,6 +1237,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         recent={recentRoutes}
       />
       {desktop ? (
+        !collapsed && (
         <Drawer
           variant="permanent"
           sx={{
@@ -988,6 +1247,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         >
           {drawer}
         </Drawer>
+        )
       ) : (
         <Drawer
           open={mobile}
@@ -997,7 +1257,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {drawer}
         </Drawer>
       )}
-      <Box sx={{ ml: { lg: `${drawerWidth}px` } }}>
+      <Box
+        className="app-content"
+        sx={{ ml: { lg: collapsed ? 0 : `${drawerWidth}px` } }}
+      >
         <AppBar
           position="sticky"
           color="inherit"
@@ -1028,7 +1291,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Toolbar
             sx={{ minHeight: "68px!important", gap: { xs: 1, sm: 1.5 } }}
           >
-            {!desktop && (
+            {desktop ? (
+              <Tooltip title={collapsed ? "사이드바 펼치기" : "사이드바 접기"}>
+                <IconButton
+                  onClick={() => setCollapsedRaw(collapsed ? null : "1")}
+                  aria-label={collapsed ? "사이드바 펼치기" : "사이드바 접기"}
+                  aria-expanded={!collapsed}
+                >
+                  {collapsed ? <MenuRounded /> : <MenuOpenRounded />}
+                </IconButton>
+              </Tooltip>
+            ) : (
               <IconButton
                 onClick={() => setMobile(true)}
                 aria-label="메뉴 열기"
@@ -1128,6 +1401,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </Select>
             </FormControl>
             <Box sx={{ flex: 1 }} />
+            <Tooltip title="단축키 (?)">
+              <IconButton
+                onClick={() => setHelpOpen(true)}
+                aria-label="단축키 보기"
+                sx={{ display: { xs: "none", sm: "inline-flex" } }}
+              >
+                <KeyboardRounded />
+              </IconButton>
+            </Tooltip>
             <Tooltip title="메뉴와 기능 검색 (Ctrl/Cmd + K)">
               <IconButton
                 onClick={() => setCommandOpen(true)}
@@ -1281,7 +1563,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </AppBar>
         <Box
           component="main"
-          sx={{ p: { xs: 2, md: 3.5 }, maxWidth: 1720, mx: "auto" }}
+          id="main-content"
+          tabIndex={-1}
+          sx={{ p: { xs: 2, md: 3.5 }, maxWidth: 1720, mx: "auto", outline: 0 }}
         >
           <Box sx={{ mb: 3 }}>
             <Breadcrumbs
@@ -1319,6 +1603,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
               />
             </Stack>
           </Box>
+          {!online && (
+            <Alert severity="warning" icon={<CloudOffRounded />} sx={{ mb: 2 }}>
+              네트워크 연결이 끊겼습니다. 연결되면 화면이 다시 불러옵니다 — 그 사이의
+              오류 표시는 대부분 이 때문입니다.
+            </Alert>
+          )}
+          {environment !== "prd" && (
+            <Alert severity="info" sx={{ mb: 2, py: 0.25 }}>
+              {`${environment.toUpperCase()} 환경의 데이터를 보고 있습니다. 운영(PRD) 수치와 다릅니다.`}
+            </Alert>
+          )}
           {children}
         </Box>
       </Box>
