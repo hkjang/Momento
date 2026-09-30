@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import ReactECharts from "../components/Chart";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
-import { get, rangeQuery } from "../api/client";
+import { get, periodQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { ecommerceSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
@@ -41,13 +41,13 @@ const labels: Record<string, string> = {
 
 export default function EcommercePage() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const query = useQuery({
-    queryKey: ["ecommerce", site?.site_id, site?.timezone, environment, days],
+    queryKey: ["ecommerce", site?.site_id, site?.timezone, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: ({ signal }) =>
       get<EcommerceData>(
-        `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/ecommerce?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
     enabled: !!site,
@@ -58,6 +58,8 @@ export default function EcommercePage() {
     <RangeSelect
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       maxExactDays={site.max_exact_days}
       timezone={site.timezone}
     />

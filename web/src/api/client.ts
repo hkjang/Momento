@@ -151,8 +151,28 @@ export function dateRangeValues(days = 30, timezone = "UTC") {
   };
 }
 
+// A period is either the last N days ending today or dates the reader picked.
+export function periodRange(
+  period: { days: number; custom?: { from: string; to: string } | null },
+  timezone = "UTC",
+) {
+  return period.custom
+    ? { from: period.custom.from, to: period.custom.to }
+    : dateRangeValues(period.days, timezone);
+}
+
+export function periodQuery(
+  period: { days: number; custom?: { from: string; to: string } | null },
+  timezone = "UTC",
+) {
+  return rangeQueryFor(periodRange(period, timezone));
+}
+
 export function rangeQuery(days = 30, timezone = "UTC") {
-  const { from, to } = dateRangeValues(days, timezone);
+  return rangeQueryFor(dateRangeValues(days, timezone));
+}
+
+function rangeQueryFor({ from, to }: { from: string; to: string }) {
   const environment =
     localStorage.getItem("momento:selected-environment") || "prd";
   return `from=${from}&to=${to}&environment=${encodeURIComponent(environment)}`;

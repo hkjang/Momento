@@ -16,7 +16,7 @@ import MouseOutlined from "@mui/icons-material/MouseOutlined";
 import AdsClickOutlined from "@mui/icons-material/AdsClickOutlined";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
-import { get, rangeQuery } from "../api/client";
+import { get, periodQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { usePeriodParam } from "../components/usePeriodParam";
@@ -74,13 +74,13 @@ interface Overview {
 }
 export default function OverviewPage() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
-    queryKey: ["overview", site?.site_id, site?.timezone, environment, days],
+    queryKey: ["overview", site?.site_id, site?.timezone, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     queryFn: ({ signal }) =>
       get<Overview>(
-        `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/overview?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
     enabled: !!site,
@@ -118,6 +118,8 @@ export default function OverviewPage() {
     <AnalysisToolbar
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       environment={environment}
       timezone={site.timezone}
       maxExactDays={site.max_exact_days}

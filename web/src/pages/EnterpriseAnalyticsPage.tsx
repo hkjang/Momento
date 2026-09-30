@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link as RouterLink } from "react-router-dom";
-import { get, post, rangeQuery } from "../api/client";
+import { get, periodQuery, post, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { usePeriodParam } from "../components/usePeriodParam";
@@ -61,9 +61,9 @@ export default function EnterpriseAnalyticsPage({
 
 function WorkspaceRollup() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
-    queryKey: ["workspace-rollup", site?.site_id, environment, days],
+    queryKey: ["workspace-rollup", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
@@ -71,7 +71,7 @@ function WorkspaceRollup() {
         summary: Record<string, number>;
         services: Record<string, unknown>[];
       }>(
-        `/api/v1/sites/${site!.site_id}/workspace-rollup?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/workspace-rollup?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -81,6 +81,8 @@ function WorkspaceRollup() {
     <RangeSelect
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       maxExactDays={site.max_exact_days}
       timezone={site.timezone}
     />
@@ -355,14 +357,14 @@ function WorkspaceJourneys() {
 
 function FeatureIntelligence() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(60, [30, 60, 90]);
+  const [days, setDays, period, setRange] = usePeriodParam(60, [30, 60, 90]);
   const q = useQuery({
-    queryKey: ["feature-intelligence", site?.site_id, environment, days],
+    queryKey: ["feature-intelligence", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
       get<{ population: number; features: Record<string, unknown>[] }>(
-        `/api/v1/sites/${site!.site_id}/feature-intelligence?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/feature-intelligence?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -372,6 +374,8 @@ function FeatureIntelligence() {
     <RangeSelect
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       maxExactDays={site.max_exact_days}
       options={[30, 60, 90]}
       timezone={site.timezone}
@@ -462,9 +466,9 @@ const percentCell = (value: unknown) => `${Number(value).toFixed(1)}%`;
 
 function SearchAnalytics() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
-    queryKey: ["search-analytics", site?.site_id, environment, days],
+    queryKey: ["search-analytics", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
@@ -473,7 +477,7 @@ function SearchAnalytics() {
         queries: Record<string, unknown>[];
         audiences: InsightAudience[];
       }>(
-        `/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/search-analytics?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -483,6 +487,8 @@ function SearchAnalytics() {
     <RangeSelect
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       maxExactDays={site.max_exact_days}
       timezone={site.timezone}
     />
@@ -562,9 +568,9 @@ function SearchAnalytics() {
 
 function Frustration() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
-    queryKey: ["frustration", site?.site_id, environment, days],
+    queryKey: ["frustration", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
@@ -575,7 +581,7 @@ function Frustration() {
         impact: FrictionImpact[];
         impact_caveat: string;
       }>(
-        `/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/frustration?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -585,6 +591,8 @@ function Frustration() {
     <RangeSelect
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       maxExactDays={site.max_exact_days}
       timezone={site.timezone}
     />

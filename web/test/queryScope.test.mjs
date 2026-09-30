@@ -59,7 +59,8 @@ test("환경에 따라 답이 달라지는 조회는 키에도 환경이 있다"
   let checked = 0;
   for (const [name, source] of pageSources()) {
     for (const { body, line } of queries(source)) {
-      if (!body.includes("rangeQuery(")) continue;
+      // periodQuery 도 rangeQuery 처럼 선택한 환경을 URL 에 싣는다.
+      if (!body.includes("rangeQuery(") && !body.includes("periodQuery(")) continue;
       checked += 1;
       const key = /queryKey:\s*\[([^\]]*)\]/s.exec(body);
       assert.ok(key, `${name}:${line} 의 useQuery에 queryKey가 없다`);

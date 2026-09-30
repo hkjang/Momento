@@ -1,4 +1,6 @@
-import { MenuItem, Stack, TextField, Typography } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
+import PeriodField from "./PeriodField";
+import type { DateRange } from "./periodParam";
 import { allowedRanges } from "./queryError";
 
 /**
@@ -18,9 +20,14 @@ export default function RangeSelect({
   timezone,
   note,
   maxExactDays,
+  range,
+  setRange,
 }: {
   days: number;
   setDays(days: number): void;
+  /** A custom period, when the screen offers one (usePeriodParam). */
+  range?: DateRange | null;
+  setRange?(range: DateRange | null): void;
   options?: number[];
   timezone?: string;
   note?: string;
@@ -30,20 +37,15 @@ export default function RangeSelect({
   const available = allowedRanges(options, maxExactDays);
   return (
     <Stack direction="row" alignItems="center" gap={1.5} flexWrap="wrap">
-      <TextField
-        select
-        size="small"
-        label="분석 기간"
-        value={days}
-        onChange={(event) => setDays(Number(event.target.value))}
-        sx={{ minWidth: 140 }}
-      >
-        {available.map((option) => (
-          <MenuItem key={option} value={option}>
-            {`최근 ${option}일`}
-          </MenuItem>
-        ))}
-      </TextField>
+      <PeriodField
+        days={days}
+        setDays={setDays}
+        options={available}
+        range={range}
+        setRange={setRange}
+        timezone={timezone}
+        maxExactDays={maxExactDays}
+      />
       {(timezone || note) && (
         <Typography variant="caption" color="text.secondary">
           {[timezone ? `${timezone} 기준` : "", note].filter(Boolean).join(" · ")}

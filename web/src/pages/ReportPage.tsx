@@ -2,7 +2,7 @@ import { Button, Card, Chip, Stack, Typography } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
-import { dateRangeValues, get, post, rangeQuery } from "../api/client";
+import { get, periodQuery, periodRange, post } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { usePeriodParam } from "../components/usePeriodParam";
@@ -131,7 +131,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
 };
 export default function ReportPage({ kind }: { kind: Kind }) {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
     queryKey: [
       "report",
@@ -139,7 +139,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
       site?.site_id,
       site?.timezone,
       environment,
-      days,
+      period.key,
     ],
     // 기간을 바꿔도 새 답이 올 때까지 이전 표를 남겨 두고, 다른 리포트(kind)나
     // 사이트로 넘어가면 비운다 — 페이지 행이 이벤트 열 아래에 그려지면 안 된다.
@@ -150,7 +150,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
           await post<{ rows: Record<string, unknown>[] }>("/api/v1/query", {
             site_id: site!.site_id,
             environment,
-            date_range: dateRangeValues(days, site!.timezone),
+            date_range: periodRange(period, site!.timezone),
             dimensions: [
               "traffic.source",
               "traffic.medium",
@@ -164,7 +164,7 @@ export default function ReportPage({ kind }: { kind: Kind }) {
           )
         ).rows;
       return get<Record<string, unknown>[]>(
-        `/api/v1/sites/${site!.site_id}/${kind}?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/${kind}?${periodQuery(period, site!.timezone)}`,
         { signal },
       );
     },
@@ -175,6 +175,8 @@ export default function ReportPage({ kind }: { kind: Kind }) {
     <AnalysisToolbar
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       environment={environment}
       timezone={site.timezone}
       maxExactDays={site.max_exact_days}

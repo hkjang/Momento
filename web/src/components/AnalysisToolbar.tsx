@@ -3,12 +3,12 @@ import {
   Card,
   Chip,
   LinearProgress,
-  MenuItem,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import PeriodField from "./PeriodField";
+import type { DateRange } from "./periodParam";
 import { allowedRanges } from "./queryError";
 import { useDelayedBusy } from "./useDelayedBusy";
 
@@ -22,9 +22,14 @@ export default function AnalysisToolbar({
   refresh,
   comparePrevious = false,
   maxExactDays,
+  range,
+  setRange,
 }: {
   days: number;
   setDays(days: number): void;
+  /** A custom period, when the screen offers one (usePeriodParam). */
+  range?: DateRange | null;
+  setRange?(range: DateRange | null): void;
   environment: string;
   timezone: string;
   updatedAt: number;
@@ -58,20 +63,15 @@ export default function AnalysisToolbar({
         alignItems={{ sm: "center" }}
         spacing={1.25}
       >
-        <TextField
-          select
-          size="small"
-          label="분석 기간"
-          value={days}
-          onChange={(event) => setDays(Number(event.target.value))}
-          sx={{ minWidth: 140 }}
-        >
-          {available.map((option) => (
-            <MenuItem key={option} value={option}>
-              {`최근 ${option}일`}
-            </MenuItem>
-          ))}
-        </TextField>
+        <PeriodField
+          days={days}
+          setDays={setDays}
+          options={available}
+          range={range}
+          setRange={setRange}
+          timezone={timezone}
+          maxExactDays={maxExactDays}
+        />
         <Chip
           size="small"
           label={environment.toUpperCase()}

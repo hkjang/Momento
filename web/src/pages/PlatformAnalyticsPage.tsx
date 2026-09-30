@@ -14,7 +14,7 @@ import {
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import ReactECharts from "../components/Chart";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { get, post, rangeQuery } from "../api/client";
+import { get, periodQuery, post, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { aiSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
@@ -97,7 +97,7 @@ function Cohort() {
   const { site, environment } = useSite();
   // Retention is measured over months, so this screen offers longer periods than
   // the others rather than the shared 7/30/90.
-  const [days, setDays] = usePeriodParam(180, [90, 180, 365]);
+  const [days, setDays, period, setRange] = usePeriodParam(180, [90, 180, 365]);
   const [cohortEvent, setCohortEvent] = useState("");
   const [returnEvent, setReturnEvent] = useState("");
   const [periods, setPeriods] = useState(12);
@@ -117,7 +117,7 @@ function Cohort() {
       "cohort",
       site?.site_id,
       environment,
-      days,
+      period.key,
       cohortEvent,
       returnEvent,
       periods,
@@ -131,7 +131,7 @@ function Cohort() {
         curves?: RetentionCurve[];
         comparison?: RetentionComparison[];
       }>(
-        `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(days, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
+        `/api/v1/sites/${site!.site_id}/cohort?${periodQuery(period, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
         { signal },
       ),
   });
@@ -169,6 +169,8 @@ function Cohort() {
           <RangeSelect
             days={days}
             setDays={setDays}
+            range={period.custom}
+            setRange={setRange}
             maxExactDays={site.max_exact_days}
             options={[90, 180, 365]}
           />
@@ -434,14 +436,14 @@ function Journey() {
 
 function Adoption() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
-    queryKey: ["adoption", site?.site_id, environment, days],
+    queryKey: ["adoption", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
       get<{ rows: Record<string, unknown>[] }>(
-        `/api/v1/sites/${site!.site_id}/adoption?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/adoption?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -452,6 +454,8 @@ function Adoption() {
       <RangeSelect
         days={days}
         setDays={setDays}
+        range={period.custom}
+        setRange={setRange}
         maxExactDays={site.max_exact_days}
         timezone={site.timezone}
       />
@@ -541,13 +545,13 @@ function Experience() {
         { signal },
       ),
   });
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const q = useQuery({
     queryKey: [
       "experience",
       site?.site_id,
       environment,
-      days,
+      period.key,
       compareIds.join(","),
     ],
     placeholderData: keepWithinScope(site?.site_id, environment),
@@ -561,7 +565,7 @@ function Experience() {
         cohorts?: ExperienceCohort[];
         gaps?: ExperienceGap[];
       }>(
-        `/api/v1/sites/${site!.site_id}/experience?${rangeQuery(days, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
+        `/api/v1/sites/${site!.site_id}/experience?${periodQuery(period, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
         { signal },
       ),
   });
@@ -574,6 +578,8 @@ function Experience() {
         <RangeSelect
           days={days}
           setDays={setDays}
+          range={period.custom}
+          setRange={setRange}
           maxExactDays={site.max_exact_days}
           timezone={site.timezone}
         />
@@ -589,6 +595,8 @@ function Experience() {
       <RangeSelect
         days={days}
         setDays={setDays}
+        range={period.custom}
+        setRange={setRange}
         maxExactDays={site.max_exact_days}
         timezone={site.timezone}
         note="Core Web Vitals와 오류는 이 기간의 이벤트 기준"
@@ -911,15 +919,15 @@ function Insights() {
 
 function AIAnalytics() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   const [group, setGroup] = useState("model");
   const q = useQuery({
-    queryKey: ["ai-analytics", site?.site_id, environment, days, group],
+    queryKey: ["ai-analytics", site?.site_id, environment, period.key, group],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
       get<{ rows: Record<string, unknown>[] }>(
-        `/api/v1/sites/${site!.site_id}/ai-analytics?${rangeQuery(days, site!.timezone)}&group_by=${group}`,
+        `/api/v1/sites/${site!.site_id}/ai-analytics?${periodQuery(period, site!.timezone)}&group_by=${group}`,
         { signal },
       ),
   });
@@ -950,6 +958,8 @@ function AIAnalytics() {
           <RangeSelect
             days={days}
             setDays={setDays}
+            range={period.custom}
+            setRange={setRange}
             maxExactDays={site.max_exact_days}
             timezone={site.timezone}
           />

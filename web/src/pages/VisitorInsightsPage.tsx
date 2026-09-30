@@ -18,7 +18,7 @@ import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import InsightsRounded from "@mui/icons-material/InsightsRounded";
 import { useQuery } from "@tanstack/react-query";
 import { Link as RouterLink } from "react-router-dom";
-import { get, rangeQuery } from "../api/client";
+import { get, periodQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
 import { usePeriodParam } from "../components/usePeriodParam";
@@ -77,7 +77,7 @@ const kpiType: Record<string, "percent" | "duration" | undefined> = {
 
 export default function VisitorInsightsPage() {
   const { site, environment } = useSite();
-  const [days, setDays] = usePeriodParam(30);
+  const [days, setDays, period, setRange] = usePeriodParam(30);
   // Only offer to narrow the range when there is a shorter one to move to.
   const narrower = narrowerRange(days);
   const [toast, setToast] = useState("");
@@ -85,12 +85,12 @@ export default function VisitorInsightsPage() {
   const [halfLife, setHalfLife] = useState(7);
   const [scope, setScope] = useState<"site" | "workspace">("site");
   const q = useQuery({
-    queryKey: ["visitor-insights", site?.site_id, environment, days],
+    queryKey: ["visitor-insights", site?.site_id, environment, period.key],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     queryFn: ({ signal }) =>
       get<VisitorInsightReport>(
-        `/api/v1/sites/${site!.site_id}/visitor-insights?${rangeQuery(days, site!.timezone)}`,
+        `/api/v1/sites/${site!.site_id}/visitor-insights?${periodQuery(period, site!.timezone)}`,
         { signal },
       ),
   });
@@ -109,7 +109,7 @@ export default function VisitorInsightsPage() {
       "attribution",
       site?.site_id,
       environment,
-      days,
+      period.key,
       model,
       halfLife,
       scope,
@@ -118,7 +118,7 @@ export default function VisitorInsightsPage() {
     enabled: !!site,
     queryFn: ({ signal }) =>
       get<{ report: AttributionReport; models: AttributionModel[] }>(
-        `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}&scope=${scope}`,
+        `/api/v1/sites/${site!.site_id}/attribution?${periodQuery(period, site!.timezone)}&model=${model}&half_life_days=${halfLife}&scope=${scope}`,
         { signal },
       ),
   });
@@ -127,6 +127,8 @@ export default function VisitorInsightsPage() {
     <AnalysisToolbar
       days={days}
       setDays={setDays}
+      range={period.custom}
+      setRange={setRange}
       environment={environment}
       timezone={site.timezone}
       maxExactDays={site.max_exact_days}
