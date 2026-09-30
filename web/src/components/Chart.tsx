@@ -8,6 +8,7 @@ import {
   TooltipComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
+import { optionSignature } from "./chartOption";
 
 echarts.use([
   BarChart,
@@ -27,16 +28,33 @@ export default function Chart({
   style?: CSSProperties;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const instance = useRef<echarts.ECharts | null>(null);
+  const latest = useRef(option);
+  latest.current = option;
+  // One instance for the life of the element (chartOption.ts says why).
   useEffect(() => {
     if (!ref.current) return;
-    const instance = echarts.init(ref.current);
-    instance.setOption(option as EChartsCoreOption);
-    const observer = new ResizeObserver(() => instance.resize());
+    const chart = echarts.init(ref.current);
+    instance.current = chart;
+    chart.setOption(latest.current as EChartsCoreOption);
+    const observer = new ResizeObserver(() => chart.resize());
     observer.observe(ref.current);
     return () => {
       observer.disconnect();
-      instance.dispose();
+      chart.dispose();
+      instance.current = null;
     };
-  }, [option]);
+  }, []);
+  // Redraw only when the option says something new. notMerge, because the old
+  // behaviour was a fresh chart: a series that disappeared must not linger.
+  const signature = optionSignature(option);
+  const drawn = useRef(signature);
+  useEffect(() => {
+    if (!instance.current || drawn.current === signature) return;
+    drawn.current = signature;
+    instance.current.setOption(latest.current as EChartsCoreOption, {
+      notMerge: true,
+    });
+  }, [signature]);
   return <div ref={ref} style={style} />;
 }
