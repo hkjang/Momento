@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -291,6 +292,48 @@ func TestEndpointLatencyUnderLoad(t *testing.T) {
 			t.Errorf("%s took %s at the median of %d runs, over the %s budget: it has no headroom under the %s deadline",
 				result.name, result.median.Round(time.Millisecond), loadRepeats, loadBudget, analyticalTimeout)
 		}
+	}
+
+	// A team opening the landing screen together. Four identical requests at once
+	// are answered by one read (shared_reads.go); the baseline gives each request
+	// a distinct, ignored parameter so every one of them runs its own.
+	const together = 4
+	concurrent := func(paths func(int) string) (time.Duration, int) {
+		var wg sync.WaitGroup
+		shared := make([]bool, together)
+		bodies := make([]string, together)
+		started := time.Now()
+		for i := 0; i < together; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				request := httptest.NewRequest(http.MethodGet, paths(i), nil)
+				request.AddCookie(&http.Cookie{Name: "momento_session", Value: f.sessionCook})
+				recorder := httptest.NewRecorder()
+				f.server.Handler().ServeHTTP(recorder, request)
+				if recorder.Code != http.StatusOK {
+					t.Errorf("concurrent overview answered %d: %s", recorder.Code, truncateBody(recorder.Body.String()))
+				}
+				shared[i] = recorder.Header().Get("X-Momento-Shared-Read") == "1"
+				bodies[i] = recorder.Body.String()
+			}()
+		}
+		wg.Wait()
+		count := 0
+		for i := range shared {
+			if shared[i] {
+				count++
+			}
+		}
+		return time.Since(started), count
+	}
+	overview := site + "/overview?from=" + from + "&to=" + today
+	separate, _ := concurrent(func(i int) string { return overview + "&probe=" + strconv.Itoa(i) })
+	joined, sharedCount := concurrent(func(int) string { return overview })
+	t.Logf("%d concurrent overviews: %s each computing its own, %s identical (%d answered by a read already running)",
+		together, separate.Round(time.Millisecond), joined.Round(time.Millisecond), sharedCount)
+	if sharedCount == 0 {
+		t.Error("four identical overviews arriving together were all computed separately")
 	}
 }
 
