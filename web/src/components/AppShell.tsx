@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AppBar,
   Avatar,
@@ -66,6 +66,14 @@ import {
   useRuntimeVersion,
 } from "../version";
 import { useDelayedBusy } from "./useDelayedBusy";
+import {
+  RECENT_STORAGE_KEY,
+  moveActive,
+  orderWithRecent,
+  parseRecent,
+  rememberRoute,
+  routeFor,
+} from "./commandPalette";
 
 const drawerWidth = 272;
 
@@ -597,42 +605,64 @@ function Navigation({ close }: { close(): void }) {
   );
 }
 
+function paletteRoutes(isAdmin: boolean) {
+  return [
+    ...navGroups.flatMap((group) =>
+      group.items.map((item) => ({ ...item, group: group.label })),
+    ),
+    ...adminCommands
+      .filter(() => isAdmin)
+      .map((item) => ({ ...item, group: "관리" })),
+  ];
+}
+
+function loadRecent(): string[] {
+  try {
+    return parseRecent(localStorage.getItem(RECENT_STORAGE_KEY));
+  } catch {
+    return [];
+  }
+}
+
 function CommandPalette({
   open,
   close,
   isAdmin,
+  recent,
 }: {
   open: boolean;
   close(): void;
   isAdmin: boolean;
+  recent: string[];
 }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const routes = useMemo(
-    () => [
-      ...navGroups.flatMap((group) =>
-        group.items.map((item) => ({ ...item, group: group.label })),
-      ),
-      ...adminCommands
-        .filter(() => isAdmin)
-        .map((item) => ({ ...item, group: "관리" })),
-    ],
-    [isAdmin],
-  );
+  const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const routes = useMemo(() => paletteRoutes(isAdmin), [isAdmin]);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("ko-KR");
-    if (!needle) return routes.slice(0, 10);
+    if (!needle) return orderWithRecent(routes, recent, 10);
     return routes
       .filter((item) =>
         `${item.label} ${item.description} ${item.keywords || ""} ${item.group}`
           .toLocaleLowerCase("ko-KR")
           .includes(needle),
       )
-      .slice(0, 12);
-  }, [query, routes]);
+      .slice(0, 12)
+      .map((item) => ({ ...item, recent: false }));
+  }, [query, recent, routes]);
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
+  // 검색어가 바뀌면 결과가 바뀌므로 선택은 첫 줄로 돌아간다.
+  useEffect(() => setActive(0), [query, open]);
+  const activeIndex = Math.min(active, Math.max(filtered.length - 1, 0));
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-index="${activeIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex]);
   const select = (to: string) => {
     navigate(to);
     close();
@@ -662,10 +692,28 @@ function CommandPalette({
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && filtered[0]) select(filtered[0].to);
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive(
+                  moveActive(
+                    activeIndex,
+                    event.key === "ArrowDown" ? 1 : -1,
+                    filtered.length,
+                  ),
+                );
+              } else if (event.key === "Enter" && filtered[activeIndex]) {
+                event.preventDefault();
+                select(filtered[activeIndex].to);
+              }
             }}
             placeholder="메뉴, 기능, 설정 검색…"
             aria-label="Momento 메뉴 검색"
+            role="combobox"
+            aria-expanded={filtered.length > 0}
+            aria-controls="command-palette-list"
+            aria-activedescendant={
+              filtered[activeIndex] ? `command-option-${activeIndex}` : undefined
+            }
             sx={{
               border: 0,
               outline: 0,
@@ -687,7 +735,12 @@ function CommandPalette({
           />
         </FormControl>
       </Box>
-      <DialogContent sx={{ p: 1, maxHeight: 520 }}>
+      <DialogContent
+        ref={listRef}
+        id="command-palette-list"
+        role="listbox"
+        sx={{ p: 1, maxHeight: 520 }}
+      >
         {!filtered.length && (
           <Box sx={{ py: 6, textAlign: "center" }}>
             <Typography fontWeight={700}>일치하는 메뉴가 없습니다</Typography>
@@ -696,9 +749,15 @@ function CommandPalette({
             </Typography>
           </Box>
         )}
-        {filtered.map((item) => (
+        {filtered.map((item, index) => (
           <ListItemButton
             key={`${item.group}-${item.to}`}
+            id={`command-option-${index}`}
+            data-index={index}
+            role="option"
+            aria-selected={index === activeIndex}
+            selected={index === activeIndex}
+            onMouseMove={() => setActive(index)}
             onClick={() => select(item.to)}
             sx={{ borderRadius: 2, py: 1.1 }}
           >
@@ -713,8 +772,9 @@ function CommandPalette({
             />
             <Chip
               size="small"
-              label={item.group}
+              label={item.recent ? `최근 · ${item.group}` : item.group}
               variant="outlined"
+              color={item.recent ? "primary" : "default"}
               sx={{ ml: 1 }}
             />
           </ListItemButton>
@@ -731,6 +791,9 @@ function CommandPalette({
           borderColor: "divider",
         }}
       >
+        <Typography variant="caption" color="text.secondary">
+          ↑↓ 선택
+        </Typography>
         <Typography variant="caption" color="text.secondary">
           Enter 이동
         </Typography>
@@ -762,6 +825,27 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const isAdmin = !!user && !["analyst", "viewer"].includes(user.role);
+  // 방금 보던 화면으로 돌아가는 것이 팔레트를 여는 가장 흔한 이유다. 메뉴에 있는
+  // 화면에 들어올 때마다 기억해 두었다가 검색어 없이 열면 먼저 보인다.
+  const [recentRoutes, setRecentRoutes] = useState(loadRecent);
+  useEffect(() => {
+    const to = routeFor(
+      location.pathname,
+      location.search,
+      paletteRoutes(isAdmin).map((item) => item.to),
+    );
+    if (!to) return;
+    setRecentRoutes((current) => {
+      if (current[0] === to) return current;
+      const next = rememberRoute(current, to);
+      try {
+        localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // 저장소를 막은 브라우저에서는 이 탭 안에서만 기억한다.
+      }
+      return next;
+    });
+  }, [isAdmin, location.pathname, location.search]);
 
   const deployedVersion = runtimeVersion.data?.version;
   const versionMismatch =
@@ -892,6 +976,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         open={commandOpen}
         close={() => setCommandOpen(false)}
         isAdmin={isAdmin}
+        recent={recentRoutes}
       />
       {desktop ? (
         <Drawer

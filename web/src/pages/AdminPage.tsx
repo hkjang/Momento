@@ -50,7 +50,12 @@ import SettingsRounded from "@mui/icons-material/SettingsRounded";
 import StorageRounded from "@mui/icons-material/StorageRounded";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   del,
@@ -67,6 +72,13 @@ import DataTable from "../components/DataTable";
 import { useConfirm } from "../components/ConfirmDialog";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
+import {
+  auditDetailText,
+  auditPath,
+  emptyAuditFilters,
+  nextAuditCursor,
+  type AuditFilters,
+} from "./auditQuery";
 import {
   assignableRoles,
   canAdministerRole,
@@ -435,10 +447,11 @@ function AdminOverview() {
   });
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: ({ signal }) => get<AdminUserSummary[]>(
-      "/api/v1/users",
-      { signal },
-    ),
+    queryFn: ({ signal }) =>
+      get<AdminUserSummary[]>(
+        "/api/v1/users",
+        { signal },
+      ),
   });
   const debuggerQuery = useQuery({
     queryKey: ["tracking-debugger", site?.site_id],
@@ -485,10 +498,11 @@ function AdminOverview() {
   });
   const encryption = useQuery({
     queryKey: ["encryption-status"],
-    queryFn: ({ signal }) => get<EncryptionStatus>(
-      "/api/v1/system/encryption",
-      { signal },
-    ),
+    queryFn: ({ signal }) =>
+      get<EncryptionStatus>(
+        "/api/v1/system/encryption",
+        { signal },
+      ),
   });
   const privacy = settings.data?.privacy?.value || {};
   const oidc = settings.data?.oidc?.value || {};
@@ -1485,7 +1499,10 @@ function SiteSDKGuideDialog({
             {diagnostics.isLoading ? (
               <Loading />
             ) : diagnostics.error ? (
-              <ErrorState error={diagnostics.error} />
+              <ErrorState
+                error={diagnostics.error}
+                retry={() => diagnostics.refetch()}
+              />
             ) : diagnostics.data ? (
               <Stack spacing={1.4}>
                 <Alert
@@ -2148,7 +2165,7 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
   if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   const value = (group: string) => edits[group] || q.data![group]?.value || {};
   const change = (group: string, key: string, next: unknown) =>
     setEdits((v) => ({ ...v, [group]: { ...value(group), [key]: next } }));
@@ -2403,10 +2420,11 @@ function EncryptionSection() {
   const qc = useQueryClient();
   const status = useQuery({
     queryKey: ["encryption-status"],
-    queryFn: ({ signal }) => get<EncryptionStatus>(
-      "/api/v1/system/encryption",
-      { signal },
-    ),
+    queryFn: ({ signal }) =>
+      get<EncryptionStatus>(
+        "/api/v1/system/encryption",
+        { signal },
+      ),
   });
   const rekey = useMutation({
     mutationFn: () =>
@@ -2423,7 +2441,7 @@ function EncryptionSection() {
       {status.isLoading ? (
         <LinearProgress />
       ) : status.error ? (
-        <ErrorState error={status.error} />
+        <ErrorState error={status.error} retry={() => status.refetch()} />
       ) : (
         <Stack spacing={1.5}>
           <Alert severity={status.data?.enabled ? "success" : "warning"}>
@@ -2517,7 +2535,7 @@ function PrivacyAdmin() {
   // them switched off — the same picture as an administrator who turned them
   // off. Saving from that picture used to write it. A policy this screen could
   // not read is not a policy of no protections.
-  if (q.error) return <ErrorState error={q.error} />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   if (!q.data?.privacy) {
     return (
       <ErrorState
@@ -2828,7 +2846,8 @@ function RetentionAdmin() {
   });
   if (!site) return <NoSite />;
   if (query.isLoading) return <Loading />;
-  if (query.error) return <ErrorState error={query.error} />;
+  if (query.error)
+    return <ErrorState error={query.error} retry={() => query.refetch()} />;
   const set = (key: keyof RetentionPolicy, value: number | null) =>
     setLocal({ ...query.data!.policy, ...local, [key]: value });
   return (
@@ -2979,7 +2998,8 @@ function DimensionsAdmin() {
   });
   if (!site) return <NoSite />;
   if (query.isLoading) return <Loading />;
-  if (query.error) return <ErrorState error={query.error} />;
+  if (query.error)
+    return <ErrorState error={query.error} retry={() => query.refetch()} />;
   return (
     <Box
       sx={{
@@ -3163,6 +3183,7 @@ function NetworksAdmin() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
   });
   if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
     <Box
       sx={{
@@ -3323,6 +3344,7 @@ function UsersAdmin() {
     setResetPassword("");
   };
   if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
     <>
       <Stack direction="row" justifyContent="space-between">
@@ -3615,6 +3637,7 @@ function SchemasAdmin() {
     },
   });
   if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
     <Box
       sx={{
@@ -3718,7 +3741,7 @@ function DebuggerAdmin() {
     refetchInterval: 5000,
   });
   if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
+  if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
     <Stack spacing={2}>
       <Alert severity="info">
@@ -3765,36 +3788,134 @@ function DebuggerAdmin() {
 }
 
 function AuditAdmin() {
-  const q = useQuery({
-    queryKey: ["audit"],
-    queryFn: ({ signal }) => get<Record<string, unknown>[]>(
-      "/api/v1/audit",
-      { signal },
-    ),
+  // 입력 중인 값과 조회에 쓴 값을 나눠, 글자마다 서버를 두드리지 않는다.
+  const [draft, setDraft] = useState<AuditFilters>(emptyAuditFilters);
+  const [filters, setFilters] = useState<AuditFilters>(emptyAuditFilters);
+  const q = useInfiniteQuery({
+    queryKey: ["audit", filters],
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam, signal }) =>
+      get<Record<string, unknown>[]>(auditPath(filters, pageParam), {
+        signal,
+      }),
+    getNextPageParam: (last) => nextAuditCursor(last),
   });
-  if (q.isLoading) return <Loading />;
-  if (q.error) return <ErrorState error={q.error} />;
-  return (
-    <DataTable
-      columns={[
-        {
-          key: "created_at",
-          label: "시각",
-          format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
-        },
-        { key: "actor", label: "작업자" },
-        {
-          key: "action",
-          label: "작업",
-          format: (v) => (
-            <Chip size="small" variant="outlined" label={String(v)} />
-          ),
-        },
-        { key: "resource_type", label: "대상" },
-        { key: "resource_id", label: "대상 ID" },
-        { key: "client_ip", label: "IP" },
-      ]}
-      rows={q.data!}
+  const rows = q.data?.pages.flat() || [];
+  const apply = () => setFilters(draft);
+  const filtering = Object.values(filters).some((value) => value.trim());
+  const field = (key: keyof AuditFilters, label: string, placeholder: string) => (
+    <TextField
+      size="small"
+      label={label}
+      placeholder={placeholder}
+      value={draft[key]}
+      onChange={(event) => setDraft({ ...draft, [key]: event.target.value })}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") apply();
+      }}
+      sx={{ minWidth: 180, flex: 1 }}
     />
+  );
+  return (
+    <Stack spacing={2}>
+      <Card sx={{ p: 2 }}>
+        <Stack
+          direction={{ xs: "column", md: "row" }}
+          spacing={1.5}
+          alignItems={{ md: "center" }}
+        >
+          {field("action", "작업", "예: site.key.rotate")}
+          {field("actor", "작업자", "이름 또는 이메일")}
+          {field("resource", "대상", "유형 또는 ID")}
+          <Button variant="contained" onClick={apply}>
+            조회
+          </Button>
+          <Button
+            disabled={!filtering && !Object.values(draft).some((v) => v.trim())}
+            onClick={() => {
+              setDraft(emptyAuditFilters);
+              setFilters(emptyAuditFilters);
+            }}
+          >
+            초기화
+          </Button>
+        </Stack>
+      </Card>
+      {q.isLoading ? (
+        <Loading />
+      ) : q.error ? (
+        <ErrorState error={q.error} retry={() => q.refetch()} />
+      ) : (
+        <>
+          <DataTable
+            title="감사 로그"
+            description={`최신 항목부터 ${rows.length.toLocaleString("ko-KR")}건을 불러왔습니다.${q.hasNextPage ? " 더 오래된 기록은 아래에서 이어 불러옵니다." : ""}`}
+            exportFilename="momento-audit"
+            columns={[
+              {
+                key: "created_at",
+                label: "시각",
+                format: (v) => new Date(String(v)).toLocaleString("ko-KR"),
+              },
+              {
+                key: "actor",
+                label: "작업자",
+                format: (v, row) => (
+                  <Typography
+                    variant="body2"
+                    noWrap
+                    title={String(row.actor_email || "")}
+                  >
+                    {String(v ?? "—")}
+                  </Typography>
+                ),
+              },
+              {
+                key: "action",
+                label: "작업",
+                format: (v) => (
+                  <Chip size="small" variant="outlined" label={String(v)} />
+                ),
+              },
+              { key: "resource_type", label: "대상" },
+              { key: "resource_id", label: "대상 ID" },
+              {
+                key: "detail",
+                label: "상세",
+                minWidth: 220,
+                sortValue: (row) => auditDetailText(row.detail),
+                format: (v) => {
+                  const text = auditDetailText(v);
+                  return (
+                    <Typography
+                      variant="body2"
+                      className="mono"
+                      noWrap
+                      title={text}
+                      sx={{ maxWidth: 320 }}
+                    >
+                      {text || "—"}
+                    </Typography>
+                  );
+                },
+              },
+              { key: "client_ip", label: "IP" },
+            ]}
+            rows={rows}
+          />
+          {q.hasNextPage && (
+            <Button
+              variant="outlined"
+              startIcon={<RefreshRounded />}
+              disabled={q.isFetchingNextPage}
+              onClick={() => void q.fetchNextPage()}
+              sx={{ alignSelf: "center" }}
+            >
+              {q.isFetchingNextPage ? "불러오는 중…" : "이전 기록 더 보기"}
+            </Button>
+          )}
+        </>
+      )}
+    </Stack>
   );
 }

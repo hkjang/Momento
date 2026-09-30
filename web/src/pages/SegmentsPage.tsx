@@ -60,12 +60,22 @@ export default function SegmentsPage() {
   const [form, setForm] = useState(initialForm);
   const query = useQuery({
     queryKey: ["segments", site?.site_id],
-    queryFn: ({ signal }) => get<Segment[]>(
-      `/api/v1/segments?site_id=${site!.site_id}`,
-      { signal },
-    ),
+    queryFn: ({ signal }) =>
+      get<Segment[]>(
+        `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
+      ),
     enabled: !!site,
   });
+  const openSegment = (segment: Segment) => {
+    setSelected(segment.id);
+    setForm({
+      name: segment.name,
+      description: segment.description,
+      shared: segment.shared,
+      definition: segment.definition,
+    });
+  };
   const dimensions = useQuery({
     queryKey: ["dimensions", site?.site_id],
     queryFn: ({ signal }) =>
@@ -158,16 +168,23 @@ export default function SegmentsPage() {
             {(query.data || []).map((segment) => (
               <Box
                 key={segment.id}
-                onClick={() => {
-                  setSelected(segment.id);
-                  setForm({
-                    name: segment.name,
-                    description: segment.description,
-                    shared: segment.shared,
-                    definition: segment.definition,
-                  });
+                // 클릭만 받던 목록이라 키보드로는 저장된 Segment 를 열 수 없었다.
+                role="button"
+                tabIndex={0}
+                aria-pressed={selected === segment.id}
+                onClick={() => openSegment(segment)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openSegment(segment);
+                  }
                 }}
                 sx={{
+                  "&:focus-visible": {
+                    outline: "2px solid",
+                    outlineColor: "primary.main",
+                    outlineOffset: 2,
+                  },
                   p: 1.5,
                   borderRadius: 2,
                   border: "1px solid",

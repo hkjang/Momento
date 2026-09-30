@@ -622,10 +622,11 @@ function Automation() {
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["settings"],
-    queryFn: ({ signal }) => get<SettingsResponse>(
-      "/api/v1/settings",
-      { signal },
-    ),
+    queryFn: ({ signal }) =>
+      get<SettingsResponse>(
+        "/api/v1/settings",
+        { signal },
+      ),
   });
   const channels = useQuery({
     queryKey: ["delivery-channels", site?.site_id],

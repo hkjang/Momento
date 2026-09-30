@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/hkjang/Momento/internal/auth"
 	"github.com/hkjang/Momento/internal/model"
 	"github.com/hkjang/Momento/internal/secret"
+	"github.com/hkjang/Momento/internal/segment"
 	"github.com/hkjang/Momento/internal/service"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -1020,8 +1022,54 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"updated": true})
 }
 
+// auditPageDefault is how many entries one page of the audit log holds when the
+// caller does not say; it was the only page there was before paging existed.
+const auditPageDefault, auditPageMax = 500, 1000
+
+// listAudit answers the newest audit entries first. It used to answer exactly
+// the newest 500 and nothing else, so on a busy instance "who rotated this key
+// last month" had no answer from the console at all. The filters are plain
+// text, matched as text (LikeLiteral), and the page continues with before_id —
+// the id of the oldest entry already shown — because ids are the insertion
+// order and, unlike created_at, never tie.
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.DB.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.detail,a.client_ip::text,a.created_at,coalesce(u.display_name,'System'),coalesce(u.email,'') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT 500`)
+	query := r.URL.Query()
+	limit := auditPageDefault
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > auditPageMax {
+			writeError(w, 400, "INVALID_LIMIT", fmt.Sprintf("limit must be between 1 and %d", auditPageMax))
+			return
+		}
+		limit = parsed
+	}
+	where := []string{"true"}
+	args := []any{}
+	arg := func(value any) string {
+		args = append(args, value)
+		return "$" + strconv.Itoa(len(args))
+	}
+	if raw := strings.TrimSpace(query.Get("before_id")); raw != "" {
+		beforeID, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || beforeID <= 0 {
+			writeError(w, 400, "INVALID_CURSOR", "before_id must be a positive integer")
+			return
+		}
+		where = append(where, "a.id < "+arg(beforeID))
+	}
+	contains := func(value string) string { return "%" + segment.LikeLiteral(value) + "%" }
+	if value := strings.TrimSpace(query.Get("action")); value != "" {
+		where = append(where, "a.action ILIKE "+arg(contains(value)))
+	}
+	if value := strings.TrimSpace(query.Get("actor")); value != "" {
+		placeholder := arg(contains(value))
+		where = append(where, "(coalesce(u.display_name,'System') ILIKE "+placeholder+" OR coalesce(u.email,'') ILIKE "+placeholder+")")
+	}
+	if value := strings.TrimSpace(query.Get("resource")); value != "" {
+		placeholder := arg(contains(value))
+		where = append(where, "(a.resource_type ILIKE "+placeholder+" OR coalesce(a.resource_id,'') ILIKE "+placeholder+")")
+	}
+	rows, err := s.DB.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.detail,a.client_ip::text,a.created_at,coalesce(u.display_name,'System'),coalesce(u.email,'') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id WHERE `+strings.Join(where, " AND ")+` ORDER BY a.id DESC LIMIT `+arg(limit), args...)
 	if err != nil {
 		writeError(w, 500, "QUERY_FAILED", err.Error())
 		return

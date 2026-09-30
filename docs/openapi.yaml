@@ -565,7 +565,15 @@ paths:
   /api/v1/audit:
     get:
       summary: Audit log of administrative and person-level actions
-      responses: {'200': {description: Audit entries}}
+      # Newest first. Filters are matched as literal text (case-insensitive
+      # contains). The next page is before_id = the smallest id already shown.
+      parameters:
+        - {name: action, in: query, schema: {type: string}}
+        - {name: actor, in: query, description: display name or email, schema: {type: string}}
+        - {name: resource, in: query, description: resource type or id, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 500}}
+        - {name: before_id, in: query, schema: {type: integer, minimum: 1}}
+      responses: {'200': {description: Audit entries}, '400': {$ref: '#/components/responses/Error'}}
   /api/v1/tracking-debugger:
     get:
       summary: Recently received events for verifying an installation
