@@ -3,7 +3,13 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
+  IconButton,
   InputAdornment,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Stack,
   Table,
   TableBody,
@@ -14,10 +20,26 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import CloseRounded from "@mui/icons-material/CloseRounded";
+import DensityMediumRounded from "@mui/icons-material/DensityMediumRounded";
+import DensitySmallRounded from "@mui/icons-material/DensitySmallRounded";
 import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
+import ViewColumnRounded from "@mui/icons-material/ViewColumnRounded";
+import { usePreference } from "./preference";
+import {
+  DENSITY_STORAGE_KEY,
+  exportName,
+  highlightParts,
+  isNumericColumn,
+  parseHidden,
+  tableStorageKey,
+  toggleHidden,
+  type Density,
+} from "./tablePrefs";
 import { Empty } from "./States";
 import { buildCSV, cellText } from "./csvExport";
 import { clampPage } from "./tablePaging";
@@ -77,6 +99,29 @@ function downloadCSV(
   URL.revokeObjectURL(url);
 }
 
+// 검색어와 일치한 부분을 강조한다. 형식 함수를 거치지 않은 글자 칸에만 쓴다.
+function Highlighted({ text, query }: { text: string; query: string }) {
+  const parts = highlightParts(text, query);
+  if (parts.length === 1 && !parts[0].match) return <>{text}</>;
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.match ? (
+          <Box
+            key={index}
+            component="mark"
+            sx={{ bgcolor: "#FFF1B8", color: "inherit", borderRadius: 0.5, px: 0.2 }}
+          >
+            {part.text}
+          </Box>
+        ) : (
+          <span key={index}>{part.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 export default function DataTable({
   columns,
   rows,
@@ -94,6 +139,36 @@ export default function DataTable({
   const [pageSize, setPageSize] = useState(initialPageSize);
   const [sort, setSort] = useState<SortState | null>(null);
   const hasSearch = searchable ?? rows.length > 8;
+  const columnKeys = useMemo(() => columns.map((column) => column.key), [columns]);
+  // 숨긴 열은 표마다, 밀도는 모든 표가 함께 기억한다(components/tablePrefs.ts).
+  const [hiddenRaw, setHiddenRaw] = usePreference(
+    tableStorageKey(title, exportFilename, columnKeys),
+  );
+  const hidden = useMemo(() => parseHidden(hiddenRaw, columnKeys), [hiddenRaw, columnKeys]);
+  const visibleColumns = useMemo(
+    () => columns.filter((column) => !hidden.includes(column.key)),
+    [columns, hidden],
+  );
+  const [densityRaw, setDensity] = usePreference(DENSITY_STORAGE_KEY);
+  const density: Density =
+    densityRaw === "small" || densityRaw === "medium"
+      ? densityRaw
+      : dense
+        ? "small"
+        : "medium";
+  const [columnMenu, setColumnMenu] = useState<HTMLElement | null>(null);
+  const numericKeys = useMemo(
+    () =>
+      new Set(
+        columns
+          .filter((column) => isNumericColumn(rows.map((row) => row[column.key])))
+          .map((column) => column.key),
+      ),
+    [columns, rows],
+  );
+  const alignOf = (column: Column) =>
+    column.align ?? (numericKeys.has(column.key) ? "right" : undefined);
+  const csvName = exportName(exportFilename, title);
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("ko-KR");
     if (!needle) return rows;
@@ -143,8 +218,7 @@ export default function DataTable({
     safePage * pageSize,
     safePage * pageSize + pageSize,
   );
-  const showToolbar = !!title || hasSearch || !!exportFilename;
-  const minWidth = columns.reduce(
+  const minWidth = visibleColumns.reduce(
     (width, column) => width + (column.minWidth || 132),
     0,
   );
@@ -163,69 +237,144 @@ export default function DataTable({
 
   return (
     <Card sx={{ overflow: "hidden" }}>
-      {showToolbar && (
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          alignItems={{ xs: "stretch", sm: "center" }}
-          gap={1.5}
-          sx={{
-            px: 2,
-            py: 1.6,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            {title && <Typography fontWeight={720}>{title}</Typography>}
-            <Typography variant="caption" color="text.secondary">
-              {tableCaption({
-                description,
-                total: rows.length,
-                matched: filtered.length,
-                searching: !!query.trim(),
-              })}
-            </Typography>
-          </Box>
-          {hasSearch && (
-            <TextField
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={searchPlaceholder}
-              aria-label={searchPlaceholder}
-              sx={{ width: { xs: "100%", sm: 230 } }}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchRounded fontSize="small" />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-          )}
-          {exportFilename && (
-            <Button
-              variant="outlined"
-              startIcon={<DownloadRounded />}
-              onClick={() => downloadCSV(exportFilename, columns, sorted)}
-              disabled={!filtered.length}
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        alignItems={{ xs: "stretch", sm: "center" }}
+        gap={1.5}
+        sx={{
+          px: 2,
+          py: 1.6,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          {title && <Typography fontWeight={720}>{title}</Typography>}
+          <Typography variant="caption" color="text.secondary">
+            {tableCaption({
+              description,
+              total: rows.length,
+              matched: filtered.length,
+              searching: !!query.trim(),
+            })}
+          </Typography>
+        </Box>
+        {hasSearch && (
+          <TextField
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && query) {
+                event.stopPropagation();
+                setQuery("");
+              }
+            }}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            sx={{ width: { xs: "100%", sm: 230 } }}
+            slotProps={{
+              htmlInput: { "data-page-search": true },
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchRounded fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: query ? (
+                  <InputAdornment position="end">
+                    <IconButton
+                      size="small"
+                      aria-label="검색어 지우기"
+                      onClick={() => setQuery("")}
+                      edge="end"
+                    >
+                      <CloseRounded fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : undefined,
+              },
+            }}
+          />
+        )}
+        <Stack direction="row" gap={0.5} alignItems="center">
+          <Tooltip title={density === "small" ? "넓게 보기" : "촘촘하게 보기"}>
+            <IconButton
+              size="small"
+              aria-label={density === "small" ? "넓게 보기" : "촘촘하게 보기"}
+              onClick={() => setDensity(density === "small" ? "medium" : "small")}
             >
-              CSV
-            </Button>
+              {density === "small" ? (
+                <DensityMediumRounded fontSize="small" />
+              ) : (
+                <DensitySmallRounded fontSize="small" />
+              )}
+            </IconButton>
+          </Tooltip>
+          {columns.length > 1 && (
+            <Tooltip title="열 표시">
+              <IconButton
+                size="small"
+                aria-label="열 표시"
+                aria-haspopup="menu"
+                onClick={(event) => setColumnMenu(event.currentTarget)}
+                color={hidden.length ? "primary" : "default"}
+              >
+                <ViewColumnRounded fontSize="small" />
+              </IconButton>
+            </Tooltip>
           )}
+          <Button
+            variant="outlined"
+            startIcon={<DownloadRounded />}
+            onClick={() => downloadCSV(csvName, visibleColumns, sorted)}
+            disabled={!filtered.length}
+          >
+            CSV
+          </Button>
         </Stack>
-      )}
+        <Menu
+          anchorEl={columnMenu}
+          open={!!columnMenu}
+          onClose={() => setColumnMenu(null)}
+        >
+          {columns.map((column, index) => {
+            const shown = !hidden.includes(column.key);
+            const last = shown && visibleColumns.length <= 1;
+            return (
+              <MenuItem
+                key={`${column.key}-${index}`}
+                dense
+                disabled={last}
+                onClick={() =>
+                  setHiddenRaw(
+                    JSON.stringify(toggleHidden(hidden, column.key, columnKeys)),
+                  )
+                }
+              >
+                <ListItemIcon>
+                  <Checkbox size="small" edge="start" checked={shown} tabIndex={-1} disableRipple />
+                </ListItemIcon>
+                <ListItemText primary={column.label || column.key} />
+              </MenuItem>
+            );
+          })}
+          {hidden.length > 0 && (
+            <MenuItem dense onClick={() => setHiddenRaw(null)}>
+              <ListItemText inset primary="모든 열 보기" />
+            </MenuItem>
+          )}
+        </Menu>
+      </Stack>
       <TableContainer sx={{ maxHeight: 660 }}>
-        <Table stickyHeader size={dense ? "small" : "medium"} sx={{ minWidth }}>
+        <Table stickyHeader size={density} sx={{ minWidth }}>
           <TableHead>
             <TableRow>
-              {columns.map((column, index) => {
+              {visibleColumns.map((column, index) => {
                 const active = activeSort?.key === column.key;
                 return (
                   <TableCell
                     key={`${column.key}-${index}`}
-                    align={column.align}
+                    align={alignOf(column)}
                     sx={{ minWidth: column.minWidth }}
                     aria-sort={
                       active
@@ -255,8 +404,11 @@ export default function DataTable({
           <TableBody>
             {paged.map((row, index) => (
               <TableRow hover key={rowKey(row, index)}>
-                {columns.map((column, columnIndex) => (
-                  <TableCell key={`${column.key}-${columnIndex}`} align={column.align}>
+                {visibleColumns.map((column, columnIndex) => (
+                  <TableCell
+                    key={`${column.key}-${columnIndex}`}
+                    align={alignOf(column)}
+                  >
                     {column.format ? (
                       column.format(row[column.key], row)
                     ) : typeof row[column.key] === "number" ? (
@@ -265,7 +417,10 @@ export default function DataTable({
                       )
                     ) : (
                       <Typography variant="body2" noWrap>
-                        {String(row[column.key] ?? "—")}
+                        <Highlighted
+                          text={String(row[column.key] ?? "—")}
+                          query={query}
+                        />
                       </Typography>
                     )}
                   </TableCell>
