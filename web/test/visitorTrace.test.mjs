@@ -9,6 +9,7 @@ import {
   searchEmptyDescription,
   searchWindowLabel,
   sessionTitle,
+  traceCursor,
 } from "../src/pages/visitorTrace.ts";
 import { policyRange } from "../src/components/queryError.ts";
 
@@ -218,4 +219,18 @@ test("익명 방문자는 Visitor ID를 제목으로 쓴다", () => {
   );
   assert.match(markdown, /^# 방문자 추적 · 사내 포털 · Visitor visitor-desktop/);
   assert.match(markdown, /범위: 단일 Visitor/);
+});
+
+test("다음 페이지 커서는 시각과 row id 를 함께 싣는다", () => {
+  const paging = { limit: 200, has_more: true, next_before: "2026-09-30T01:02:03.456789Z", next_before_id: "9007199254740993" };
+  assert.equal(
+    traceCursor(paging),
+    "&before=2026-09-30T01%3A02%3A03.456789Z&before_id=9007199254740993",
+  );
+  // id 를 모르는 이전 서버의 응답은 예전처럼 시각만 보낸다.
+  assert.equal(traceCursor({ ...paging, next_before_id: undefined }), "&before=2026-09-30T01%3A02%3A03.456789Z");
+  assert.equal(traceCursor({ ...paging, next_before_id: "" }), "&before=2026-09-30T01%3A02%3A03.456789Z");
+  // 더 없으면 커서도 없다.
+  assert.equal(traceCursor({ ...paging, has_more: false }), "");
+  assert.equal(traceCursor({ ...paging, next_before: "" }), "");
 });

@@ -100,7 +100,15 @@ paths:
       - {name: visitorId, in: path, required: true, schema: {type: string}}
     get:
       summary: Visitor event timeline; disabled when visitor profiles are disabled
-      responses: {'200': {description: Visitor timeline}, '403': {$ref: '#/components/responses/Error'}}
+      # Pages backwards. Pass the previous page's paging.next_before as before and
+      # paging.next_before_id as before_id: the timestamp alone skips events that
+      # share the boundary time. before without before_id keeps its old meaning.
+      parameters:
+        - {name: scope, in: query, schema: {type: string, enum: [person, device]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: before, in: query, schema: {type: string, format: date-time}}
+        - {name: before_id, in: query, schema: {type: string, pattern: '^[0-9]+$'}}
+      responses: {'200': {description: Visitor timeline}, '400': {$ref: '#/components/responses/Error'}, '403': {$ref: '#/components/responses/Error'}}
   /api/v1/sites/{siteId}/retention:
     parameters: [{$ref: '#/components/parameters/SiteId'}]
     get:

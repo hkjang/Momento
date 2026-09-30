@@ -35,6 +35,7 @@ import {
   matchedByLabel,
   searchEmptyDescription,
   searchWindowLabel,
+  traceCursor,
   type TraceSession,
   type VisitorSearchResult,
   type VisitorTrace,
@@ -67,25 +68,27 @@ export default function UserExplorerPage() {
   const search = useQuery({
     queryKey: ["visitor-search", site?.site_id, environment, query],
     enabled: !!site && query.length >= 2,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ results: VisitorSearchResult[] }>(
         `/api/v1/sites/${site!.site_id}/visitor-search?q=${encodeURIComponent(query)}&${rangeQuery(policyRange(SEARCH_DAYS, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   const trace = useQuery({
     queryKey: ["visitor-trace", site?.site_id, environment, subject, scope, cursor],
     enabled: !!site && !!subject,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<VisitorTrace>(
-        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(subject)}/timeline?${rangeQuery(policyRange(365, site!.max_exact_days), site!.timezone)}&scope=${scope}&limit=200${cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`,
+        `/api/v1/sites/${site!.site_id}/visitors/${encodeURIComponent(subject)}/timeline?${rangeQuery(policyRange(365, site!.max_exact_days), site!.timezone)}&scope=${scope}&limit=200${cursor}`,
+        { signal },
       ),
   });
 
   useEffect(() => {
     if (!trace.data) return;
     setPages((previous) => {
-      const seen = new Set(previous.flatMap((page) => page.sessions.map((s) => s.session_id + page.paging.next_before)));
-      if (seen.size && previous.some((page) => page.paging.next_before === trace.data!.paging.next_before)) {
+      const seen = new Set(previous.flatMap((page) => page.sessions.map((s) => s.session_id + traceCursor(page.paging))));
+      if (seen.size && previous.some((page) => traceCursor(page.paging) === traceCursor(trace.data!.paging))) {
         return previous;
       }
       return [...previous, trace.data!];
@@ -449,7 +452,7 @@ export default function UserExplorerPage() {
                 variant="outlined"
                 startIcon={<ExpandMoreRounded />}
                 disabled={trace.isFetching}
-                onClick={() => setCursor(merged.paging.next_before)}
+                onClick={() => setCursor(traceCursor(merged.paging))}
               >
                 이전 기록 더 보기
               </Button>

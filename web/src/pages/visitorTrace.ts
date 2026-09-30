@@ -93,7 +93,14 @@ export interface VisitorTrace {
   other_sites: TraceOtherSite[];
   sessions: TraceSession[];
   window: { from: string; to: string; environment: string };
-  paging: { limit: number; has_more: boolean; next_before: string };
+  paging: {
+    limit: number;
+    has_more: boolean;
+    next_before: string;
+    // 같은 시각의 이벤트가 페이지 경계에 걸려도 빠지지 않게 하는 (시각, id) 커서의 id.
+    // 이 필드를 모르는 서버는 보내지 않는다.
+    next_before_id?: string;
+  };
 }
 
 export interface VisitorSearchResult {
@@ -265,4 +272,13 @@ export function buildTraceMarkdown(trace: VisitorTrace, siteName: string): strin
     lines.push("", "> 이전 기록이 더 있습니다. 콘솔에서 계속 불러오세요.");
   }
   return lines.join("\n");
+}
+
+// The query-string fragment that asks for the page after this one, or "" when
+// there is none. The timestamp alone skipped events sharing the boundary time,
+// so the row id travels with it whenever the server sent one.
+export function traceCursor(paging: VisitorTrace["paging"]): string {
+  if (!paging.has_more || !paging.next_before) return "";
+  const id = paging.next_before_id ? `&before_id=${encodeURIComponent(paging.next_before_id)}` : "";
+  return `&before=${encodeURIComponent(paging.next_before)}${id}`;
 }

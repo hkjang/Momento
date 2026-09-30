@@ -137,6 +137,8 @@ type traceEvent struct {
 	ContractVersion      int            `json:"contract_version"`
 	TrafficClass         string         `json:"traffic_class"`
 	context              map[string]any `json:"-"`
+	// rowID is raw_events.id, the tie-breaker of the timeline cursor.
+	rowID int64
 }
 
 type traceSession struct {
@@ -201,47 +203,81 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 	// The cursor walks backwards through history so a long trace can be followed
 	// page by page instead of silently stopping at the newest events.
+	//
+	// A timestamp alone is not a position. Events that share the boundary
+	// timestamp — a batch flushed in one beacon, a server import — were below the
+	// previous page's LIMIT and not strictly before its last timestamp, so they
+	// appeared on neither page. before_id is the row id of the last event returned,
+	// and (timestamp, id) resumes exactly where the page ended, in the same order
+	// the page was read. A cursor without it keeps the old meaning.
 	before := to
+	var beforeID int64
 	if raw := strings.TrimSpace(r.URL.Query().Get("before")); raw != "" {
 		parsed, parseErr := time.Parse(time.RFC3339, raw)
 		if parseErr != nil {
 			writeError(w, 400, "INVALID_CURSOR", "before must be an RFC3339 timestamp")
 			return
 		}
+		var cursorID int64
+		if rawID := strings.TrimSpace(r.URL.Query().Get("before_id")); rawID != "" {
+			cursorID, parseErr = strconv.ParseInt(rawID, 10, 64)
+			if parseErr != nil || cursorID <= 0 {
+				writeError(w, 400, "INVALID_CURSOR", "before_id must be a positive integer")
+				return
+			}
+		}
 		if parsed.Before(before) {
 			before = parsed
+			beforeID = cursorID
 		}
 	}
 	ctx, cancel := s.analyticalContext(r)
 	defer cancel()
-	events, hasMore, err := s.traceEvents(ctx, siteID, environment, subject.VisitorIDs, from, before, limit)
+	// The page, the lifetime summary, the identity links and the other sites are
+	// independent reads; run one after another the trace waited for their sum.
+	var (
+		events     []traceEvent
+		hasMore    bool
+		sessions   []traceSession
+		summary    map[string]any
+		links      []map[string]any
+		otherSites []map[string]any
+	)
+	err = insight.RunParallel(ctx, insight.QueryConcurrency,
+		func(stepCtx context.Context) error {
+			var stepErr error
+			events, hasMore, stepErr = s.traceEvents(stepCtx, siteID, environment, subject.VisitorIDs, from, before, beforeID, limit)
+			if stepErr != nil {
+				return stepErr
+			}
+			sessions, stepErr = s.groupTraceSessions(stepCtx, siteID, environment, events)
+			return stepErr
+		},
+		func(stepCtx context.Context) error {
+			var stepErr error
+			summary, stepErr = s.traceSummary(stepCtx, siteID, environment, subject.VisitorIDs)
+			return stepErr
+		},
+		func(stepCtx context.Context) error {
+			var stepErr error
+			links, stepErr = s.traceIdentityLinks(stepCtx, siteID, subject.UserID)
+			return stepErr
+		},
+		func(stepCtx context.Context) error {
+			var stepErr error
+			otherSites, stepErr = s.traceOtherSites(stepCtx, siteID, subject.UserID)
+			return stepErr
+		})
 	if err != nil {
 		writeQueryError(w, err)
 		return
 	}
-	sessions, err := s.groupTraceSessions(ctx, siteID, environment, events)
-	if err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	summary, err := s.traceSummary(ctx, siteID, environment, subject.VisitorIDs)
-	if err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	links, err := s.traceIdentityLinks(ctx, siteID, subject.UserID)
-	if err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	otherSites, err := s.traceOtherSites(ctx, siteID, subject.UserID)
-	if err != nil {
-		writeQueryError(w, err)
-		return
-	}
-	nextBefore := ""
+	nextBefore, nextBeforeID := "", ""
 	if hasMore && len(events) > 0 {
-		nextBefore = events[len(events)-1].Timestamp.UTC().Format(time.RFC3339Nano)
+		last := events[len(events)-1]
+		nextBefore = last.Timestamp.UTC().Format(time.RFC3339Nano)
+		// A string, because a bigserial can outgrow the integers JavaScript holds exactly.
+		nextBeforeID = strconv.FormatInt(last.rowID, 10)
 	}
 	p, _ := auth.FromContext(r.Context())
 	// Looking at one person's activity is an individual-level lookup, so it is audited.
@@ -258,7 +294,7 @@ func (s *Server) visitorTimeline(w http.ResponseWriter, r *http.Request) {
 		"other_sites":        otherSites,
 		"sessions":           sessions,
 		"window":             map[string]any{"from": from, "to": to, "environment": environment},
-		"paging":             map[string]any{"limit": limit, "has_more": hasMore, "next_before": nextBefore},
+		"paging":             map[string]any{"limit": limit, "has_more": hasMore, "next_before": nextBefore, "next_before_id": nextBeforeID},
 	})
 }
 
@@ -271,10 +307,10 @@ func nullableUser(value string) any {
 
 // traceEvents reads one page of events for every visitor ID of the subject. The
 // per-visitor index keeps this cheap even on a large event table.
-func (s *Server) traceEvents(ctx context.Context, siteID uuid.UUID, environment string, visitorIDs []string, from, before time.Time, limit int) ([]traceEvent, bool, error) {
-	rows, err := s.DB.Query(ctx, `SELECT event_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,properties,is_conversion,traffic_class,environment,contract_version,device_type,browser,os,source,medium,campaign,network_name
-		FROM raw_events WHERE site_id=$1 AND visitor_id = ANY($2) AND environment=$3 AND event_timestamp >= $4 AND event_timestamp < $5
-		ORDER BY event_timestamp DESC,id DESC LIMIT $6`, siteID, visitorIDs, environment, from, before, limit+1)
+func (s *Server) traceEvents(ctx context.Context, siteID uuid.UUID, environment string, visitorIDs []string, from, before time.Time, beforeID int64, limit int) ([]traceEvent, bool, error) {
+	rows, err := s.DB.Query(ctx, `SELECT id,event_id,event_name,event_timestamp,visitor_id,session_id,user_id,page_url,page_title,referrer,properties,is_conversion,traffic_class,environment,contract_version,device_type,browser,os,source,medium,campaign,network_name
+		FROM raw_events WHERE site_id=$1 AND visitor_id = ANY($2) AND environment=$3 AND event_timestamp >= $4 AND event_timestamp <= $5 AND (event_timestamp < $5 OR id < $7)
+		ORDER BY event_timestamp DESC,id DESC LIMIT $6`, siteID, visitorIDs, environment, from, before, limit+1, beforeID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -285,7 +321,7 @@ func (s *Server) traceEvents(ctx context.Context, siteID uuid.UUID, environment 
 		var eventID uuid.UUID
 		var properties []byte
 		var device, browser, os, source, medium, campaign, network *string
-		if rows.Scan(&eventID, &event.EventName, &event.Timestamp, &event.VisitorID, &event.SessionID, &event.UserID, &event.PageURL, &event.PageTitle, &event.Referrer,
+		if rows.Scan(&event.rowID, &eventID, &event.EventName, &event.Timestamp, &event.VisitorID, &event.SessionID, &event.UserID, &event.PageURL, &event.PageTitle, &event.Referrer,
 			&properties, &event.IsConversion, &event.TrafficClass, &event.Environment, &event.ContractVersion, &device, &browser, &os, &source, &medium, &campaign, &network) != nil {
 			continue
 		}
