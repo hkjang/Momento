@@ -27,7 +27,10 @@ export default function RealtimePage() {
   const q = useQuery({
     queryKey: ["realtime", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
-    queryFn: () => get<Realtime>(`/api/v1/sites/${site!.site_id}/realtime`),
+    queryFn: ({ signal }) => get<Realtime>(
+      `/api/v1/sites/${site!.site_id}/realtime`,
+      { signal },
+    ),
     enabled: !!site,
     refetchInterval: live ? 5000 : false,
   });

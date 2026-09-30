@@ -21,6 +21,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { get, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import AnalysisToolbar from "../components/AnalysisToolbar";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
@@ -76,7 +77,7 @@ const kpiType: Record<string, "percent" | "duration" | undefined> = {
 
 export default function VisitorInsightsPage() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   // Only offer to narrow the range when there is a shorter one to move to.
   const narrower = narrowerRange(days);
   const [toast, setToast] = useState("");
@@ -87,18 +88,20 @@ export default function VisitorInsightsPage() {
     queryKey: ["visitor-insights", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<VisitorInsightReport>(
         `/api/v1/sites/${site!.site_id}/visitor-insights?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const anomalies = useQuery({
     queryKey: ["anomalies", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<AnomalyReport>(
         `/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`,
+        { signal },
       ),
   });
   const attribution = useQuery({
@@ -113,9 +116,10 @@ export default function VisitorInsightsPage() {
     ],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ report: AttributionReport; models: AttributionModel[] }>(
         `/api/v1/sites/${site!.site_id}/attribution?${rangeQuery(days, site!.timezone)}&model=${model}&half_life_days=${halfLife}&scope=${scope}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;

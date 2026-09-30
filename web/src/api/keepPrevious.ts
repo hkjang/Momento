@@ -14,10 +14,10 @@
  * what this checks — position independently, because the keys do not agree on an
  * order.
  */
-export function keepWithinScope<TData>(
+export function keepWithinScope(
   ...scope: (string | number | undefined)[]
 ) {
-  return (
+  return <TData>(
     previous: TData | undefined,
     previousQuery?: { queryKey: readonly unknown[] },
   ) => {

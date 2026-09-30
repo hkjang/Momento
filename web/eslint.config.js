@@ -29,6 +29,7 @@ export default tseslint.config(
             "emptyRule",
             "emptySegment",
             "useAuth",
+            "useConfirm",
             "useSite",
           ],
         },

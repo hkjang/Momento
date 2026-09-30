@@ -47,6 +47,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { useConfirm } from "../components/ConfirmDialog";
 import { policyRange } from "../components/queryError";
 import { ErrorState, Loading, NoSite } from "../components/States";
 
@@ -67,31 +68,37 @@ function Governance() {
   const envs = useQuery({
     queryKey: ["platform-environments", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
-      get<SiteEnvironment[]>(`/api/v1/sites/${site!.site_id}/environments`),
+    queryFn: ({ signal }) =>
+      get<SiteEnvironment[]>(
+        `/api/v1/sites/${site!.site_id}/environments`,
+        { signal },
+      ),
   });
   const contracts = useQuery({
     queryKey: ["event-contracts", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/event-contracts`,
+        { signal },
       ),
   });
   const metrics = useQuery({
     queryKey: ["semantic-metrics", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/semantic-metrics`,
+        { signal },
       ),
   });
   const targets = useQuery({
     queryKey: ["adoption-targets", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/adoption-targets`,
+        { signal },
       ),
   });
   const [eventName, setEventName] = useState("");
@@ -178,7 +185,7 @@ function Governance() {
       environment,
     ],
     enabled: !!site && !!metricName2,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         label: string;
         value: number;
@@ -187,6 +194,7 @@ function Governance() {
         definition_version: number;
       }>(
         `/api/v1/sites/${site!.site_id}/semantic-metrics/${encodeURIComponent(metricName2)}/query?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
@@ -609,24 +617,32 @@ type Channel = {
 };
 
 function Automation() {
+  const confirm = useConfirm();
   const { site, environment } = useSite();
   const qc = useQueryClient();
   const settings = useQuery({
     queryKey: ["settings"],
-    queryFn: () => get<SettingsResponse>("/api/v1/settings"),
+    queryFn: ({ signal }) => get<SettingsResponse>(
+      "/api/v1/settings",
+      { signal },
+    ),
   });
   const channels = useQuery({
     queryKey: ["delivery-channels", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
-      get<Channel[]>(`/api/v1/sites/${site!.site_id}/delivery-channels`),
+    queryFn: ({ signal }) =>
+      get<Channel[]>(
+        `/api/v1/sites/${site!.site_id}/delivery-channels`,
+        { signal },
+      ),
   });
   const schedules = useQuery({
     queryKey: ["scheduled-reports", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/scheduled-reports`,
+        { signal },
       ),
   });
   // The saved Segments, so a delivery can name one instead of restating its
@@ -634,9 +650,10 @@ function Automation() {
   const segments = useQuery({
     queryKey: ["segments", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
       ),
   });
   const [config, setConfig] = useState<Record<string, unknown> | null>(null);
@@ -714,9 +731,10 @@ function Automation() {
     queryKey: ["delivery-runs", site?.site_id],
     enabled: !!site,
     refetchInterval: 30000,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/delivery-runs`,
+        { signal },
       ),
   });
   const channelDelete = useMutation({
@@ -971,12 +989,21 @@ function Automation() {
                 key: "id",
                 label: "",
                 align: "right",
-                format: (v) => (
+                format: (v, row) => (
                   <Button
                     size="small"
                     color="error"
                     disabled={channelDelete.isPending}
-                    onClick={() => channelDelete.mutate(String(v))}
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Channel을 삭제할까요?",
+                          description: `${String(row.name)}로 배달하던 Schedule은 더 이상 전달되지 않습니다.`,
+                          confirmLabel: "삭제",
+                        })
+                      )
+                        channelDelete.mutate(String(v));
+                    }}
                   >
                     삭제
                   </Button>
@@ -1226,7 +1253,7 @@ function Automation() {
                 key: "id",
                 label: "",
                 align: "right",
-                format: (v) => (
+                format: (v, row) => (
                   <Stack
                     direction="row"
                     justifyContent="flex-end"
@@ -1243,7 +1270,16 @@ function Automation() {
                       size="small"
                       color="error"
                       disabled={scheduleDelete.isPending}
-                      onClick={() => scheduleDelete.mutate(String(v))}
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: "Schedule을 삭제할까요?",
+                            description: `${String(row.name)}의 정기 배달이 중단되며 되돌릴 수 없습니다.`,
+                            confirmLabel: "삭제",
+                          })
+                        )
+                          scheduleDelete.mutate(String(v));
+                      }}
                     >
                       삭제
                     </Button>

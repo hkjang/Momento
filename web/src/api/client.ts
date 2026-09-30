@@ -100,9 +100,17 @@ export async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export const get = <T>(url: string) => api<T>(url);
-export const post = <T>(url: string, body?: unknown) =>
+// signal 을 넘기면 화면을 떠나거나 조건이 바뀌어 React Query 가 조회를 버릴 때 요청도
+// 끊긴다 — 서버의 context 가 취소되어 무거운 분석 쿼리가 DB 에서 헛돌지 않는다.
+export const get = <T>(url: string, init?: { signal?: AbortSignal }) =>
+  api<T>(url, init);
+export const post = <T>(
+  url: string,
+  body?: unknown,
+  init?: { signal?: AbortSignal },
+) =>
   api<T>(url, {
+    ...init,
     method: "POST",
     body: body === undefined ? undefined : JSON.stringify(body),
   });

@@ -115,17 +115,19 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
   const [includeSystemEvents, setIncludeSystemEvents] = useState(false);
   const segments = useQuery({
     queryKey: ["segments", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ id: string; name: string }[]>(
         `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
       ),
     enabled: !!site && mode === "funnel",
   });
   const customDimensions = useQuery({
     queryKey: ["dimensions", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ query_name: string; active: boolean; scope: string }[]>(
         `/api/v1/dimensions?site_id=${site!.site_id}`,
+        { signal },
       ),
     enabled: !!site && mode === "funnel",
   });
@@ -164,9 +166,10 @@ export default function FunnelPage({ mode }: { mode: "funnel" | "path" }) {
       pathView,
       includeSystemEvents,
     ],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<PathTransition[]>(
         `/api/v1/sites/${site!.site_id}/path?${rangeQuery(pathDays, site!.timezone)}&view=${pathView}&include_system=${includeSystemEvents}`,
+        { signal },
       ),
     enabled: !!site && mode === "path",
   });

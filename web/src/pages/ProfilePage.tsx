@@ -26,6 +26,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { del, get, patch, post } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import DataTable from "../components/DataTable";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Loading } from "../components/States";
 import { PASSWORD_RULE } from "./passwordRule";
 interface APIKey {
@@ -142,10 +143,11 @@ function ProfileForm() {
   );
 }
 function Keys() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["my-keys"],
-    queryFn: () => get<APIKey[]>("/api/v1/me/keys"),
+    queryFn: ({ signal }) => get<APIKey[]>("/api/v1/me/keys", { signal }),
   });
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -270,7 +272,16 @@ function Keys() {
                   size="small"
                   color="primary"
                   title="키 회전"
-                  onClick={() => rotate.mutate(String(v))}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "API 키를 회전할까요?",
+                        description: `${String(row.name || row.prefix)} 키는 즉시 폐기되고 같은 이름·권한의 새 키가 발급됩니다. 이 키를 쓰는 스크립트는 새 키로 바꿔야 합니다.`,
+                        confirmLabel: "회전",
+                      })
+                    )
+                      rotate.mutate(String(v));
+                  }}
                 >
                   <AutorenewRounded />
                 </IconButton>
@@ -278,7 +289,16 @@ function Keys() {
                   size="small"
                   color="error"
                   title="폐기"
-                  onClick={() => remove.mutate(String(v))}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "API 키를 폐기할까요?",
+                        description: `${String(row.name || row.prefix)} 키로 들어오는 요청은 즉시 거절됩니다. 되돌릴 수 없습니다.`,
+                        confirmLabel: "폐기",
+                      })
+                    )
+                      remove.mutate(String(v));
+                  }}
                 >
                   <DeleteOutlineRounded />
                 </IconButton>

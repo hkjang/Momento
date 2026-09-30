@@ -12,6 +12,7 @@ import {
   TableHead,
   TablePagination,
   TableRow,
+  TableSortLabel,
   TextField,
   Typography,
 } from "@mui/material";
@@ -20,6 +21,12 @@ import SearchRounded from "@mui/icons-material/SearchRounded";
 import { Empty } from "./States";
 import { buildCSV, cellText } from "./csvExport";
 import { clampPage } from "./tablePaging";
+import {
+  firstDirection,
+  nextSort,
+  sortRows,
+  type SortState,
+} from "./tableSort";
 import { tableCaption } from "./tableSummary";
 
 export interface Column {
@@ -28,6 +35,16 @@ export interface Column {
   align?: "left" | "right" | "center";
   minWidth?: number;
   format?: (value: unknown, row: Record<string, unknown>) => ReactNode;
+  // 정렬 여부. 생략하면 제목이 있고 값이 하나라도 있는 열만 정렬할 수 있다 — 버튼만
+  // 그리는 열은 제목이 비어 있거나 행에 그 키가 없으므로 저절로 빠진다. 제목을 단
+  // 버튼 열(예: key "id" 의 「관리」)은 false 로 끈다.
+  sortable?: boolean;
+  // 화면 값과 정렬 기준이 다를 때(예: 가공한 문자열, 중첩 필드) 정렬에 쓸 값.
+  sortValue?: (row: Record<string, unknown>) => unknown;
+}
+
+function columnValue(column: Column, row: Record<string, unknown>): unknown {
+  return column.sortValue ? column.sortValue(row) : row[column.key];
 }
 
 interface DataTableProps {
@@ -75,6 +92,7 @@ export default function DataTable({
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(initialPageSize);
+  const [sort, setSort] = useState<SortState | null>(null);
   const hasSearch = searchable ?? rows.length > 8;
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase("ko-KR");
@@ -85,11 +103,43 @@ export default function DataTable({
       ),
     );
   }, [columns, query, rows]);
+  const sortableKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const column of columns) {
+      const allowed =
+        column.sortable ??
+        (!!column.label.trim() &&
+          (!!column.sortValue ||
+            rows.some((row) => {
+              const value = row[column.key];
+              return value != null && value !== "";
+            })));
+      if (allowed) keys.add(column.key);
+    }
+    return keys;
+  }, [columns, rows]);
+  // 정렬한 열이 다음 조회에서 사라지면(열 구성이 바뀐 경우) 서버 순서로 돌아간다.
+  const activeSort = sort && sortableKeys.has(sort.key) ? sort : null;
+  const sorted = useMemo(() => {
+    if (!activeSort) return filtered;
+    const column = columns.find((item) => item.key === activeSort.key);
+    if (!column) return filtered;
+    return sortRows(
+      filtered,
+      (row) => columnValue(column, row),
+      activeSort.direction,
+    );
+  }, [activeSort, columns, filtered]);
+  const toggleSort = (column: Column) => {
+    const first = firstDirection(rows.map((row) => columnValue(column, row)));
+    setSort((current) => nextSort(current, column.key, first));
+    setPage(0);
+  };
   useEffect(() => setPage(0), [query, rows.length]);
   // 페이지를 0으로 돌리는 위 effect 는 렌더 뒤에 돌고, 행 수가 그대로인 채 내용만
   // 바뀐 재조회에서는 돌지 않는다. 자르기 전에 범위 안으로 끌어와 빈 표를 막는다.
   const safePage = clampPage(page, pageSize, filtered.length);
-  const paged = filtered.slice(
+  const paged = sorted.slice(
     safePage * pageSize,
     safePage * pageSize + pageSize,
   );
@@ -158,7 +208,7 @@ export default function DataTable({
             <Button
               variant="outlined"
               startIcon={<DownloadRounded />}
-              onClick={() => downloadCSV(exportFilename, columns, filtered)}
+              onClick={() => downloadCSV(exportFilename, columns, sorted)}
               disabled={!filtered.length}
             >
               CSV
@@ -170,15 +220,36 @@ export default function DataTable({
         <Table stickyHeader size={dense ? "small" : "medium"} sx={{ minWidth }}>
           <TableHead>
             <TableRow>
-              {columns.map((column, index) => (
-                <TableCell
-                  key={`${column.key}-${index}`}
-                  align={column.align}
-                  sx={{ minWidth: column.minWidth }}
-                >
-                  {column.label}
-                </TableCell>
-              ))}
+              {columns.map((column, index) => {
+                const active = activeSort?.key === column.key;
+                return (
+                  <TableCell
+                    key={`${column.key}-${index}`}
+                    align={column.align}
+                    sx={{ minWidth: column.minWidth }}
+                    aria-sort={
+                      active
+                        ? activeSort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : undefined
+                    }
+                  >
+                    {sortableKeys.has(column.key) ? (
+                      <TableSortLabel
+                        active={active}
+                        direction={active ? activeSort.direction : "asc"}
+                        onClick={() => toggleSort(column)}
+                        title="눌러서 정렬 · 세 번째로 누르면 원래 순서"
+                      >
+                        {column.label}
+                      </TableSortLabel>
+                    ) : (
+                      column.label
+                    )}
+                  </TableCell>
+                );
+              })}
             </TableRow>
           </TableHead>
           <TableBody>

@@ -64,6 +64,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useSite } from "../contexts/SiteContext";
 import DataTable from "../components/DataTable";
+import { useConfirm } from "../components/ConfirmDialog";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import {
@@ -430,50 +431,64 @@ function AdminOverview() {
   const { sites, site, environment } = useSite();
   const settings = useQuery({
     queryKey: ["settings"],
-    queryFn: () => get<Settings>("/api/v1/settings"),
+    queryFn: ({ signal }) => get<Settings>("/api/v1/settings", { signal }),
   });
   const users = useQuery({
     queryKey: ["users"],
-    queryFn: () => get<AdminUserSummary[]>("/api/v1/users"),
+    queryFn: ({ signal }) => get<AdminUserSummary[]>(
+      "/api/v1/users",
+      { signal },
+    ),
   });
   const debuggerQuery = useQuery({
     queryKey: ["tracking-debugger", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<TrackingSummary>(
         `/api/v1/tracking-debugger?site_id=${site?.site_id || ""}`,
+        { signal },
       ),
     enabled: !!site,
     refetchInterval: 30000,
   });
   const quality = useQuery({
     queryKey: ["data-quality", site?.site_id, environment],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<DataQualitySummary>(
         `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
     enabled: !!site,
     refetchInterval: 30000,
   });
   const privacyRequests = useQuery({
     queryKey: ["privacy-requests", site?.site_id],
-    queryFn: () =>
-      get<WorkflowSummary[]>(`/api/v1/sites/${site!.site_id}/privacy-requests`),
+    queryFn: ({ signal }) =>
+      get<WorkflowSummary[]>(
+        `/api/v1/sites/${site!.site_id}/privacy-requests`,
+        { signal },
+      ),
     enabled: !!site,
   });
   const aggregateJobs = useQuery({
     queryKey: ["aggregate-jobs", site?.site_id],
-    queryFn: () =>
-      get<WorkflowSummary[]>(`/api/v1/sites/${site!.site_id}/aggregate-jobs`),
+    queryFn: ({ signal }) =>
+      get<WorkflowSummary[]>(
+        `/api/v1/sites/${site!.site_id}/aggregate-jobs`,
+        { signal },
+      ),
     enabled: !!site,
     refetchInterval: 30000,
   });
   const audit = useQuery({
     queryKey: ["audit"],
-    queryFn: () => get<AuditSummary[]>("/api/v1/audit"),
+    queryFn: ({ signal }) => get<AuditSummary[]>("/api/v1/audit", { signal }),
   });
   const encryption = useQuery({
     queryKey: ["encryption-status"],
-    queryFn: () => get<EncryptionStatus>("/api/v1/system/encryption"),
+    queryFn: ({ signal }) => get<EncryptionStatus>(
+      "/api/v1/system/encryption",
+      { signal },
+    ),
   });
   const privacy = settings.data?.privacy?.value || {};
   const oidc = settings.data?.oidc?.value || {};
@@ -1185,9 +1200,10 @@ function SiteSDKGuideDialog({
   const [proxyPath, setProxyPath] = useState("/momento");
   const tracking = useQuery({
     queryKey: ["tracking-code", guide.id, environment],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<TrackingCode>(
         `/api/v1/sites/${guide.id}/tracking-code?environment=${environment}`,
+        { signal },
       ),
     enabled: !guide.endpoint,
   });
@@ -1205,9 +1221,10 @@ function SiteSDKGuideDialog({
   const csp = buildCSPGuidance(endpoint || location.origin, proxyPath);
   const diagnostics = useQuery({
     queryKey: ["install-diagnostics", guide.siteId, environment],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<InstallDiagnostics>(
         `/api/v1/sites/${guide.siteId}/install-diagnostics?environment=${environment}`,
+        { signal },
       ),
     enabled: tab === 2,
   });
@@ -1617,11 +1634,12 @@ function SecretDialog({
 }
 
 function SitesAdmin() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const { refresh } = useSite();
   const q = useQuery({
     queryKey: ["admin-sites"],
-    queryFn: () => get<Site[]>("/api/v1/sites"),
+    queryFn: ({ signal }) => get<Site[]>("/api/v1/sites", { signal }),
   });
   const [open, setOpen] = useState(false);
   const [secret, setSecret] = useState<{
@@ -1815,13 +1833,31 @@ function SitesAdmin() {
                   >
                     키 보기
                   </Button>
-                  <Button size="small" onClick={() => rotate.mutate(site.id)}>
+                  <Button size="small" onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Tracking 키를 회전할까요?",
+                          description: `${site.name}의 현재 Tracking 키는 즉시 무효가 됩니다. 이 키를 쓰는 연동은 새 키로 바꿔야 합니다.`,
+                          confirmLabel: "회전",
+                        })
+                      )
+                        rotate.mutate(site.id);
+                    }}>
                     Tracking 키 회전
                   </Button>
                   <Button
                     size="small"
                     startIcon={<KeyRounded />}
-                    onClick={() => rotateServer.mutate(site.id)}
+                    onClick={async () => {
+                      if (
+                        await confirm({
+                          title: "Server 키를 회전할까요?",
+                          description: `${site.name}의 현재 Server 키는 즉시 무효가 됩니다. 서버에서 이벤트를 보내는 연동은 새 키로 바꿔야 합니다.`,
+                          confirmLabel: "회전",
+                        })
+                      )
+                        rotateServer.mutate(site.id);
+                    }}
                   >
                     Server 키 회전
                   </Button>
@@ -2098,7 +2134,7 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["settings"],
-    queryFn: () => get<Settings>("/api/v1/settings"),
+    queryFn: ({ signal }) => get<Settings>("/api/v1/settings", { signal }),
   });
   const [edits, setEdits] = useState<Record<string, Record<string, unknown>>>(
     {},
@@ -2363,10 +2399,14 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
  * administrator finish an encryption key rotation without a redeploy.
  */
 function EncryptionSection() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const status = useQuery({
     queryKey: ["encryption-status"],
-    queryFn: () => get<EncryptionStatus>("/api/v1/system/encryption"),
+    queryFn: ({ signal }) => get<EncryptionStatus>(
+      "/api/v1/system/encryption",
+      { signal },
+    ),
   });
   const rekey = useMutation({
     mutationFn: () =>
@@ -2407,7 +2447,18 @@ function EncryptionSection() {
                 variant="outlined"
                 startIcon={<KeyRounded />}
                 disabled={rekey.isPending || status.data.pending_reseal === 0}
-                onClick={() => rekey.mutate()}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: "이전 키로 저장된 비밀값을 재암호화할까요?",
+                      description:
+                        "MOMENTO_ENCRYPTION_KEY_PREVIOUS 에 이전 키가 남아 있어야 합니다. 완료 후 변수를 제거하십시오.",
+                      confirmLabel: "재암호화",
+                      destructive: false,
+                    })
+                  )
+                    rekey.mutate();
+                }}
               >
                 이전 키로 저장된 {status.data.pending_reseal}건 재암호화
               </Button>
@@ -2454,7 +2505,7 @@ function PrivacyAdmin() {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["settings"],
-    queryFn: () => get<Settings>("/api/v1/settings"),
+    queryFn: ({ signal }) => get<Settings>("/api/v1/settings", { signal }),
   });
   const [local, setLocal] = useState<Record<string, unknown> | null>(null);
   const save = useMutation({
@@ -2758,12 +2809,12 @@ function RetentionAdmin() {
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ["retention", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         policy: RetentionPolicy;
         updated_at?: string;
         last_run?: RetentionRun | null;
-      }>(`/api/v1/sites/${site!.site_id}/retention`),
+      }>(`/api/v1/sites/${site!.site_id}/retention`, { signal }),
     enabled: !!site,
   });
   const [local, setLocal] = useState<RetentionPolicy | null>(null);
@@ -2886,12 +2937,16 @@ interface CustomDimension {
 }
 
 function DimensionsAdmin() {
+  const confirm = useConfirm();
   const { site } = useSite();
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ["dimensions", site?.site_id],
-    queryFn: () =>
-      get<CustomDimension[]>(`/api/v1/dimensions?site_id=${site!.site_id}`),
+    queryFn: ({ signal }) =>
+      get<CustomDimension[]>(
+        `/api/v1/dimensions?site_id=${site!.site_id}`,
+        { signal },
+      ),
     enabled: !!site,
   });
   const [form, setForm] = useState({
@@ -3036,6 +3091,7 @@ function DimensionsAdmin() {
           {
             key: "id",
             label: "관리",
+            sortable: false,
             format: (value, row) => (
               <Stack direction="row" gap={0.5}>
                 <Button
@@ -3056,7 +3112,16 @@ function DimensionsAdmin() {
                 <IconButton
                   size="small"
                   color="error"
-                  onClick={() => remove.mutate(String(value))}
+                  onClick={async () => {
+                    if (
+                      await confirm({
+                        title: "Custom Dimension을 삭제할까요?",
+                        description: `${String(row.property_key)} 정의가 삭제됩니다. 수집된 이벤트 값은 그대로 남습니다.`,
+                        confirmLabel: "삭제",
+                      })
+                    )
+                      remove.mutate(String(value));
+                  }}
                 >
                   <DeleteOutlineRounded fontSize="small" />
                 </IconButton>
@@ -3079,10 +3144,11 @@ interface Network {
   created_at: string;
 }
 function NetworksAdmin() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["networks"],
-    queryFn: () => get<Network[]>("/api/v1/networks"),
+    queryFn: ({ signal }) => get<Network[]>("/api/v1/networks", { signal }),
   });
   const [form, setForm] = useState({ name: "", cidr: "", description: "" });
   const create = useMutation({
@@ -3168,11 +3234,21 @@ function NetworksAdmin() {
             key: "id",
             label: "",
             align: "right",
-            format: (v) => (
+            format: (v, row) => (
               <IconButton
                 size="small"
                 color="error"
-                onClick={() => remove.mutate(String(v))}
+                aria-label="망 구분 삭제"
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: "망 구분을 삭제할까요?",
+                      description: `${String(row.name)} (${String(row.cidr)}) 이 삭제되면 이후 이 대역의 이벤트에는 망 이름이 붙지 않습니다.`,
+                      confirmLabel: "삭제",
+                    })
+                  )
+                    remove.mutate(String(v));
+                }}
               >
                 <DeleteOutlineRounded />
               </IconButton>
@@ -3200,7 +3276,7 @@ function UsersAdmin() {
   const { user } = useAuth();
   const q = useQuery({
     queryKey: ["users"],
-    queryFn: () => get<AdminUser[]>("/api/v1/users"),
+    queryFn: ({ signal }) => get<AdminUser[]>("/api/v1/users", { signal }),
   });
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<AdminUser | null>(null);
@@ -3513,8 +3589,11 @@ function SchemasAdmin() {
   const { site } = useSite();
   const q = useQuery({
     queryKey: ["schemas", site?.site_id],
-    queryFn: () =>
-      get<Schema[]>(`/api/v1/event-definitions?site_id=${site?.site_id || ""}`),
+    queryFn: ({ signal }) =>
+      get<Schema[]>(
+        `/api/v1/event-definitions?site_id=${site?.site_id || ""}`,
+        { signal },
+      ),
   });
   const [form, setForm] = useState({
     name: "",
@@ -3628,11 +3707,14 @@ function DebuggerAdmin() {
   const { site } = useSite();
   const q = useQuery({
     queryKey: ["tracking-debugger", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         events: Record<string, unknown>[];
         errors: Record<string, unknown>[];
-      }>(`/api/v1/tracking-debugger?site_id=${site?.site_id || ""}`),
+      }>(
+        `/api/v1/tracking-debugger?site_id=${site?.site_id || ""}`,
+        { signal },
+      ),
     refetchInterval: 5000,
   });
   if (q.isLoading) return <Loading />;
@@ -3685,7 +3767,10 @@ function DebuggerAdmin() {
 function AuditAdmin() {
   const q = useQuery({
     queryKey: ["audit"],
-    queryFn: () => get<Record<string, unknown>[]>("/api/v1/audit"),
+    queryFn: ({ signal }) => get<Record<string, unknown>[]>(
+      "/api/v1/audit",
+      { signal },
+    ),
   });
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} />;

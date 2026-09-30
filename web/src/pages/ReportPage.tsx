@@ -1,10 +1,11 @@
-import { useState } from "react";
 import { Button, Card, Chip, Stack, Typography } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import ReactECharts from "../components/Chart";
 import { useQuery } from "@tanstack/react-query";
 import { dateRangeValues, get, post, rangeQuery } from "../api/client";
+import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import DataTable, { type Column } from "../components/DataTable";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import AnalysisToolbar from "../components/AnalysisToolbar";
@@ -130,7 +131,7 @@ const columns: Record<Exclude<Kind, "acquisition">, Column[]> = {
 };
 export default function ReportPage({ kind }: { kind: Kind }) {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: [
       "report",
@@ -140,7 +141,10 @@ export default function ReportPage({ kind }: { kind: Kind }) {
       environment,
       days,
     ],
-    queryFn: async () => {
+    // 기간을 바꿔도 새 답이 올 때까지 이전 표를 남겨 두고, 다른 리포트(kind)나
+    // 사이트로 넘어가면 비운다 — 페이지 행이 이벤트 열 아래에 그려지면 안 된다.
+    placeholderData: keepWithinScope(site?.site_id, environment, kind),
+    queryFn: async ({ signal }) => {
       if (kind === "acquisition")
         return (
           await post<{ rows: Record<string, unknown>[] }>("/api/v1/query", {
@@ -155,10 +159,13 @@ export default function ReportPage({ kind }: { kind: Kind }) {
             metrics: ["users", "sessions", "page_views", "conversions"],
             filters: [],
             limit: 200,
-          })
+          },
+            { signal },
+          )
         ).rows;
       return get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/${kind}?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       );
     },
     enabled: !!site,

@@ -17,6 +17,7 @@ import { Link as RouterLink } from "react-router-dom";
 import { get, post, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -60,17 +61,18 @@ export default function EnterpriseAnalyticsPage({
 
 function WorkspaceRollup() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: ["workspace-rollup", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         summary: Record<string, number>;
         services: Record<string, unknown>[];
       }>(
         `/api/v1/sites/${site!.site_id}/workspace-rollup?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days);
@@ -207,9 +209,10 @@ function WorkspaceJourneys() {
     queryKey: ["workspace-journeys", site?.site_id],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<WorkspaceJourney[]>(
         `/api/v1/sites/${site!.site_id}/workspace-journeys`,
+        { signal },
       ),
   });
   const save = useMutation({
@@ -352,14 +355,15 @@ function WorkspaceJourneys() {
 
 function FeatureIntelligence() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(60);
+  const [days, setDays] = usePeriodParam(60, [30, 60, 90]);
   const q = useQuery({
     queryKey: ["feature-intelligence", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ population: number; features: Record<string, unknown>[] }>(
         `/api/v1/sites/${site!.site_id}/feature-intelligence?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days, [30, 60, 90]);
@@ -458,18 +462,19 @@ const percentCell = (value: unknown) => `${Number(value).toFixed(1)}%`;
 
 function SearchAnalytics() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: ["search-analytics", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         summary: Record<string, number>;
         queries: Record<string, unknown>[];
         audiences: InsightAudience[];
       }>(
         `/api/v1/sites/${site!.site_id}/search-analytics?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days);
@@ -557,12 +562,12 @@ function SearchAnalytics() {
 
 function Frustration() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: ["frustration", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         summary: Record<string, number>;
         signals: Record<string, unknown>[];
@@ -571,6 +576,7 @@ function Frustration() {
         impact_caveat: string;
       }>(
         `/api/v1/sites/${site!.site_id}/frustration?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days);
@@ -768,17 +774,19 @@ function Experiments() {
     queryKey: ["experiments", site?.site_id],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/experiments`,
+        { signal },
       ),
   });
   const analysis = useQuery({
     queryKey: ["experiment-analysis", selected, environment],
     enabled: !!site && !!selected,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ method: string; variants: Record<string, unknown>[] }>(
         `/api/v1/sites/${site!.site_id}/experiments/${selected}/analysis?${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
@@ -858,9 +866,10 @@ function Goals() {
     queryKey: ["metric-goal-evaluation", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/metric-goals/evaluate`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
@@ -959,9 +968,10 @@ function ChangeCalendar() {
     queryKey: ["annotations", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/annotations?${rangeQuery(policyRange(90, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;

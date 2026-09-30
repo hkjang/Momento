@@ -22,6 +22,7 @@ import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import { metricMeaning } from "./signalGuide";
 import DataTable from "../components/DataTable";
+import { useConfirm } from "../components/ConfirmDialog";
 import { NoSite } from "../components/States";
 const baseDimensions = [
   "event.name",
@@ -110,6 +111,7 @@ function RawEventExport() {
 }
 
 export default function ExplorerPage() {
+  const confirm = useConfirm();
   const { site, environment } = useSite();
   const qc = useQueryClient();
   const [dims, setDims] = useState<string[]>(["event.name"]);
@@ -120,23 +122,25 @@ export default function ExplorerPage() {
   const [reportName, setReportName] = useState("");
   const segments = useQuery({
     queryKey: ["segments", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ id: string; name: string }[]>(
         `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
       ),
     enabled: !!site,
   });
   const customDimensions = useQuery({
     queryKey: ["dimensions", site?.site_id],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ query_name: string; active: boolean; scope: string }[]>(
         `/api/v1/dimensions?site_id=${site!.site_id}`,
+        { signal },
       ),
     enabled: !!site,
   });
   const reports = useQuery({
     queryKey: ["saved-reports", site?.site_id, "exploration"],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<
         {
           id: string;
@@ -147,7 +151,10 @@ export default function ExplorerPage() {
             segment_id?: string;
           };
         }[]
-      >(`/api/v1/reports?site_id=${site!.site_id}&kind=exploration`),
+      >(
+        `/api/v1/reports?site_id=${site!.site_id}&kind=exploration`,
+        { signal },
+      ),
     enabled: !!site,
   });
   const mutation = useMutation({
@@ -263,7 +270,16 @@ export default function ExplorerPage() {
             color="error"
             startIcon={<DeleteOutlineRounded />}
             disabled={!reportId || deleteReport.isPending}
-            onClick={() => deleteReport.mutate()}
+            onClick={async () => {
+              if (
+                await confirm({
+                  title: "저장된 Exploration을 삭제할까요?",
+                  description: `${reportName || "이 Exploration"}을 삭제하면 되돌릴 수 없습니다.`,
+                  confirmLabel: "삭제",
+                })
+              )
+                deleteReport.mutate();
+            }}
           >
             삭제
           </Button>

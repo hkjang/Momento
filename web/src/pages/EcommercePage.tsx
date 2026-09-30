@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Alert, Box, Card, Chip, Stack, Typography } from "@mui/material";
 import PaymentsOutlined from "@mui/icons-material/PaymentsOutlined";
 import ReceiptLongOutlined from "@mui/icons-material/ReceiptLongOutlined";
@@ -12,6 +11,7 @@ import { get, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { ecommerceSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import RangeSelect from "../components/RangeSelect";
 import { narrowerRange } from "../components/queryError";
@@ -41,13 +41,14 @@ const labels: Record<string, string> = {
 
 export default function EcommercePage() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const query = useQuery({
     queryKey: ["ecommerce", site?.site_id, site?.timezone, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<EcommerceData>(
         `/api/v1/sites/${site!.site_id}/ecommerce?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
     enabled: !!site,
   });

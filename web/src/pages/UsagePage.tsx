@@ -32,9 +32,10 @@ export default function UsagePage() {
   const q = useQuery({
     queryKey: ["usage", site?.site_id, site?.timezone, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Usage>(
         `/api/v1/sites/${site!.site_id}/usage?${rangeQuery(policyRange(30, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
     enabled: !!site,
   });

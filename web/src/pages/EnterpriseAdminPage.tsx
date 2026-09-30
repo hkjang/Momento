@@ -65,58 +65,66 @@ function AnalyticsEngineering() {
   const metrics = useQuery({
     queryKey: ["semantic-metrics", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/semantic-metrics`,
+        { signal },
       ),
   });
   const goals = useQuery({
     queryKey: ["metric-goals", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/metric-goals`,
+        { signal },
       ),
   });
   const policy = useQuery({
     queryKey: ["query-policy", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, number>>(
         `/api/v1/sites/${site!.site_id}/query-policy`,
+        { signal },
       ),
   });
   const queryAudit = useQuery({
     queryKey: ["query-audit", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/query-audit`,
+        { signal },
       ),
   });
   const jobs = useQuery({
     queryKey: ["aggregate-jobs", site?.site_id],
     enabled: !!site,
     refetchInterval: 5000,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/aggregate-jobs`,
+        { signal },
       ),
   });
   const catalog = useQuery({
     queryKey: ["catalog", site?.site_id, environment],
     enabled: !!site,
-    queryFn: () =>
-      get<Record<string, unknown>[]>(`/api/v1/sites/${site!.site_id}/catalog`),
+    queryFn: ({ signal }) =>
+      get<Record<string, unknown>[]>(
+        `/api/v1/sites/${site!.site_id}/catalog`,
+        { signal },
+      ),
   });
   const lineage = useQuery({
     queryKey: ["lineage", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         nodes: Record<string, unknown>[];
         edges: Record<string, unknown>[];
-      }>(`/api/v1/sites/${site!.site_id}/lineage`),
+      }>(`/api/v1/sites/${site!.site_id}/lineage`, { signal }),
   });
   const [formula, setFormula] = useState({
     name: "",
@@ -753,9 +761,10 @@ function PrivacyRequests() {
   const requests = useQuery({
     queryKey: ["privacy-requests", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/privacy-requests`,
+        { signal },
       ),
   });
   const [form, setForm] = useState({
@@ -910,6 +919,7 @@ function PrivacyRequests() {
           {
             key: "id",
             label: "Decision",
+            sortable: false,
             format: (v, row) =>
               row.status === "pending" ? (
                 <Stack direction="row">
@@ -1036,25 +1046,28 @@ function ProductLab() {
   const flags = useQuery({
     queryKey: ["feature-flags", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/feature-flags`,
+        { signal },
       ),
   });
   const experiments = useQuery({
     queryKey: ["experiments", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/experiments`,
+        { signal },
       ),
   });
   const metrics = useQuery({
     queryKey: ["semantic-metrics", site?.site_id],
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Record<string, unknown>[]>(
         `/api/v1/sites/${site!.site_id}/semantic-metrics`,
+        { signal },
       ),
   });
   const [flag, setFlag] = useState({

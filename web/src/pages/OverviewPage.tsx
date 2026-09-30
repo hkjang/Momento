@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   Alert,
   Box,
@@ -20,6 +19,7 @@ import { useQuery } from "@tanstack/react-query";
 import { get, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
 import AnalysisToolbar from "../components/AnalysisToolbar";
@@ -74,13 +74,14 @@ interface Overview {
 }
 export default function OverviewPage() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: ["overview", site?.site_id, site?.timezone, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<Overview>(
         `/api/v1/sites/${site!.site_id}/overview?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
     enabled: !!site,
   });
@@ -90,18 +91,20 @@ export default function OverviewPage() {
     queryKey: ["overview-anomalies", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<AnomalyReport>(
         `/api/v1/sites/${site!.site_id}/anomalies?environment=${environment}`,
+        { signal },
       ),
   });
   const goals = useQuery({
     queryKey: ["overview-goals", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<GoalEvaluation[]>(
         `/api/v1/sites/${site!.site_id}/metric-goals/evaluate`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;

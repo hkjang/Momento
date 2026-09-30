@@ -22,6 +22,7 @@ import SegmentBuilder, {
   type SegmentNode,
 } from "../components/SegmentBuilder";
 import DataTable from "../components/DataTable";
+import { useConfirm } from "../components/ConfirmDialog";
 import { dateRangeValues, del, get, post, put } from "../api/client";
 import { useSite } from "../contexts/SiteContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -51,6 +52,7 @@ const initialForm = () => ({
 });
 
 export default function SegmentsPage() {
+  const confirm = useConfirm();
   const { site } = useSite();
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -58,13 +60,19 @@ export default function SegmentsPage() {
   const [form, setForm] = useState(initialForm);
   const query = useQuery({
     queryKey: ["segments", site?.site_id],
-    queryFn: () => get<Segment[]>(`/api/v1/segments?site_id=${site!.site_id}`),
+    queryFn: ({ signal }) => get<Segment[]>(
+      `/api/v1/segments?site_id=${site!.site_id}`,
+      { signal },
+    ),
     enabled: !!site,
   });
   const dimensions = useQuery({
     queryKey: ["dimensions", site?.site_id],
-    queryFn: () =>
-      get<Dimension[]>(`/api/v1/dimensions?site_id=${site!.site_id}`),
+    queryFn: ({ signal }) =>
+      get<Dimension[]>(
+        `/api/v1/dimensions?site_id=${site!.site_id}`,
+        { signal },
+      ),
     enabled: !!site,
   });
   useEffect(() => {
@@ -258,7 +266,16 @@ export default function SegmentsPage() {
               <Button
                 color="error"
                 startIcon={<DeleteOutlineRounded />}
-                onClick={() => remove.mutate(selected)}
+                onClick={async () => {
+                  if (
+                    await confirm({
+                      title: "Segment를 삭제할까요?",
+                      description: `${form.name || "이 Segment"}를 삭제하면 되돌릴 수 없습니다.`,
+                      confirmLabel: "삭제",
+                    })
+                  )
+                    remove.mutate(selected);
+                }}
               >
                 삭제
               </Button>

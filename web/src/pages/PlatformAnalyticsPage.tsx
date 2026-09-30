@@ -18,6 +18,7 @@ import { get, post, rangeQuery } from "../api/client";
 import { keepWithinScope } from "../api/keepPrevious";
 import { aiSetupHint } from "./signalGuide";
 import { useSite } from "../contexts/SiteContext";
+import { usePeriodParam } from "../components/usePeriodParam";
 import DataTable from "../components/DataTable";
 import MetricCard from "../components/MetricCard";
 import { ErrorState, Loading, NoSite } from "../components/States";
@@ -96,7 +97,7 @@ function Cohort() {
   const { site, environment } = useSite();
   // Retention is measured over months, so this screen offers longer periods than
   // the others rather than the shared 7/30/90.
-  const [days, setDays] = useState(180);
+  const [days, setDays] = usePeriodParam(180, [90, 180, 365]);
   const [cohortEvent, setCohortEvent] = useState("");
   const [returnEvent, setReturnEvent] = useState("");
   const [periods, setPeriods] = useState(12);
@@ -105,9 +106,10 @@ function Cohort() {
     queryKey: ["segments", site?.site_id],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ id: string; name: string }[]>(
         `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
       ),
   });
   const q = useQuery({
@@ -123,13 +125,14 @@ function Cohort() {
     ],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         cohorts: { cohort: string; size: number; periods: RetentionPeriod[] }[];
         curves?: RetentionCurve[];
         comparison?: RetentionComparison[];
       }>(
         `/api/v1/sites/${site!.site_id}/cohort?${rangeQuery(days, site!.timezone)}&granularity=week&periods=${periods}&cohort_event=${encodeURIComponent(cohortEvent)}&return_event=${encodeURIComponent(returnEvent)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
@@ -431,14 +434,15 @@ function Journey() {
 
 function Adoption() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: ["adoption", site?.site_id, environment, days],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ rows: Record<string, unknown>[] }>(
         `/api/v1/sites/${site!.site_id}/adoption?${rangeQuery(days, site!.timezone)}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days);
@@ -531,12 +535,13 @@ function Experience() {
     queryKey: ["segments", site?.site_id],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ id: string; name: string }[]>(
         `/api/v1/segments?site_id=${site!.site_id}`,
+        { signal },
       ),
   });
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const q = useQuery({
     queryKey: [
       "experience",
@@ -547,7 +552,7 @@ function Experience() {
     ],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         vitals: Record<string, unknown>[];
         errors: Record<string, unknown>[];
@@ -557,6 +562,7 @@ function Experience() {
         gaps?: ExperienceGap[];
       }>(
         `/api/v1/sites/${site!.site_id}/experience?${rangeQuery(days, site!.timezone)}${compareIds.length ? `&segment_ids=${compareIds.map(encodeURIComponent).join(",")}` : ""}`,
+        { signal },
       ),
   });
   const narrower = narrowerRange(days);
@@ -800,9 +806,10 @@ function Insights() {
     queryKey: ["insights", site?.site_id, environment],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ insights: Record<string, unknown>[]; engine: string }>(
         `/api/v1/sites/${site!.site_id}/insights?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   const ask = useMutation({
@@ -904,15 +911,16 @@ function Insights() {
 
 function AIAnalytics() {
   const { site, environment } = useSite();
-  const [days, setDays] = useState(30);
+  const [days, setDays] = usePeriodParam(30);
   const [group, setGroup] = useState("model");
   const q = useQuery({
     queryKey: ["ai-analytics", site?.site_id, environment, days, group],
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{ rows: Record<string, unknown>[] }>(
         `/api/v1/sites/${site!.site_id}/ai-analytics?${rangeQuery(days, site!.timezone)}&group_by=${group}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
@@ -1003,7 +1011,7 @@ function Quality() {
     placeholderData: keepWithinScope(site?.site_id, environment),
     enabled: !!site,
     refetchInterval: 30000,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       get<{
         health_score: number;
         collector: Record<string, number>;
@@ -1012,6 +1020,7 @@ function Quality() {
         issues: Record<string, unknown>[];
       }>(
         `/api/v1/sites/${site!.site_id}/data-quality?${rangeQuery(policyRange(7, site!.max_exact_days), site!.timezone)}`,
+        { signal },
       ),
   });
   if (!site) return <NoSite />;
