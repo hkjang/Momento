@@ -169,6 +169,7 @@ function Keys() {
     },
   });
   const remove = useMutation({
+    meta: { successMessage: "API 키를 폐기했습니다." },
     mutationFn: (id: string) => del(`/api/v1/me/keys/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["my-keys"] }),
   });

@@ -175,6 +175,7 @@ export default function ExplorerPage() {
       ),
   });
   const saveReport = useMutation({
+    meta: { successMessage: "Exploration을 저장했습니다." },
     mutationFn: () => {
       const body = {
         site_id: site!.site_id,
@@ -201,6 +202,7 @@ export default function ExplorerPage() {
     },
   });
   const deleteReport = useMutation({
+    meta: { successMessage: "Exploration을 삭제했습니다." },
     mutationFn: () => del(`/api/v1/reports/${reportId}`),
     onSuccess: async () => {
       setReportId("");

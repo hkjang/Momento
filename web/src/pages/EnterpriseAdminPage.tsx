@@ -172,6 +172,7 @@ function AnalyticsEngineering() {
     setAnnotation((v) => ({ ...v, environment }));
   }, [environment]);
   const saveFormula = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/semantic-metrics`, {
         name: formula.name,
@@ -207,6 +208,7 @@ function AnalyticsEngineering() {
     },
   });
   const saveGoal = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () => post(`/api/v1/sites/${site!.site_id}/metric-goals`, goal),
     onSuccess: () => {
       setGoal({ ...goal, name: "" });
@@ -214,11 +216,13 @@ function AnalyticsEngineering() {
     },
   });
   const savePolicy = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       put(`/api/v1/sites/${site!.site_id}/query-policy`, policyForm),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["query-policy"] }),
   });
   const createJob = useMutation({
+    meta: { successMessage: "작업을 등록했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/aggregate-jobs`, job),
     onSuccess: () => {
@@ -227,6 +231,7 @@ function AnalyticsEngineering() {
     },
   });
   const saveAnnotation = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/annotations`, {
         ...annotation,
@@ -781,6 +786,7 @@ function PrivacyRequests() {
     action: "approve" | "reject";
   } | null>(null);
   const create = useMutation({
+    meta: { successMessage: "요청을 등록했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/privacy-requests`, form),
     onSuccess: () => {
@@ -789,6 +795,7 @@ function PrivacyRequests() {
     },
   });
   const decide = useMutation({
+    meta: { successMessage: "결정을 저장했습니다." },
     mutationFn: ({ id, decision }: { id: string; decision: string }) =>
       post(`/api/v1/sites/${site!.site_id}/privacy-requests/${id}/decision`, {
         decision,
@@ -1092,6 +1099,7 @@ function ProductLab() {
   });
   useEffect(() => setExperiment((v) => ({ ...v, environment })), [environment]);
   const saveFlag = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/feature-flags`, {
         ...flag,
@@ -1106,6 +1114,7 @@ function ProductLab() {
     },
   });
   const saveExperiment = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/experiments`, {
         ...experiment,

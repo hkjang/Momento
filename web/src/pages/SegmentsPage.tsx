@@ -90,6 +90,7 @@ export default function SegmentsPage() {
     setForm(initialForm());
   }, [site?.site_id]);
   const save = useMutation({
+    meta: { successMessage: "Segment를 저장했습니다." },
     mutationFn: () => {
       const body = { site_id: site!.site_id, ...form };
       return selected
@@ -103,6 +104,7 @@ export default function SegmentsPage() {
     },
   });
   const remove = useMutation({
+    meta: { successMessage: "Segment를 삭제했습니다." },
     mutationFn: (id: string) => del(`/api/v1/segments/${id}`),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["segments", site?.site_id] });

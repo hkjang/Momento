@@ -115,6 +115,7 @@ function Governance() {
     eligible_users: 0,
   });
   const contractSave = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/event-contracts`, {
         event_name: eventName,
@@ -130,6 +131,7 @@ function Governance() {
     },
   });
   const metricSave = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/semantic-metrics`, {
         name: metricName,
@@ -145,6 +147,7 @@ function Governance() {
     },
   });
   const targetSave = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/adoption-targets`, target),
     onSuccess: () => {
@@ -544,6 +547,7 @@ function EnvironmentEditor({
   const [mode, setMode] = useState(item.contract_mode);
   const [limit, setLimit] = useState(item.cardinality_limit);
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       put(`/api/v1/sites/${siteID}/environments/${item.name}`, {
         label: item.label,
@@ -691,6 +695,7 @@ function Automation() {
     [environment],
   );
   const configSave = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () => put("/api/v1/settings/automation", current),
     onSuccess: () => {
       setConfig(null);
@@ -698,6 +703,7 @@ function Automation() {
     },
   });
   const channelSave = useMutation({
+    meta: { successMessage: "Channel을 등록했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/delivery-channels`, {
         ...channel,
@@ -711,6 +717,7 @@ function Automation() {
     },
   });
   const scheduleSave = useMutation({
+    meta: { successMessage: "Schedule을 저장했습니다." },
     mutationFn: () =>
       post(`/api/v1/sites/${site!.site_id}/scheduled-reports`, {
         ...schedule,
@@ -739,16 +746,19 @@ function Automation() {
       ),
   });
   const channelDelete = useMutation({
+    meta: { successMessage: "Channel을 삭제했습니다." },
     mutationFn: (id: string) =>
       del(`/api/v1/sites/${site!.site_id}/delivery-channels/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["delivery-channels"] }),
   });
   const scheduleDelete = useMutation({
+    meta: { successMessage: "Schedule을 삭제했습니다." },
     mutationFn: (id: string) =>
       del(`/api/v1/sites/${site!.site_id}/scheduled-reports/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scheduled-reports"] }),
   });
   const runNow = useMutation({
+    meta: { successMessage: "실행을 요청했습니다." },
     mutationFn: (id: string) =>
       post(`/api/v1/sites/${site!.site_id}/scheduled-reports/${id}/run`),
     onSuccess: () => {

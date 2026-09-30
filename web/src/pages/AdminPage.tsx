@@ -1673,6 +1673,7 @@ function SitesAdmin() {
   const [engagementThreshold, setEngagementThreshold] = useState(10);
   const [editing, setEditing] = useState<Site | null>(null);
   const create = useMutation({
+    meta: { successMessage: "만들었습니다." },
     mutationFn: () =>
       post<{
         id: string;
@@ -2052,6 +2053,7 @@ function SiteSettingsDialog({
     site.engagement_threshold_seconds,
   );
   const update = useMutation({
+    meta: { successMessage: "변경을 저장했습니다." },
     mutationFn: () =>
       patch(`/api/v1/sites/${site.id}`, {
         name,
@@ -2157,6 +2159,7 @@ function SettingsAdmin({ groups }: { groups: string[] }) {
     {},
   );
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: async () => {
       for (const key of groups) {
         if (edits[key]) await put(`/api/v1/settings/${key}`, edits[key]);
@@ -2527,6 +2530,7 @@ function PrivacyAdmin() {
   });
   const [local, setLocal] = useState<Record<string, unknown> | null>(null);
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () => put("/api/v1/settings/privacy", local),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
@@ -2838,6 +2842,7 @@ function RetentionAdmin() {
   const [local, setLocal] = useState<RetentionPolicy | null>(null);
   const current = local || query.data?.policy;
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () => put(`/api/v1/sites/${site!.site_id}/retention`, current),
     onSuccess: async () => {
       setLocal(null);
@@ -2977,6 +2982,7 @@ function DimensionsAdmin() {
     active: true,
   });
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post("/api/v1/dimensions", { site_id: site!.site_id, ...form }),
     onSuccess: async () => {
@@ -2992,6 +2998,7 @@ function DimensionsAdmin() {
     },
   });
   const remove = useMutation({
+    meta: { successMessage: "삭제했습니다." },
     mutationFn: (id: string) => del(`/api/v1/dimensions/${id}`),
     onSuccess: () =>
       qc.invalidateQueries({ queryKey: ["dimensions", site?.site_id] }),
@@ -3172,6 +3179,7 @@ function NetworksAdmin() {
   });
   const [form, setForm] = useState({ name: "", cidr: "", description: "" });
   const create = useMutation({
+    meta: { successMessage: "만들었습니다." },
     mutationFn: () => post("/api/v1/networks", { ...form, internal: true }),
     onSuccess: () => {
       setForm({ name: "", cidr: "", description: "" });
@@ -3179,6 +3187,7 @@ function NetworksAdmin() {
     },
   });
   const remove = useMutation({
+    meta: { successMessage: "삭제했습니다." },
     mutationFn: (id: string) => del(`/api/v1/networks/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["networks"] }),
   });
@@ -3317,6 +3326,7 @@ function UsersAdmin() {
     password: "",
   });
   const create = useMutation({
+    meta: { successMessage: "만들었습니다." },
     mutationFn: () => post("/api/v1/users", form),
     onSuccess: () => {
       setOpen(false);
@@ -3324,6 +3334,7 @@ function UsersAdmin() {
     },
   });
   const update = useMutation({
+    meta: { successMessage: "변경을 저장했습니다." },
     mutationFn: () =>
       patch(`/api/v1/users/${edit!.id}`, {
         display_name: edit!.display_name,
@@ -3625,6 +3636,7 @@ function SchemasAdmin() {
     schemaText: '{"properties": {}}',
   });
   const save = useMutation({
+    meta: { successMessage: "저장했습니다." },
     mutationFn: () =>
       post("/api/v1/event-definitions", {
         site_id: site?.site_id,
