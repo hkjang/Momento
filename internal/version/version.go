@@ -14,7 +14,7 @@ package version
 // is overridden too, so a release image reports the tag it was cut from even if
 // this line were left behind.
 var (
-	Version   = "0.34.52"
+	Version   = "0.34.53"
 	Commit    = "unknown"
 	BuildTime = "unknown"
 )

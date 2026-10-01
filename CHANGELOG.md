@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.34.53
+
+- **`npm test` 가 콘솔 테스트 38개 파일 중 30개를 돌리지 못할 수 있었습니다.** `web/test/*.test.mjs` 는 순수 로직 모듈을 `.ts` 확장자까지 적어 import 하므로 테스트를 돌리는 Node 가 타입 스트리핑을 할 수 있어야 합니다. 그런데 npm 은 lifecycle 스크립트의 PATH 에 **상위 디렉터리의 `node_modules/.bin` 을 모두 앞에 붙이므로**, 홈이나 상위 경로에 `node` 패키지가 하나 깔려 있으면 `npm test` 안의 `node` 가 npm 자신을 돌리는 Node 가 아니라 그 쪽으로 해석됩니다. 릴리즈 검증이 두 번 그렇게 멈췄습니다 — npm 은 v22.23.1 로 도는데 `~/node_modules/.bin/node`(v20.19.2)가 PATH 를 가려 30개 파일이 `ERR_UNKNOWN_FILE_EXTENSION ".ts"` 로 떨어졌고, 자식 프로세스가 찍은 `# Node.js v20.19.2` 가 그 증거였습니다. 이제 `web/package.json` 의 test 명령이 PATH 의 `node` 대신 **npm 이 알려주는 인터프리터 경로**(`npm_node_execpath`)를 쓰고, npm 없이 셸에서 바로 돌릴 때를 위해 `node` 로 되돌아갑니다. 요구하는 Node 범위도 `engines` 에 적었습니다(`^22.18 || >=24` — 확장자 없는 타입 스트리핑이 기본으로 켜지는 범위). `.github/workflows` 와 `node --test` 자체, 테스트 단언은 아무것도 느슨하게 하지 않았습니다.
+- `web/test/testCommand.test.mjs` 가 `package.json` 의 실제 문자열을 읽어 이 성질을 고정합니다(176 → 178건). 타입 스트리핑을 못 하는 `node` 를 PATH 앞에 세우고 `.ts` 를 import 하는 진짜 테스트 파일을 돌려, 설정된 명령은 통과하고 같은 PATH 에서 맨 `node` 는 같은 `ERR_UNKNOWN_FILE_EXTENSION` 으로 깨지는 것을 **함께** 단언합니다(가림이 진짜임을 보이는 대조). 두 Node 메이저로 확인했습니다 — nvm v22.23.1 의 npm 10.9.8, `/usr/bin/npm` 11.12.1(Node v25.9.0), 그리고 `npm_node_execpath` 가 없는 되돌림 경로까지 모두 178/178 입니다.
+- 콘솔 화면·Go·API·데이터베이스 변경은 없습니다. 사용자가 보는 것은 달라지지 않습니다.
+
 ## v0.34.52
 
 콘솔 사용성 개선 24가지입니다. 표는 62곳이 같은 `DataTable` 을 쓰므로 표 항목은 모든 표에 적용됩니다.
