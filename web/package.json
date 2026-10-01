@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test test/*.test.mjs"
+    "test": "\"${npm_node_execpath:-node}\" --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": "^22.18 || >=24"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
