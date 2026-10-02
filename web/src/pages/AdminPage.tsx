@@ -74,6 +74,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
+import { describeUserError } from "./adminErrors";
 import {
   auditDetailText,
   auditPath,
@@ -3317,6 +3318,33 @@ interface AdminUser {
   active: boolean;
   oidc: boolean;
 }
+/**
+ * The only place a refused user create/update is explained. There is no global
+ * onError (main.tsx), so whatever this does not say is not said anywhere.
+ *
+ * Both dialogs printed the server's own sentence, which meant the commonest
+ * refusal of all — an address already in use — reached the screen as pgx's
+ * `… unique constraint "users_email_key" (SQLSTATE 23505)`. Laid out like
+ * States.tsx's query error: the guidance first, the server's text only where
+ * describeUserError kept it as the remaining clue.
+ */
+function UserErrorAlert({ error }: { error: unknown }) {
+  const notice = describeUserError(error);
+  return (
+    <Alert severity="error">
+      <Typography variant="body2">{notice.message}</Typography>
+      {notice.detail && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.5, wordBreak: "break-word" }}
+        >
+          {notice.detail}
+        </Typography>
+      )}
+    </Alert>
+  );
+}
 function UsersAdmin() {
   const qc = useQueryClient();
   const { user } = useAuth();
@@ -3499,9 +3527,7 @@ function UsersAdmin() {
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               helperText={PASSWORD_RULE}
             />
-            {create.error && (
-              <Alert severity="error">{create.error.message}</Alert>
-            )}
+            {create.error && <UserErrorAlert error={create.error} />}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -3600,9 +3626,7 @@ function UsersAdmin() {
                   helperText={`비워 두면 그대로. ${PASSWORD_RULE} 재설정하면 이 사용자의 로그인 세션이 모두 끝납니다.`}
                 />
               )}
-              {update.error && (
-                <Alert severity="error">{update.error.message}</Alert>
-              )}
+              {update.error && <UserErrorAlert error={update.error} />}
             </Stack>
           )}
         </DialogContent>
