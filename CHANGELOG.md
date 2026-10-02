@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.34.54
+
+- **사용자 추가·편집이 실패하면 서버의 영문 문장 대신 무엇을 고칠지 한국어로 말합니다.** 두 다이얼로그가 `error.message` 를 그대로 띄워, 가장 흔한 거절인 이메일 중복이 pgx 원문째로 화면에 올라왔습니다 — `createUser`(`internal/httpapi/admin.go`)가 실패한 INSERT 를 `writeError(w, 409, "USER_CREATE_FAILED", err.Error())` 로 답하므로 `ERROR: duplicate key value violates unique constraint "users_email_key" (SQLSTATE 23505)` 가 스키마에서 브라우저까지 흘렀고, 읽는 사람이 거기서 '이메일이 이미 있다' 를 추측해야 했습니다. 나머지도 `you cannot grant more authority than your own`, `password must be at least 12 characters` 처럼 전부 영문이었습니다. 새 순수 모듈 `web/src/pages/adminErrors.ts` 의 `describeUserError` 가 `components/queryError.ts` 의 선례대로 코드를 shape 으로 읽어 한국어 안내를 돌려주고, **모르는 코드는 서버 메시지로 되돌아갑니다**(서버에 거절이 늘어도 삼켜지지 않습니다). 전역 `onError` 가 없으므로(`main.tsx`) 이 모듈이 말하지 않는 것은 어디에서도 말해지지 않습니다.
+- 한 코드에 원인이 둘 실려 오는 곳은 문장을 보고 갈랐습니다 — `INVALID_USER` 는 `PasswordProblem` 이 내는 `password must be` 로(역할 쪽 문장에도 "password" 라는 낱말이 있어 단순 포함 검사로는 갈리지 않습니다), `ROLE_ABOVE_CALLER` 는 상위 계정 관리에만 나오는 `administer` 로, `USER_CREATE_FAILED` 는 유일성 위반 표지(`duplicate key`/`unique constraint`/`23505`)로 갈랐습니다. **409 라는 것만으로 중복이라 단정하지 않습니다** — 그 INSERT 는 무엇이 틀려도 409 로 답하므로 상태 코드로 갈랐다면 끊긴 연결을 '이미 등록된 이메일' 로 설명하게 됩니다. 표지가 없으면 "계정을 만들지 못했습니다" 라고 말하고 서버 문장을 작은 글씨로 함께 둡니다.
+- `web/test/adminErrors.test.mjs` 가 이 성질을 고정합니다(178 → 184건). 순수 함수 테스트에 더해 **실제 프로덕션 배선**을 확인했습니다 — `npm run build` 의 dist 를 `/api/v1/me`·`/api/v1/users` 를 흉내 낸 임시 서버에 올리고 headless Chrome 으로 `/admin?section=users` 의 생성 다이얼로그를 채워 「생성」을 눌러 Alert DOM 을 읽었습니다(에러 객체는 대역이 아니라 `api()` 가 HTTP 응답에서 만든 진짜 `APIError`). 6개 시나리오 전부 기대대로였고, 변경을 되돌린 대조에서는 `users_email_key`·`SQLSTATE 23505` 가 Alert 에 그대로 떠 5건이 실패했습니다.
+- 바꾼 것은 프로덕션 2파일과 테스트 1파일입니다. 서버·`internal/auth`·성공 토스트, 다른 섹션의 Alert 세 곳은 손대지 않았습니다. Go·API 변경과 데이터베이스 마이그레이션은 없습니다.
+
 ## v0.34.53
 
 - **`npm test` 가 콘솔 테스트 38개 파일 중 30개를 돌리지 못할 수 있었습니다.** `web/test/*.test.mjs` 는 순수 로직 모듈을 `.ts` 확장자까지 적어 import 하므로 테스트를 돌리는 Node 가 타입 스트리핑을 할 수 있어야 합니다. 그런데 npm 은 lifecycle 스크립트의 PATH 에 **상위 디렉터리의 `node_modules/.bin` 을 모두 앞에 붙이므로**, 홈이나 상위 경로에 `node` 패키지가 하나 깔려 있으면 `npm test` 안의 `node` 가 npm 자신을 돌리는 Node 가 아니라 그 쪽으로 해석됩니다. 릴리즈 검증이 두 번 그렇게 멈췄습니다 — npm 은 v22.23.1 로 도는데 `~/node_modules/.bin/node`(v20.19.2)가 PATH 를 가려 30개 파일이 `ERR_UNKNOWN_FILE_EXTENSION ".ts"` 로 떨어졌고, 자식 프로세스가 찍은 `# Node.js v20.19.2` 가 그 증거였습니다. 이제 `web/package.json` 의 test 명령이 PATH 의 `node` 대신 **npm 이 알려주는 인터프리터 경로**(`npm_node_execpath`)를 쓰고, npm 없이 셸에서 바로 돌릴 때를 위해 `node` 로 되돌아갑니다. 요구하는 Node 범위도 `engines` 에 적었습니다(`^22.18 || >=24` — 확장자 없는 타입 스트리핑이 기본으로 켜지는 범위). `.github/workflows` 와 `node --test` 자체, 테스트 단언은 아무것도 느슨하게 하지 않았습니다.
