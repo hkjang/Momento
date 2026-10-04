@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.34.56
+
+- **망 구분을 추가하다 실패하면 서버의 영문 문장 대신 무엇을 고칠지 한국어로 말합니다.** 「망 구분 추가」 의 Alert 이 `{create.error.message}` 로 서버 문장을 그대로 띄웠습니다. 이 폼은 콘솔에서 **CIDR 을 손으로 적는 유일한 칸**을 가지고 있어 가장 흔한 실패가 서버의 세 낱말 `CIDR is invalid` 로 올라왔고(`internal/httpapi/admin.go:813`), 칸 바로 위 placeholder 에 올바른 모양이 떠 있는데도 **무엇을 적어야 하는지는 말하지 않았습니다**. 500 으로 떨어지면 `createNetwork` 가 `err.Error()` 를 그대로 실어(`admin.go:823`) `SQLSTATE`·`relation`·`invalid cidr value` 가 스키마에서 브라우저까지 흘렀습니다. 이제 `web/src/pages/adminErrors.ts` 의 새 `describeNetworkError` 가 「`10.20.30.0/24` 처럼 주소 뒤에 「/」 와 비트 수를 붙여 적으세요」 처럼 고칠 것을 말하고, 모르는 코드는 서버 메시지로 되돌아갑니다. 안내가 드는 예시는 **칸 자신의 placeholder 와 같은 값**이라 화면에서 두 곳을 맞춰 볼 수 있습니다.
+- **「넷마스크 경계」 라고 쓰지 않았습니다.** `net.ParseCIDR` 이 거절하는 것은 표기 자체(비트 수 누락·범위 초과)이고, 넷마스크 오른쪽에 비트가 선 값(`10.0.0.5/24`)은 **통과시킵니다**. 그러니 이 400 은 넷마스크 경계 때문에 날 수 없고, 그렇게 안내했다면 실제로 틀린 것을 가리키지 못했을 것입니다.
+- **500 은 원인을 말하지 않습니다.** `NETWORK_CREATE_FAILED` 의 문구를 중립으로 뒀습니다. 특히 **'이미 등록된 망' 이라고 설명하지 않습니다** — `network_ranges` 에는 UNIQUE 가 아예 없으므로(`internal/database/migrations/001_initial.sql:64-70` 은 `id PRIMARY KEY` 와 평범한 네 칸뿐입니다) 중복이라 말했다면 거짓입니다. `cidr` 컬럼이 `ParseCIDR` 을 통과한 값을 거절할 가능성은 이 기계에서 **재현하지 못했으므로** 그 추측에 기대지 않았습니다. 서버 원문은 지우지 않고 `UserErrorAlert`·`SiteErrorAlert` 과 같은 모양의 detail caption 으로만 남깁니다.
+- `describeUserError`·`describeSiteError` 와 **합치지 않았습니다.** `createNetwork` 는 자기 코드 셋을 답하고 고쳐야 할 칸이 다릅니다. 대신 에러에서 코드·메시지를 읽어내는 `refusal` 하나만 세 경로가 공유합니다. 공용 상수 `PASS_TO_ADMIN`·`UNREADABLE_PAYLOAD`·`LOST_REQUEST` 는 재사용만 하고 문장은 그대로 뒀습니다 — 기존 13건이 글자 그대로 단언하고 있어 통과가 곧 불변의 증명입니다.
+- `web/test/adminErrors.test.mjs` 가 이 성질을 고정합니다(191 → 199건). 순수 함수 테스트에 더해 **실제 프로덕션 배선**을 확인했습니다 — `npm run build` 의 dist 를 `/api/v1/me`·`/api/v1/sites`·`/api/v1/networks` 를 흉내 낸 임시 서버에 올리고 headless Chrome 으로 `/admin?section=networks` 의 추가 칸을 채워 「추가」 를 눌러 Alert DOM 을 읽었습니다(에러 객체는 대역이 아니라 `api()` 가 HTTP 응답에서 만든 진짜 `APIError`). 5개 시나리오 전부 기대대로였고, 변경을 되돌린 대조에서는 `CIDR is invalid`·`SQLSTATE`·`relation` 이 Alert 본문에 그대로 떠 4건이 실패했습니다.
+- 바꾼 것은 프로덕션 2파일과 테스트 1파일입니다. 서버는 손대지 않았습니다(`admin.go` 가 검증의 정본). 나머지 Alert 들은 각각 다른 핸들러의 코드 집합이라 이번에 포함하지 않았습니다. Go·API 변경과 데이터베이스 마이그레이션은 없습니다.
+
 ## v0.34.55
 
 - **사이트 추가·설정이 실패하면 서버의 영문 문장 대신 무엇을 고칠지 한국어로 말합니다.** 「새 분석 사이트」·「사이트 분석 설정」 두 다이얼로그의 Alert 이 `{create.error.message}`·`{update.error.message}` 로 서버 문장을 그대로 띄웠습니다. 「IANA 시간대」 는 고를 목록이 없는 자유 입력 칸이라 `Asia/Seoul` 대신 `Seoul` 이라고 적는 실수가 가장 흔한데, 돌아오는 것은 `timezone must be a valid IANA timezone` 뿐이어서 **올바른 이름이 어떤 모양인지는 말하지 않았습니다**. 500 으로 떨어지면 `createSite`·`updateSite` 가 `err.Error()` 를 그대로 실어(`internal/httpapi/admin.go:269`·`352`·`376`) pgx 원문이 데이터베이스에서 브라우저까지 흘렀습니다. 이제 `web/src/pages/adminErrors.ts` 의 새 `describeSiteError` 가 「`Asia/Seoul` 처럼 지역/도시 형태로 적으세요」 처럼 고칠 것을 말하고, 모르는 코드는 서버 메시지로 되돌아갑니다. 「이름이 비어 있다」 는 **공백만 적은 경우라는 사실까지** 말합니다 — 「생성」 버튼은 칸이 빈 동안 눌리지 않으므로(`AdminPage.tsx`) 이 거절은 공백뿐인 칸에서만 오고, "이름을 입력하세요" 라고만 말하면 비어 있지 않은 칸을 보는 사람에게 거짓말로 읽힙니다.

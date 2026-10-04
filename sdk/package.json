@@ -1,6 +1,6 @@
 {
   "name": "@momento-analytics/tracker",
-  "version": "0.34.55",
+  "version": "0.34.56",
   "private": true,
   "type": "module",
   "scripts": {
