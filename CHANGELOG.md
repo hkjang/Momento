@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.34.55
+
+- **사이트 추가·설정이 실패하면 서버의 영문 문장 대신 무엇을 고칠지 한국어로 말합니다.** 「새 분석 사이트」·「사이트 분석 설정」 두 다이얼로그의 Alert 이 `{create.error.message}`·`{update.error.message}` 로 서버 문장을 그대로 띄웠습니다. 「IANA 시간대」 는 고를 목록이 없는 자유 입력 칸이라 `Asia/Seoul` 대신 `Seoul` 이라고 적는 실수가 가장 흔한데, 돌아오는 것은 `timezone must be a valid IANA timezone` 뿐이어서 **올바른 이름이 어떤 모양인지는 말하지 않았습니다**. 500 으로 떨어지면 `createSite`·`updateSite` 가 `err.Error()` 를 그대로 실어(`internal/httpapi/admin.go:269`·`352`·`376`) pgx 원문이 데이터베이스에서 브라우저까지 흘렀습니다. 이제 `web/src/pages/adminErrors.ts` 의 새 `describeSiteError` 가 「`Asia/Seoul` 처럼 지역/도시 형태로 적으세요」 처럼 고칠 것을 말하고, 모르는 코드는 서버 메시지로 되돌아갑니다. 「이름이 비어 있다」 는 **공백만 적은 경우라는 사실까지** 말합니다 — 「생성」 버튼은 칸이 빈 동안 눌리지 않으므로(`AdminPage.tsx`) 이 거절은 공백뿐인 칸에서만 오고, "이름을 입력하세요" 라고만 말하면 비어 있지 않은 칸을 보는 사람에게 거짓말로 읽힙니다.
+- **500 은 원인을 말하지 않습니다.** `SITE_CREATE_FAILED` 의 문구를 중립으로 뒀습니다. 이 500 은 workspaces 표가 비는 경우(`admin.go:264` 의 `QueryRow` 가 `no rows in result set` 을 돌려줍니다)와 DB 장애가 함께 쓰고, 둘을 확실히 가를 표지가 없습니다. 특히 **'이미 있는 사이트 이름' 이라고 설명하지 않습니다** — `sites` 에는 `site_key` 에만 UNIQUE 가 있고 `name` 에는 없으므로(`internal/database/migrations/001_initial.sql:34-49`) 이름 중복이라 말했다면 거짓입니다. 서버 원문은 지우지 않고 `UserErrorAlert` 과 같은 모양의 detail caption 으로만 남깁니다 — 관리자에게 전달할 유일한 단서입니다.
+- `describeUserError` 와 **합치지 않았습니다.** 두 핸들러는 `INVALID_PAYLOAD` 말고는 코드 이름 몇 개만 겹치고, 같은 이름이어도 뜻과 고쳐야 할 것이 다릅니다. 대신 에러에서 코드·메시지를 읽어내는 `refusal` 하나만 공유해, 두 경로가 같은 입력을 같은 값으로 읽는 것을 구조로 보장했습니다. 화면 쪽도 같은 모양입니다 — `AdminNoticeAlert` 이 배치를 맡고 `UserErrorAlert`·`SiteErrorAlert` 은 어느 `describe*` 에 물을지만 정합니다.
+- `web/test/adminErrors.test.mjs` 가 이 성질을 고정합니다(184 → 191건). 사이트 핸들러가 실제로 내는 코드를 전부 적어 두고, 아는 코드의 안내에 서버 영문이 섞이지 않은 것과 pgx 표지가 **Alert 본문에는 없고 detail 에는 남아 있는 것**을 함께 단언합니다 — 원문을 지우는 것은 고치는 것이 아니라 단서를 버리는 것이기 때문입니다.
+- 콘솔 의존성에서 `braces` 취약 경로를 끊었습니다. `typescript-eslint` 를 8.42.0 → 8.48.0 으로 올려 `npm audit` 가 `found 0 vulnerabilities` 입니다. 개발 의존성만 바뀌므로 배포 산출물에는 영향이 없습니다.
+- 서버는 손대지 않았습니다(`admin.go` 가 검증의 정본). 사용자 쪽 안내 문구·성공 토스트, 다른 섹션의 Alert 들은 각각 다른 핸들러의 코드 집합이라 이번에 포함하지 않았습니다. Go·API 변경과 데이터베이스 마이그레이션은 없습니다.
+
 ## v0.34.54
 
 - **사용자 추가·편집이 실패하면 서버의 영문 문장 대신 무엇을 고칠지 한국어로 말합니다.** 두 다이얼로그가 `error.message` 를 그대로 띄워, 가장 흔한 거절인 이메일 중복이 pgx 원문째로 화면에 올라왔습니다 — `createUser`(`internal/httpapi/admin.go`)가 실패한 INSERT 를 `writeError(w, 409, "USER_CREATE_FAILED", err.Error())` 로 답하므로 `ERROR: duplicate key value violates unique constraint "users_email_key" (SQLSTATE 23505)` 가 스키마에서 브라우저까지 흘렀고, 읽는 사람이 거기서 '이메일이 이미 있다' 를 추측해야 했습니다. 나머지도 `you cannot grant more authority than your own`, `password must be at least 12 characters` 처럼 전부 영문이었습니다. 새 순수 모듈 `web/src/pages/adminErrors.ts` 의 `describeUserError` 가 `components/queryError.ts` 의 선례대로 코드를 shape 으로 읽어 한국어 안내를 돌려주고, **모르는 코드는 서버 메시지로 되돌아갑니다**(서버에 거절이 늘어도 삼켜지지 않습니다). 전역 `onError` 가 없으므로(`main.tsx`) 이 모듈이 말하지 않는 것은 어디에서도 말해지지 않습니다.
