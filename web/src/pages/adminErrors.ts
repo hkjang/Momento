@@ -56,20 +56,40 @@ const ROLE_TOO_HIGH =
 // forbidden.
 const STALE = "목록이 오래되었을 수 있으니 새로 고친 뒤";
 
+/**
+ * The one place a refusal is read off the error, so the two describe\*
+ * functions below cannot come to disagree about what the server said. Reading
+ * is shared; the code sets each function answers is not — see
+ * describeSiteError.
+ */
+function refusal(error: unknown): { code: string; message: string } {
+  return {
+    code:
+      typeof error === "object" &&
+      error !== null &&
+      typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : "",
+    message: error instanceof Error ? error.message : "",
+  };
+}
+
+/** The sentence every 500 gets: say nothing about the cause, keep the clue. */
+const PASS_TO_ADMIN =
+  "잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.";
+const UNREADABLE_PAYLOAD =
+  "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.";
+const LOST_REQUEST =
+  "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.";
+
 export function describeUserError(error: unknown): UserErrorNotice {
-  const code =
-    typeof error === "object" &&
-    error !== null &&
-    typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code
-      : "";
-  const message = error instanceof Error ? error.message : "";
+  const { code, message } = refusal(error);
 
   switch (code) {
     case "INVALID_PAYLOAD":
       return {
         message:
-          "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+          UNREADABLE_PAYLOAD,
         detail: message || undefined,
       };
     case "INVALID_USER":
@@ -100,19 +120,19 @@ export function describeUserError(error: unknown): UserErrorNotice {
           }
         : {
             message:
-              "계정을 만들지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+              `계정을 만들지 못했습니다. ${PASS_TO_ADMIN}`,
             detail: message || undefined,
           };
     case "USER_UPDATE_FAILED":
       return {
         message:
-          "변경 내용을 저장하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+          `변경 내용을 저장하지 못했습니다. ${PASS_TO_ADMIN}`,
         detail: message || undefined,
       };
     case "QUERY_FAILED":
       return {
         message:
-          "사용자 정보를 읽지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+          `사용자 정보를 읽지 못했습니다. ${PASS_TO_ADMIN}`,
         detail: message || undefined,
       };
     case "INVALID_ID":
@@ -148,11 +168,89 @@ export function describeUserError(error: unknown): UserErrorNotice {
       // which is what a proxy's error page or a lost connection looks like.
       return {
         message:
-          "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+          LOST_REQUEST,
         detail: message || undefined,
       };
     default:
       // A code this module has not been taught yet still has to say something.
+      return { message: message || "요청을 완료하지 못했습니다." };
+  }
+}
+
+/**
+ * describeSiteError does for the two site dialogs — 「새 분석 사이트」 and
+ * 「사이트 분석 설정」 — what describeUserError does for the user ones.
+ *
+ * Both printed `error.message`, so the commonest refusal arrived in English:
+ * 「IANA 시간대」 is a free-text box, and typing `Seoul` instead of
+ * `Asia/Seoul` fetched `timezone must be a valid IANA timezone`
+ * (admin.go:249·343) without saying what a valid name looks like. The 500s
+ * were worse — createSite and updateSite answer with `err.Error()`
+ * (admin.go:269·352·376), so pgx's own text travelled to the browser.
+ *
+ * Kept separate from describeUserError on purpose: the two handlers share only
+ * the names of a few codes, and `INVALID_PAYLOAD` aside, what each one means
+ * and what the reader has to correct differ. Merging them would make one
+ * switch answer for two contracts. Only `refusal` — reading the code and
+ * message off the error — is shared.
+ */
+export function describeSiteError(error: unknown): UserErrorNotice {
+  const { code, message } = refusal(error);
+
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return { message: UNREADABLE_PAYLOAD, detail: message || undefined };
+    case "INVALID_NAME":
+      // The 생성 button is disabled while the box is empty (AdminPage.tsx),
+      // so this arrives when it holds spaces only and the server's TrimSpace
+      // takes them off. Saying "이름을 입력하세요" alone would read as a lie
+      // to someone looking at a box that is not blank.
+      return {
+        message:
+          "사이트 이름을 입력하세요. 공백만 적으면 이름이 비어 있는 것으로 처리됩니다.",
+      };
+    case "INVALID_TIMEZONE":
+      // The one refusal worth naming the fix for: time.LoadLocation wants a
+      // 지역/도시 name, and the box offers no list to pick from.
+      return {
+        message:
+          "시간대 이름이 올바르지 않습니다. 「IANA 시간대」 칸에 Asia/Seoul 처럼 지역/도시 형태로 적으세요.",
+      };
+    case "INVALID_ENGAGEMENT_THRESHOLD":
+      return { message: "「참여 기준 시간(초)」 은 1초에서 300초 사이로 적으세요." };
+    case "INVALID_TIMEOUT":
+      // 설정 다이얼로그에서만 온다 — 생성 쪽에는 이 칸이 없고, createSite 는
+      // 0 을 30 으로 바꿔 넣는다.
+      return { message: "「세션 만료(분)」 은 1분에서 1440분 사이로 적으세요." };
+    case "INVALID_ID":
+      return {
+        message:
+          "이 사이트를 가리킬 수 없습니다. 목록을 새로 고친 뒤 다시 시도하세요.",
+      };
+    case "NOT_FOUND":
+      return {
+        message:
+          "이 사이트가 이미 삭제되었습니다. 목록을 새로 고친 뒤 확인하세요.",
+      };
+    case "SITE_CREATE_FAILED":
+      // Deliberately says nothing about the cause. This 500 is what an empty
+      // workspaces table looks like (admin.go:264 → `no rows in result set`)
+      // and what a database failure looks like, and there is no marker that
+      // separates them for certain. Naming a duplicate name would be plainly
+      // false: sites has UNIQUE on site_key only, not on name
+      // (001_initial.sql:34-49).
+      return {
+        message: `사이트를 만들지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "SITE_UPDATE_FAILED":
+      return {
+        message: `사이트 설정을 저장하지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "REQUEST_FAILED":
+      return { message: LOST_REQUEST, detail: message || undefined };
+    default:
       return { message: message || "요청을 완료하지 못했습니다." };
   }
 }

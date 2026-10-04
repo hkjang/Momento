@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeUserError } from "../src/pages/adminErrors.ts";
+import {
+  describeSiteError,
+  describeUserError,
+} from "../src/pages/adminErrors.ts";
 
 // internal/httpapi/admin.go 의 createUser(877행~)·updateUser(924행~) 가 실제로
 // 돌려주는 (status, code, message) 를 그대로 옮긴 것. 서버 문장은 writeError 의
@@ -325,6 +328,250 @@ test("메시지도 코드도 없는 실패에는 빈 Alert 대신 안내가 남�
     apiError(500, "SOMETHING_NEW", ""),
   ]) {
     const described = describeUserError(value);
+    assert.ok(
+      described.message.length > 0,
+      `${String(value)}: 안내가 비어 있다`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 사이트 추가(createSite, admin.go:221~)·사이트 설정(updateSite, :314~)
+// ---------------------------------------------------------------------------
+
+// 두 500 이 Alert 로 싣고 오는 pgx 원문. 위쪽은 workspaces 조회가 비는 경우
+// (admin.go:264 의 QueryRow 가 pgx.ErrNoRows 를 돌려준다), 아래쪽은 DB 쪽 장애다.
+const NO_WORKSPACE_PGX = "no rows in result set";
+const BROKEN_DB_PGX =
+  'ERROR: insert or update on table "sites" violates foreign key constraint "sites_workspace_id_fkey" (SQLSTATE 23503)';
+
+// Alert 본문에 섞이면 안 되는 Postgres/pgx 표지. detail 쪽에는 남아야 한다 —
+// 관리자에게 전달할 유일한 단서다.
+const PG_MARKERS = ["SQLSTATE", "violates", "relation", "no rows in result set"];
+
+// 서버가 두 사이트 핸들러에서 실제로 내는 코드 전부.
+const SITE_ERRORS = [
+  // --- createSite ---
+  {
+    label: "생성: 본문을 읽지 못함",
+    status: 400,
+    code: "INVALID_PAYLOAD",
+    message: "unexpected EOF",
+    expected:
+      "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+    detail: true,
+  },
+  {
+    label: "생성: 이름이 공백뿐",
+    status: 400,
+    code: "INVALID_NAME",
+    message: "site name is required",
+    expected:
+      "사이트 이름을 입력하세요. 공백만 적으면 이름이 비어 있는 것으로 처리됩니다.",
+    detail: false,
+  },
+  {
+    label: "생성: 시간대 이름이 IANA 가 아님",
+    status: 400,
+    code: "INVALID_TIMEZONE",
+    message: "timezone must be a valid IANA timezone",
+    expected:
+      "시간대 이름이 올바르지 않습니다. 「IANA 시간대」 칸에 Asia/Seoul 처럼 지역/도시 형태로 적으세요.",
+    detail: false,
+  },
+  {
+    label: "생성: 참여 기준 시간이 범위를 벗어남",
+    status: 400,
+    code: "INVALID_ENGAGEMENT_THRESHOLD",
+    message: "engagement threshold must be between 1 and 300 seconds",
+    expected: "「참여 기준 시간(초)」 은 1초에서 300초 사이로 적으세요.",
+    detail: false,
+  },
+  {
+    label: "생성: workspaces 가 비어 있음 (500)",
+    status: 500,
+    code: "SITE_CREATE_FAILED",
+    message: NO_WORKSPACE_PGX,
+    expected:
+      "사이트를 만들지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  {
+    label: "생성: DB 쪽 실패 (500)",
+    status: 500,
+    code: "SITE_CREATE_FAILED",
+    message: BROKEN_DB_PGX,
+    expected:
+      "사이트를 만들지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  // --- updateSite ---
+  {
+    label: "편집: 사이트 id 가 올바르지 않음",
+    status: 400,
+    code: "INVALID_ID",
+    message: "invalid site id",
+    expected:
+      "이 사이트를 가리킬 수 없습니다. 목록을 새로 고친 뒤 다시 시도하세요.",
+    detail: false,
+  },
+  {
+    label: "편집: 사이트 없음",
+    status: 404,
+    code: "NOT_FOUND",
+    message: "site not found",
+    expected:
+      "이 사이트가 이미 삭제되었습니다. 목록을 새로 고친 뒤 확인하세요.",
+    detail: false,
+  },
+  {
+    label: "편집: 본문을 읽지 못함",
+    status: 400,
+    code: "INVALID_PAYLOAD",
+    message: "json: cannot unmarshal string into Go struct field",
+    expected:
+      "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+    detail: true,
+  },
+  {
+    label: "편집: 세션 만료가 범위를 벗어남",
+    status: 400,
+    code: "INVALID_TIMEOUT",
+    message: "session timeout must be between 1 and 1440 minutes",
+    expected: "「세션 만료(분)」 은 1분에서 1440분 사이로 적으세요.",
+    detail: false,
+  },
+  {
+    label: "편집: 시간대 이름이 IANA 가 아님",
+    status: 400,
+    code: "INVALID_TIMEZONE",
+    message: "timezone must be a valid IANA timezone",
+    expected:
+      "시간대 이름이 올바르지 않습니다. 「IANA 시간대」 칸에 Asia/Seoul 처럼 지역/도시 형태로 적으세요.",
+    detail: false,
+  },
+  {
+    label: "편집: 참여 기준 시간이 범위를 벗어남",
+    status: 400,
+    code: "INVALID_ENGAGEMENT_THRESHOLD",
+    message: "engagement threshold must be between 1 and 300 seconds",
+    expected: "「참여 기준 시간(초)」 은 1초에서 300초 사이로 적으세요.",
+    detail: false,
+  },
+  {
+    label: "편집: 저장 실패 (500)",
+    status: 500,
+    code: "SITE_UPDATE_FAILED",
+    message: BROKEN_DB_PGX,
+    expected:
+      "사이트 설정을 저장하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  // client.ts:81-85 가 코드 없는 응답에 채우는 것.
+  {
+    label: "응답에 코드가 없음",
+    status: 502,
+    code: "REQUEST_FAILED",
+    message: "HTTP 502",
+    expected:
+      "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+    detail: true,
+  },
+];
+
+test("사이트 쪽 서버 코드마다 정해진 한국어 안내가 나온다", () => {
+  for (const entry of SITE_ERRORS) {
+    const described = describeSiteError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.message,
+      entry.expected,
+      `${entry.label} (${entry.code})`,
+    );
+  }
+});
+
+// 결함 자체를 짚는 단언: 지금 Alert 은 error.message 를 그대로 띄우므로, 서버
+// 영문이 본문에 그대로 올라오는 코드가 하나라도 있으면 여기서 떨어진다.
+test("아는 코드의 안내는 서버의 영문 문장이 아니다", () => {
+  for (const entry of SITE_ERRORS) {
+    const described = describeSiteError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.notEqual(
+      described.message,
+      entry.message,
+      `${entry.label} (${entry.code}): 서버 영문이 그대로 본문에 올라왔다`,
+    );
+  }
+});
+
+test("사이트 쪽 서버 원문은 그것이 유일한 단서인 코드에서만 detail 로 남는다", () => {
+  for (const entry of SITE_ERRORS) {
+    const described = describeSiteError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.detail,
+      entry.detail ? entry.message : undefined,
+      `${entry.label} (${entry.code}): detail 이 기대와 다르다`,
+    );
+  }
+});
+
+test("500 의 pgx 원문은 Alert 본문이 아니라 detail 로만 남는다", () => {
+  for (const entry of [
+    { code: "SITE_CREATE_FAILED", message: NO_WORKSPACE_PGX },
+    { code: "SITE_CREATE_FAILED", message: BROKEN_DB_PGX },
+    { code: "SITE_UPDATE_FAILED", message: BROKEN_DB_PGX },
+  ]) {
+    const described = describeSiteError(apiError(500, entry.code, entry.message));
+    for (const marker of PG_MARKERS) {
+      assert.ok(
+        !described.message.includes(marker),
+        `${entry.code}: Postgres 표지 "${marker}" 가 Alert 본문에 섞였다: ${described.message}`,
+      );
+    }
+    // 지우지는 않는다 — 관리자에게 전달할 유일한 단서다.
+    assert.equal(
+      described.detail,
+      entry.message,
+      `${entry.code}: 서버 원문이 detail 에서 사라졌다`,
+    );
+  }
+});
+
+// sites.name 에는 UNIQUE 가 없다(001_initial.sql:34-49, UNIQUE 는 site_key 뿐).
+// 500 을 '이미 있는 사이트 이름' 으로 설명하면 거짓말이 된다.
+test("사이트 생성 500 을 이름 중복이라고 설명하지 않는다", () => {
+  for (const message of [NO_WORKSPACE_PGX, BROKEN_DB_PGX]) {
+    assert.doesNotMatch(
+      describeSiteError(apiError(500, "SITE_CREATE_FAILED", message)).message,
+      /이미 (있는|등록된|존재)/,
+      "SITE_CREATE_FAILED 를 중복이라고 단정한다",
+    );
+  }
+});
+
+test("사이트 쪽도 모르는 코드는 서버 메시지를 그대로 돌려준다", () => {
+  assert.equal(
+    describeSiteError(apiError(400, "SITE_SOMETHING_NEW", "a brand new refusal"))
+      .message,
+    "a brand new refusal",
+  );
+});
+
+test("사이트 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남기지 않는다", () => {
+  for (const value of [
+    null,
+    undefined,
+    {},
+    new Error(""),
+    "문자열",
+    apiError(500, "SITE_SOMETHING_NEW", ""),
+  ]) {
+    const described = describeSiteError(value);
     assert.ok(
       described.message.length > 0,
       `${String(value)}: 안내가 비어 있다`,
