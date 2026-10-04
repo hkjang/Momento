@@ -74,7 +74,11 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
-import { describeUserError } from "./adminErrors";
+import {
+  describeSiteError,
+  describeUserError,
+  type UserErrorNotice,
+} from "./adminErrors";
 import {
   auditDetailText,
   auditPath,
@@ -1993,9 +1997,7 @@ function SitesAdmin() {
               onChange={(e) => setEngagementThreshold(Number(e.target.value))}
               slotProps={{ htmlInput: { min: 1, max: 300 } }}
             />
-            {create.error && (
-              <Alert severity="error">{create.error.message}</Alert>
-            )}
+            {create.error && <SiteErrorAlert error={create.error} />}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -2117,9 +2119,7 @@ function SiteSettingsDialog({
             slotProps={{ htmlInput: { min: 1, max: 300 } }}
             helperText="이 시간 이상이거나 전환이 있거나 Page View가 2회 이상이면 참여 세션입니다."
           />
-          {update.error && (
-            <Alert severity="error">{update.error.message}</Alert>
-          )}
+          {update.error && <SiteErrorAlert error={update.error} />}
         </Stack>
       </DialogContent>
       <DialogActions>
@@ -3329,7 +3329,25 @@ interface AdminUser {
  * describeUserError kept it as the remaining clue.
  */
 function UserErrorAlert({ error }: { error: unknown }) {
-  const notice = describeUserError(error);
+  return <AdminNoticeAlert notice={describeUserError(error)} />;
+}
+/**
+ * The only place a refused site create/update is explained, and the same shape
+ * as the user one above: both site dialogs printed the server's own sentence,
+ * so a mistyped 「IANA 시간대」 arrived as `timezone must be a valid IANA
+ * timezone` and a 500 carried pgx's text to the browser.
+ *
+ * Which describe\* to ask stays with the caller — the two handlers answer
+ * different sets of codes, so the choice is not something this layout can make.
+ */
+function SiteErrorAlert({ error }: { error: unknown }) {
+  return <AdminNoticeAlert notice={describeSiteError(error)} />;
+}
+/**
+ * Guidance first, the server's own text only where describe\* kept it as the
+ * remaining clue. Laid out like States.tsx's query error.
+ */
+function AdminNoticeAlert({ notice }: { notice: UserErrorNotice }) {
   return (
     <Alert severity="error">
       <Typography variant="body2">{notice.message}</Typography>
