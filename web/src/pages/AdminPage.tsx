@@ -75,6 +75,7 @@ import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import {
+  describeNetworkError,
   describeSiteError,
   describeUserError,
   type UserErrorNotice,
@@ -3241,9 +3242,7 @@ function NetworksAdmin() {
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
           />
-          {create.error && (
-            <Alert severity="error">{create.error.message}</Alert>
-          )}
+          {create.error && <NetworkErrorAlert error={create.error} />}
           <Button
             variant="contained"
             onClick={() => create.mutate()}
@@ -3342,6 +3341,14 @@ function UserErrorAlert({ error }: { error: unknown }) {
  */
 function SiteErrorAlert({ error }: { error: unknown }) {
   return <AdminNoticeAlert notice={describeSiteError(error)} />;
+}
+/**
+ * The same shape again for 「망 구분 추가」, whose Alert printed the server's
+ * own `CIDR is invalid` — three words that name the problem and not the fix,
+ * for the one form here with a hand-typed CIDR in it.
+ */
+function NetworkErrorAlert({ error }: { error: unknown }) {
+  return <AdminNoticeAlert notice={describeNetworkError(error)} />;
 }
 /**
  * Guidance first, the server's own text only where describe\* kept it as the
