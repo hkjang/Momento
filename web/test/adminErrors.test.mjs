@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  describeNetworkError,
   describeSiteError,
   describeUserError,
 } from "../src/pages/adminErrors.ts";
@@ -572,6 +573,185 @@ test("사이트 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남�
     apiError(500, "SITE_SOMETHING_NEW", ""),
   ]) {
     const described = describeSiteError(value);
+    assert.ok(
+      described.message.length > 0,
+      `${String(value)}: 안내가 비어 있다`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 망 구분 추가(createNetwork, admin.go:800~)
+// ---------------------------------------------------------------------------
+
+// createNetwork 의 500 이 Alert 로 싣고 오는 pgx 원문. 아래쪽은 network_ranges.cidr
+// 가 Postgres `cidr` 타입(001_initial.sql:64-70)이라 넷마스크 오른쪽에 비트가 선
+// 값을 거절할 때 나올 꼴이다 — Go 의 net.ParseCIDR 은 그런 값을 통과시키므로
+// INVALID_CIDR 400 이 아니라 이 500 으로 온다. **Postgres 로 재현하지 않았다.**
+// 재현 여부와 무관하게 서버 원문은 믿을 수 없는 문자열이고, 이 단언이 묶는 것은
+// "그런 문자열이 오면 본문으로 새지 않는다" 뿐이다.
+const BAD_CIDR_PGX =
+  'ERROR: invalid cidr value: "10.0.0.5/24" (SQLSTATE 22P02)';
+const NETWORK_DB_PGX =
+  'ERROR: relation "network_ranges" does not exist (SQLSTATE 42P01)';
+
+// 사이트 쪽 PG_MARKERS 에 cidr 타입이 내는 표지를 더한 것.
+const NETWORK_PG_MARKERS = [...PG_MARKERS, "invalid cidr value"];
+
+// 서버가 createNetwork 에서 실제로 내는 코드 전부 — 셋뿐이다(admin.go:809·813·823).
+const NETWORK_ERRORS = [
+  {
+    label: "추가: 본문을 읽지 못함",
+    status: 400,
+    code: "INVALID_PAYLOAD",
+    message: "unexpected EOF",
+    expected:
+      "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+    detail: true,
+  },
+  {
+    label: "추가: CIDR 표기가 틀림",
+    status: 400,
+    code: "INVALID_CIDR",
+    message: "CIDR is invalid",
+    expected:
+      "CIDR 표기가 올바르지 않습니다. 「CIDR」 칸에 10.20.30.0/24 처럼 주소 뒤에 「/」 와 비트 수(IPv4 는 0~32, IPv6 는 0~128)를 붙여 적으세요.",
+    detail: false,
+  },
+  {
+    label: "추가: DB 쪽 실패 (500)",
+    status: 500,
+    code: "NETWORK_CREATE_FAILED",
+    message: NETWORK_DB_PGX,
+    expected:
+      "망 구분을 추가하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  {
+    label: "추가: DB 가 CIDR 값을 거절 (500)",
+    status: 500,
+    code: "NETWORK_CREATE_FAILED",
+    message: BAD_CIDR_PGX,
+    expected:
+      "망 구분을 추가하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  // client.ts:81-85 가 코드 없는 응답에 채우는 것.
+  {
+    label: "응답에 코드가 없음",
+    status: 502,
+    code: "REQUEST_FAILED",
+    message: "HTTP 502",
+    expected:
+      "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+    detail: true,
+  },
+];
+
+test("망 구분 쪽 서버 코드마다 정해진 한국어 안내가 나온다", () => {
+  for (const entry of NETWORK_ERRORS) {
+    const described = describeNetworkError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.message,
+      entry.expected,
+      `${entry.label} (${entry.code})`,
+    );
+  }
+});
+
+// 결함 자체를 짚는 단언: 지금 Alert(AdminPage.tsx:3244-3246) 은 error.message 를
+// 그대로 띄우므로, 항등 스텁에서는 아는 코드마다 여기서 떨어진다.
+test("망 구분 쪽도 아는 코드의 안내는 서버의 영문 문장이 아니다", () => {
+  for (const entry of NETWORK_ERRORS) {
+    const described = describeNetworkError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.notEqual(
+      described.message,
+      entry.message,
+      `${entry.label} (${entry.code}): 서버 영문이 그대로 본문에 올라왔다`,
+    );
+  }
+});
+
+test("망 구분 쪽 서버 원문은 그것이 유일한 단서인 코드에서만 detail 로 남는다", () => {
+  for (const entry of NETWORK_ERRORS) {
+    const described = describeNetworkError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.detail,
+      entry.detail ? entry.message : undefined,
+      `${entry.label} (${entry.code}): detail 이 기대와 다르다`,
+    );
+  }
+});
+
+test("망 구분 500 의 pgx 원문은 Alert 본문이 아니라 detail 로만 남는다", () => {
+  for (const message of [NETWORK_DB_PGX, BAD_CIDR_PGX]) {
+    const described = describeNetworkError(
+      apiError(500, "NETWORK_CREATE_FAILED", message),
+    );
+    for (const marker of NETWORK_PG_MARKERS) {
+      assert.ok(
+        !described.message.includes(marker),
+        `NETWORK_CREATE_FAILED: Postgres 표지 "${marker}" 가 Alert 본문에 섞였다: ${described.message}`,
+      );
+    }
+    // 지우지는 않는다 — 관리자에게 전달할 유일한 단서다.
+    assert.equal(
+      described.detail,
+      message,
+      "NETWORK_CREATE_FAILED: 서버 원문이 detail 에서 사라졌다",
+    );
+  }
+});
+
+// network_ranges 에는 UNIQUE 가 없다(001_initial.sql:64-70 — id PRIMARY KEY 뿐).
+// 500 을 '이미 등록된 망/CIDR' 로 설명하면 거짓말이 된다.
+test("망 구분 추가 500 을 중복이라고 설명하지 않는다", () => {
+  for (const message of [NETWORK_DB_PGX, BAD_CIDR_PGX]) {
+    assert.doesNotMatch(
+      describeNetworkError(apiError(500, "NETWORK_CREATE_FAILED", message))
+        .message,
+      /이미 (있는|등록된|존재)/,
+      "NETWORK_CREATE_FAILED 를 중복이라고 단정한다",
+    );
+  }
+});
+
+// 기준 1: CIDR 칸은 손으로 적는 자유 입력이라 가장 흔한 실패가 이것이다. 안내가
+// 다음에 할 행동(표기 형태)을 말해 주어야 한다.
+test("CIDR 안내는 다음에 적을 표기 형태를 보여 준다", () => {
+  const described = describeNetworkError(
+    apiError(400, "INVALID_CIDR", "CIDR is invalid"),
+  );
+  // 화면 placeholder(AdminPage.tsx:3238) 와 같은 예시를 든다.
+  assert.match(described.message, /10\.20\.30\.0\/24/);
+  assert.match(described.message, /CIDR/);
+});
+
+test("망 구분 쪽도 모르는 코드는 서버 메시지를 그대로 돌려준다", () => {
+  assert.equal(
+    describeNetworkError(
+      apiError(400, "NETWORK_SOMETHING_NEW", "a brand new refusal"),
+    ).message,
+    "a brand new refusal",
+  );
+});
+
+test("망 구분 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남기지 않는다", () => {
+  for (const value of [
+    null,
+    undefined,
+    {},
+    new Error(""),
+    "문자열",
+    apiError(500, "NETWORK_SOMETHING_NEW", ""),
+  ]) {
+    const described = describeNetworkError(value);
     assert.ok(
       described.message.length > 0,
       `${String(value)}: 안내가 비어 있다`,

@@ -254,3 +254,52 @@ export function describeSiteError(error: unknown): UserErrorNotice {
       return { message: message || "요청을 완료하지 못했습니다." };
   }
 }
+
+/**
+ * describeNetworkError does for 「망 구분 추가」 what the two above do for the
+ * user and site dialogs.
+ *
+ * Its Alert printed `error.message` too (AdminPage.tsx), and this form is the
+ * one with a hand-typed CIDR in it, so the commonest refusal of all arrived as
+ * the server's three words: `CIDR is invalid` (admin.go:813). That names what
+ * is wrong and nothing about what to write instead, while the box right above
+ * it already shows the shape — so the guidance quotes that same example.
+ *
+ * Kept separate from the other two for the same reason they are separate from
+ * each other: createNetwork answers three codes of its own and the thing the
+ * reader has to correct is a different field. Only `refusal` is shared.
+ */
+export function describeNetworkError(error: unknown): UserErrorNotice {
+  const { code, message } = refusal(error);
+
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return { message: UNREADABLE_PAYLOAD, detail: message || undefined };
+    case "INVALID_CIDR":
+      // net.ParseCIDR refused the text outright (admin.go:813), which is a
+      // missing or out-of-range prefix length rather than a misplaced one —
+      // ParseCIDR accepts host bits to the right of the netmask. So the
+      // guidance is about the notation, and the example matches the 칸's own
+      // placeholder.
+      return {
+        message:
+          "CIDR 표기가 올바르지 않습니다. 「CIDR」 칸에 10.20.30.0/24 처럼 주소 뒤에 「/」 와 비트 수(IPv4 는 0~32, IPv6 는 0~128)를 붙여 적으세요.",
+      };
+    case "NETWORK_CREATE_FAILED":
+      // Deliberately says nothing about the cause. network_ranges carries no
+      // UNIQUE at all (001_initial.sql:64-70 is id PRIMARY KEY and four plain
+      // columns), so calling this an already-registered 망 or CIDR would be
+      // plainly false. The column is Postgres `cidr`, which may well refuse a
+      // value net.ParseCIDR accepted — but that has not been reproduced
+      // against a database here, so it is not named either. The server's text
+      // is kept as the one remaining clue.
+      return {
+        message: `망 구분을 추가하지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "REQUEST_FAILED":
+      return { message: LOST_REQUEST, detail: message || undefined };
+    default:
+      return { message: message || "요청을 완료하지 못했습니다." };
+  }
+}
