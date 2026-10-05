@@ -75,6 +75,7 @@ import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import {
+  describeEventDefinitionError,
   describeNetworkError,
   describeSiteError,
   describeUserError,
@@ -3351,6 +3352,15 @@ function NetworkErrorAlert({ error }: { error: unknown }) {
   return <AdminNoticeAlert notice={describeNetworkError(error)} />;
 }
 /**
+ * And again for 「Event Schema」 — the one of the four whose commonest failure
+ * never leaves the browser. Its 「JSON Schema」 칸 is parsed inside the mutation,
+ * so a stray character arrived as V8's own `Unexpected token '}', … is not
+ * valid JSON`, naming neither the box to fix nor what to write in it.
+ */
+function EventDefinitionErrorAlert({ error }: { error: unknown }) {
+  return <AdminNoticeAlert notice={describeEventDefinitionError(error)} />;
+}
+/**
  * Guidance first, the server's own text only where describe\* kept it as the
  * remaining clue. Laid out like States.tsx's query error.
  */
@@ -3772,7 +3782,7 @@ function SchemasAdmin() {
             value={form.schemaText}
             onChange={(e) => setForm({ ...form, schemaText: e.target.value })}
           />
-          {save.error && <Alert severity="error">{save.error.message}</Alert>}
+          {save.error && <EventDefinitionErrorAlert error={save.error} />}
           <Button
             variant="contained"
             onClick={() => save.mutate()}
