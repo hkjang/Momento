@@ -24,6 +24,7 @@
 // would not need it — those are stripped before resolution — but PASSWORD_RULE
 // is a value, and the rule the Alert quotes must be the one the form quotes.
 import { PASSWORD_RULE } from "./passwordRule.ts";
+import { CIDR_RULE } from "./cidrRule.ts";
 
 export interface UserErrorNotice {
   /** The Korean guidance to show. Never empty. */
@@ -281,10 +282,13 @@ export function describeNetworkError(error: unknown): UserErrorNotice {
       // ParseCIDR accepts host bits to the right of the netmask. So the
       // guidance is about the notation, and the example matches the 칸's own
       // placeholder.
-      return {
-        message:
-          "CIDR 표기가 올바르지 않습니다. 「CIDR」 칸에 10.20.30.0/24 처럼 주소 뒤에 「/」 와 비트 수(IPv4 는 0~32, IPv6 는 0~128)를 붙여 적으세요.",
-      };
+      //
+      // The notation half now lives in cidrRule.ts, which the 폼 reads for its
+      // helperText. The 폼 screens out most of what reaches this branch, so the
+      // two have to say the same thing for the few that still get through —
+      // sharing the constant is what makes that true by construction rather
+      // than by someone remembering to edit both.
+      return { message: `CIDR 표기가 올바르지 않습니다. ${CIDR_RULE}` };
     case "NETWORK_CREATE_FAILED":
       // Deliberately says nothing about the cause. network_ranges carries no
       // UNIQUE at all (001_initial.sql:64-70 is id PRIMARY KEY and four plain
