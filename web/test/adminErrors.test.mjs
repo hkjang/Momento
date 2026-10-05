@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  describeEventDefinitionError,
   describeNetworkError,
   describeSiteError,
   describeUserError,
@@ -752,6 +753,255 @@ test("망 구분 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남�
     apiError(500, "NETWORK_SOMETHING_NEW", ""),
   ]) {
     const described = describeNetworkError(value);
+    assert.ok(
+      described.message.length > 0,
+      `${String(value)}: 안내가 비어 있다`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Event Schema 저장(upsertEventDefinition, admin.go:1395~)
+// ---------------------------------------------------------------------------
+
+// 이 화면의 실패는 둘로 갈린다. 아래 SCHEMA_TEXT 처럼 「JSON Schema」 칸의 JSON 이
+// 깨지면 요청은 서버에 가지도 않는다 — AdminPage.tsx 의 mutationFn 안에서
+// JSON.parse 가 먼저 던지고, react-query 가 그 동기 throw 를 save.error 에 담는다
+// (실제 브라우저에서 확인함). 그 에러에는 code 가 없어서, 코드만 보는 안내는
+// default 로 떨어뜨려 V8 의 영문 문장을 그대로 내보낸다.
+const BROKEN_SCHEMA_TEXT = '{"properties": }';
+
+// **손으로 만든 가짜 객체를 쓰지 않는다.** 엔진이 실제로 던지는 것을 받아 둔다 —
+// 문장도 프로퍼티도 엔진이 정하는 것이고, 안내가 막아야 하는 것은 바로 그 값이다.
+function realParseError(text) {
+  try {
+    JSON.parse(text);
+  } catch (e) {
+    return e;
+  }
+  throw new Error(`${text} 는 깨진 JSON 이 아니다 — 테스트 전제가 틀렸다`);
+}
+
+// V8 이 내는 표지. 이 중 하나라도 안내 본문에 있으면 영문이 그대로 샌 것이다.
+const ENGINE_MARKERS = [
+  "Unexpected token",
+  "is not valid JSON",
+  "JSON.parse",
+  "position",
+];
+
+// upsertEventDefinition 의 500 이 싣고 오는 꼴. 이 500 은 서로 다른 여섯 자리가
+// 함께 쓴다(Begin·INSERT·version 조회·두 Exec·Commit). 특히 INSERT 는
+// `SELECT id,... FROM sites WHERE site_key=$1` 이라 site_key 가 맞지 않으면 0행
+// 삽입이 되어 pgx.ErrNoRows 로 같은 500 이 된다. **Postgres 로 재현하지 않았다** —
+// 이 단언이 묶는 것은 "그런 문자열이 오면 본문으로 새지 않는다" 뿐이다.
+const DEFINITION_FK_PGX =
+  'ERROR: insert or update on table "event_contract_versions" violates foreign key constraint "event_contract_versions_site_id_fkey" (SQLSTATE 23503)';
+const DEFINITION_NO_ROWS_PGX = "no rows in result set";
+
+// 서버가 이 핸들러에서 실제로 내는 코드 전부 — 셋뿐이다(admin.go:1409·1415 및
+// DEFINITION_SAVE_FAILED 를 쓰는 여섯 자리) + client.ts 가 채우는 REQUEST_FAILED.
+const DEFINITION_ERRORS = [
+  {
+    label: "저장: 본문을 읽지 못함",
+    status: 400,
+    code: "INVALID_PAYLOAD",
+    message: "unexpected EOF",
+    expected:
+      "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+    detail: true,
+  },
+  {
+    label: "저장: 정책 값이 셋 중 하나가 아님",
+    status: 400,
+    code: "INVALID_MODE",
+    message: "validation mode must be allow, warn, or reject",
+    expected:
+      "「정책」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 allow·warn·reject 중에서 다시 고르세요.",
+    detail: false,
+  },
+  {
+    label: "저장: DB 쪽 실패 (500)",
+    status: 500,
+    code: "DEFINITION_SAVE_FAILED",
+    message: DEFINITION_FK_PGX,
+    expected:
+      "이벤트 규격을 저장하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  {
+    label: "저장: 삽입이 0행이 됨 (500)",
+    status: 500,
+    code: "DEFINITION_SAVE_FAILED",
+    message: DEFINITION_NO_ROWS_PGX,
+    expected:
+      "이벤트 규격을 저장하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.",
+    detail: true,
+  },
+  {
+    label: "응답에 코드가 없음",
+    status: 502,
+    code: "REQUEST_FAILED",
+    message: "HTTP 502",
+    expected:
+      "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+    detail: true,
+  },
+];
+
+// 기준 3(a): 깨진 JSON 에서 나오는 **진짜** SyntaxError 의 안내에 엔진 원문이 없다.
+test("깨진 JSON 의 안내에 V8 의 영문 문장이 섞이지 않는다", () => {
+  const described = describeEventDefinitionError(
+    realParseError(BROKEN_SCHEMA_TEXT),
+  );
+  for (const marker of ENGINE_MARKERS) {
+    assert.ok(
+      !described.message.includes(marker),
+      `엔진 원문 표지 "${marker}" 가 안내 본문에 섞였다: ${described.message}`,
+    );
+  }
+  assert.match(described.message, /[가-힣]/, "안내가 한국어가 아니다");
+});
+
+// 기준 1: 어느 칸을 고쳐야 하는지 말한다.
+test("깨진 JSON 의 안내는 고쳐야 할 칸을 가리킨다", () => {
+  const described = describeEventDefinitionError(
+    realParseError(BROKEN_SCHEMA_TEXT),
+  );
+  assert.match(described.message, /JSON Schema/);
+});
+
+// 기준 1: 원문은 지우지 않는다 — 어디가 깨졌는지 아는 유일한 단서다.
+test("깨진 JSON 의 엔진 원문은 본문이 아니라 detail 로만 남는다", () => {
+  const error = realParseError(BROKEN_SCHEMA_TEXT);
+  const described = describeEventDefinitionError(error);
+  assert.equal(described.detail, error.message);
+});
+
+// 엔진이 문장을 바꾸더라도 판정이 흔들리지 않아야 한다 — 여러 꼴의 깨진 JSON 에서
+// 모두 같은 안내로 가는지 본다(판정이 한 문장의 생김새에 매달려 있지 않다는 증거).
+test("여러 꼴의 깨진 JSON 이 모두 같은 안내로 간다", () => {
+  const first = describeEventDefinitionError(
+    realParseError(BROKEN_SCHEMA_TEXT),
+  ).message;
+  for (const text of ["{", "", "{'a':1}", '{"a":1,}', "not json at all"]) {
+    assert.equal(
+      describeEventDefinitionError(realParseError(text)).message,
+      first,
+      `${JSON.stringify(text)}: 다른 안내로 갔다`,
+    );
+  }
+});
+
+// 기준 3(b): 아는 코드 네 개의 안내가 서버 영문이 아니다.
+test("Event Schema 쪽 서버 코드마다 정해진 한국어 안내가 나온다", () => {
+  for (const entry of DEFINITION_ERRORS) {
+    const described = describeEventDefinitionError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.message,
+      entry.expected,
+      `${entry.label} (${entry.code})`,
+    );
+  }
+});
+
+// 결함 자체를 짚는 단언: 지금 Alert(AdminPage.tsx:3775) 은 error.message 를 그대로
+// 띄우므로, 항등 스텁에서는 아는 코드마다 여기서 떨어진다.
+test("Event Schema 쪽도 아는 코드의 안내는 서버의 영문 문장이 아니다", () => {
+  for (const entry of DEFINITION_ERRORS) {
+    const described = describeEventDefinitionError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.notEqual(
+      described.message,
+      entry.message,
+      `${entry.label} (${entry.code}): 서버 영문이 그대로 본문에 올라왔다`,
+    );
+  }
+});
+
+test("Event Schema 쪽 서버 원문은 그것이 유일한 단서인 코드에서만 detail 로 남는다", () => {
+  for (const entry of DEFINITION_ERRORS) {
+    const described = describeEventDefinitionError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.equal(
+      described.detail,
+      entry.detail ? entry.message : undefined,
+      `${entry.label} (${entry.code}): detail 이 기대와 다르다`,
+    );
+  }
+});
+
+// 기준 3(d): 500 의 pgx 원문이 본문이 아니라 detail 로만 남는다.
+test("Event Schema 500 의 pgx 원문은 Alert 본문이 아니라 detail 로만 남는다", () => {
+  for (const message of [DEFINITION_FK_PGX, DEFINITION_NO_ROWS_PGX]) {
+    const described = describeEventDefinitionError(
+      apiError(500, "DEFINITION_SAVE_FAILED", message),
+    );
+    for (const marker of PG_MARKERS) {
+      assert.ok(
+        !described.message.includes(marker),
+        `DEFINITION_SAVE_FAILED: Postgres 표지 "${marker}" 가 Alert 본문에 섞였다: ${described.message}`,
+      );
+    }
+    assert.equal(
+      described.detail,
+      message,
+      "DEFINITION_SAVE_FAILED: 서버 원문이 detail 에서 사라졌다",
+    );
+  }
+});
+
+// 이름 중복은 `ON CONFLICT(site_id,name) DO UPDATE` 가 흡수하므로(admin.go:1421)
+// 이 500 을 '이미 등록된 이벤트' 라고 쓰면 거짓말이 된다. 원인이 미확정이라는 것이
+// 이 단언이 묶는 것이다.
+test("Event Schema 저장 500 을 중복이라고 설명하지 않는다", () => {
+  for (const message of [DEFINITION_FK_PGX, DEFINITION_NO_ROWS_PGX]) {
+    assert.doesNotMatch(
+      describeEventDefinitionError(
+        apiError(500, "DEFINITION_SAVE_FAILED", message),
+      ).message,
+      /이미 (있는|등록된|존재)/,
+      "DEFINITION_SAVE_FAILED 를 중복이라고 단정한다",
+    );
+  }
+});
+
+// 기준 3(c): 모르는 코드는 서버 메시지 그대로 — 세 describe\* 와 같은 계약.
+test("Event Schema 쪽도 모르는 코드는 서버 메시지를 그대로 돌려준다", () => {
+  assert.equal(
+    describeEventDefinitionError(
+      apiError(400, "DEFINITION_SOMETHING_NEW", "a brand new refusal"),
+    ).message,
+    "a brand new refusal",
+  );
+});
+
+// 코드가 있는 실패는 JSON 분기로 가로채이지 않아야 한다 — 서버 문장에 'JSON' 이
+// 들어 있어도 그것은 서버의 거절이고, 「JSON Schema」 칸 얘기가 아니다.
+test("코드가 붙은 실패는 JSON 구문 안내로 가로채이지 않는다", () => {
+  const described = describeEventDefinitionError(
+    apiError(400, "INVALID_PAYLOAD", "invalid JSON body: unexpected EOF"),
+  );
+  assert.equal(
+    described.message,
+    "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+  );
+});
+
+test("Event Schema 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남기지 않는다", () => {
+  for (const value of [
+    null,
+    undefined,
+    {},
+    new Error(""),
+    "문자열",
+    apiError(500, "DEFINITION_SOMETHING_NEW", ""),
+  ]) {
+    const described = describeEventDefinitionError(value);
     assert.ok(
       described.message.length > 0,
       `${String(value)}: 안내가 비어 있다`,

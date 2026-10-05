@@ -303,3 +303,78 @@ export function describeNetworkError(error: unknown): UserErrorNotice {
       return { message: message || "요청을 완료하지 못했습니다." };
   }
 }
+
+/**
+ * describeEventDefinitionError does for 「Event Schema」 what the three above do
+ * for the user, site and 망 구분 forms — with one difference that changes the
+ * shape of the function.
+ *
+ * This is the only one of the four whose commonest failure never reaches the
+ * server. The 「JSON Schema」 칸 is five rows of free text, and the mutation
+ * evaluates `JSON.parse(form.schemaText)` inside `mutationFn` (AdminPage.tsx),
+ * so one stray character makes V8 throw before the request is built —
+ * react-query catches that synchronous throw and puts it in `save.error`, where
+ * the Alert printed it: `Unexpected token '}', "{"properties": }" is not valid
+ * JSON`. Confirmed in a real browser against the production bundle, not
+ * inferred from the library's source.
+ *
+ * That error carries no `code`, so a switch on the code alone drops it into the
+ * default branch and hands the engine's English straight back. Hence the syntax
+ * branch sits *before* the switch.
+ *
+ * Kept separate from the other three for the reason they are separate from each
+ * other: upsertEventDefinition (admin.go:1395~) answers its own small set of
+ * codes and the field the reader has to correct is its own. Only `refusal` and
+ * the shared sentences are reused.
+ */
+export function describeEventDefinitionError(error: unknown): UserErrorNotice {
+  const { code, message } = refusal(error);
+
+  // Before the switch, and deliberately so — see above. `instanceof` holds
+  // because the throw and this check happen in the same realm (the bundle's
+  // own JSON.parse call). The message pattern is only a second layer for the
+  // day that stops being true, and it is guarded by the absence of a code:
+  // every refusal that came from the server has one, because client.ts fills
+  // in REQUEST_FAILED when the response carried none.
+  if (error instanceof SyntaxError || (!code && /JSON/.test(message))) {
+    return {
+      // Says which box, because the error itself cannot: the screen has two
+      // other free-text boxes and the engine's text names none of them.
+      message:
+        "「JSON Schema」 칸의 내용이 올바른 JSON 이 아닙니다. 중괄호·대괄호의 짝과 쉼표 위치를 확인하고, 키와 문자열 값은 겹따옴표로 감싸세요. 규격을 비워 둘 때는 {} 로 적습니다.",
+      // The engine's own text is the only clue to *where* the text broke, so
+      // it is kept — as the caption, never as the guidance.
+      detail: message || undefined,
+    };
+  }
+
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return { message: UNREADABLE_PAYLOAD, detail: message || undefined };
+    case "INVALID_MODE":
+      // 「정책」 은 allow·warn·reject 세 개짜리 select 이므로(AdminPage.tsx),
+      // 여기 닿았다는 것은 화면이 보낸 값이 서버가 아는 세 개와 어긋났다는
+      // 뜻이다 — 고를 값이 틀린 게 아니라 화면이 오래된 것이다.
+      return {
+        message:
+          "「정책」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 allow·warn·reject 중에서 다시 고르세요.",
+      };
+    case "DEFINITION_SAVE_FAILED":
+      // Deliberately says nothing about the cause. Six different places answer
+      // with this one code (Begin, the INSERT, the version lookup, two Execs,
+      // Commit), and the INSERT selects the site by `site_key`, so a site_key
+      // that matches nothing inserts zero rows and arrives here as
+      // pgx.ErrNoRows — indistinguishable from a database outage. Calling it an
+      // already-registered event would be plainly false either way: the INSERT
+      // carries `ON CONFLICT(site_id,name) DO UPDATE`, so a repeated name is
+      // absorbed rather than refused.
+      return {
+        message: `이벤트 규격을 저장하지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "REQUEST_FAILED":
+      return { message: LOST_REQUEST, detail: message || undefined };
+    default:
+      return { message: message || "요청을 완료하지 못했습니다." };
+  }
+}
