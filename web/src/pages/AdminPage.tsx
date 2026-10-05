@@ -74,6 +74,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
+import { CIDR_RULE, judgeCIDR } from "./cidrRule";
 import {
   describeEventDefinitionError,
   describeNetworkError,
@@ -3197,6 +3198,9 @@ function NetworksAdmin() {
     queryFn: ({ signal }) => get<Network[]>("/api/v1/networks", { signal }),
   });
   const [form, setForm] = useState({ name: "", cidr: "", description: "" });
+  // 서버의 net.ParseCIDR(admin.go:812)이 확실히 거절할 표기만 화면에서 거른다 —
+  // 왕복을 한 번 돌고 INVALID_CIDR 을 받아야 알던 것을 칸 아래에서 바로 읽게.
+  const cidr = judgeCIDR(form.cidr);
   const create = useMutation({
     meta: { successMessage: "만들었습니다." },
     mutationFn: () => post("/api/v1/networks", { ...form, internal: true }),
@@ -3237,6 +3241,10 @@ function NetworksAdmin() {
             value={form.cidr}
             onChange={(e) => setForm({ ...form, cidr: e.target.value })}
             placeholder="10.20.30.0/24"
+            error={Boolean(cidr.error)}
+            // 칸 아래에는 늘 읽을 거리가 있다 — 막혔으면 왜 막혔는지, 아니면
+            // 알아 둘 것, 그것도 없으면 규칙 자체(PASSWORD_RULE 선례).
+            helperText={cidr.blocking ?? cidr.hint ?? CIDR_RULE}
           />
           <TextField
             label="설명"
@@ -3247,7 +3255,7 @@ function NetworksAdmin() {
           <Button
             variant="contained"
             onClick={() => create.mutate()}
-            disabled={!form.name || !form.cidr}
+            disabled={!form.name || !form.cidr || Boolean(cidr.blocking)}
           >
             추가
           </Button>
