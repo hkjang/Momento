@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   describeEventDefinitionError,
   describeNetworkError,
+  describeRetentionError,
   describeSiteError,
   describeUserError,
 } from "../src/pages/adminErrors.ts";
@@ -1002,6 +1003,262 @@ test("Event Schema 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 �
     apiError(500, "DEFINITION_SOMETHING_NEW", ""),
   ]) {
     const described = describeEventDefinitionError(value);
+    assert.ok(
+      described.message.length > 0,
+      `${String(value)}: 안내가 비어 있다`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 보존 정책 저장 (RetentionAdmin) — describeRetentionError
+//
+// 다섯 칸이 전부 type="number" 자유 입력이라 범위를 벗어난 값이 흔한데, Alert 은
+// error.message 를 그대로 띄웠다(AdminPage.tsx). 그래서 올라오는 것은 화면에 없는
+// 영문 컬럼명이었다 — `raw_event_months must be between 1 and 120`. 500 쪽은
+// putRetentionPolicy 가 err.Error() 를 그대로 싣는다(advanced_analytics.go:117).
+// ---------------------------------------------------------------------------
+
+// internal/httpapi/advanced_analytics.go 의 validateRetention(80-97행) 이 내는
+// 다섯 문장을 글자 그대로 옮긴 것. 화면 라벨은 AdminPage.tsx 의 TextField label
+// 에서 그대로 가져왔다 — 둘의 대응이 이 표가 묶는 것이다.
+const RETENTION_FIELDS = [
+  {
+    label: "Raw Event (개월)",
+    column: "raw_event_months",
+    message: "raw_event_months must be between 1 and 120",
+    range: ["1개월", "120개월"],
+  },
+  {
+    label: "Session 요약 (개월)",
+    column: "session_months",
+    message: "session_months must be between 1 and 120",
+    range: ["1개월", "120개월"],
+  },
+  {
+    label: "Aggregation (개월)",
+    column: "aggregation_months",
+    message: "aggregation_months must be null or between 1 and 1200",
+    range: ["비워", "1개월", "1200개월"],
+  },
+  {
+    label: "Realtime (시간)",
+    column: "realtime_hours",
+    message: "realtime_hours must be between 1 and 168",
+    range: ["1시간", "168시간"],
+  },
+  {
+    label: "Debugger / Dead Letter (일)",
+    column: "debug_days",
+    message: "debug_days must be between 1 and 90",
+    range: ["1일", "90일"],
+  },
+];
+
+// 모든 컬럼명 — 어느 안내에도 이 중 하나가 본문에 남으면 안 된다.
+const RETENTION_COLUMNS = RETENTION_FIELDS.map((field) => field.column);
+
+// 기준 1: 다섯 거절이 각각 자기 칸의 화면 라벨을 가리킨다.
+test("보존 정책 거절마다 해당 칸의 화면 라벨을 이름으로 가리킨다", () => {
+  for (const field of RETENTION_FIELDS) {
+    const described = describeRetentionError(
+      apiError(400, "INVALID_RETENTION", field.message),
+    );
+    assert.ok(
+      described.message.includes(`「${field.label}」`),
+      `${field.column}: 「${field.label}」 를 가리키지 않는다: ${described.message}`,
+    );
+  }
+});
+
+// 기준 1: 허용 범위를 한국어 단위로 말한다.
+test("보존 정책 거절마다 허용 범위를 한국어 단위로 말한다", () => {
+  for (const field of RETENTION_FIELDS) {
+    const described = describeRetentionError(
+      apiError(400, "INVALID_RETENTION", field.message),
+    );
+    for (const piece of field.range) {
+      assert.ok(
+        described.message.includes(piece),
+        `${field.column}: 범위 "${piece}" 가 안내에 없다: ${described.message}`,
+      );
+    }
+  }
+});
+
+// 결함 자체를 짚는 단언: 지금 Alert 은 error.message 를 그대로 띄우므로
+// 항등 스텁에서는 다섯 건 모두 여기서 떨어진다.
+test("보존 정책 안내에 영문 컬럼명과 must be between 이 남지 않는다", () => {
+  for (const field of RETENTION_FIELDS) {
+    const described = describeRetentionError(
+      apiError(400, "INVALID_RETENTION", field.message),
+    );
+    for (const column of RETENTION_COLUMNS) {
+      assert.ok(
+        !described.message.includes(column),
+        `${field.column}: 영문 컬럼명 "${column}" 이 안내 본문에 섞였다: ${described.message}`,
+      );
+    }
+    assert.doesNotMatch(
+      described.message,
+      /must be|between/,
+      `${field.column}: 서버의 영문 문장이 안내 본문에 남았다`,
+    );
+  }
+});
+
+// 다섯 칸이 서로 다른 칸을 가리켜야 한다 — 한 문구로 뭉개면 번역해야 할 것이 그대로
+// 남는다. 라벨 세 개가 "(개월)" 로 끝나므로 전문이 모두 달라야 의미가 있다.
+test("보존 정책 거절 다섯 건의 안내가 서로 다르다", () => {
+  const seen = new Set();
+  for (const field of RETENTION_FIELDS) {
+    const described = describeRetentionError(
+      apiError(400, "INVALID_RETENTION", field.message),
+    );
+    assert.ok(
+      !seen.has(described.message),
+      `${field.column}: 다른 칸과 같은 안내를 쓴다: ${described.message}`,
+    );
+    seen.add(described.message);
+  }
+});
+
+// 서버가 검사를 더 늘려 모르는 문장이 오면 영문을 본문에 올리지 않고 중립 문구로
+// 되돌린다 — 원문은 detail 로만 남는다.
+test("모르는 INVALID_RETENTION 문장은 영문을 본문에 올리지 않고 detail 로만 남긴다", () => {
+  const unknown = "sample_rate_percent must be between 1 and 100";
+  const described = describeRetentionError(
+    apiError(400, "INVALID_RETENTION", unknown),
+  );
+  assert.ok(
+    !described.message.includes("sample_rate_percent"),
+    `모르는 컬럼명이 본문에 올라왔다: ${described.message}`,
+  );
+  assert.doesNotMatch(described.message, /must be|between/);
+  assert.equal(described.detail, unknown, "서버 원문이 detail 에서 사라졌다");
+});
+
+// advanced_analytics.go:117 이 err.Error() 를 그대로 싣는 500 두 꼴.
+const RETENTION_FK_PGX =
+  'ERROR: insert or update on table "retention_policies" violates foreign key constraint "retention_policies_site_id_fkey" (SQLSTATE 23503)';
+const RETENTION_DOWN_PGX =
+  'failed to connect to `host=localhost user=momento database=momento`: dial error: connection refused';
+
+// 기준 2: 500 의 Postgres 표지가 본문에 없고, 원문은 detail 로만 남는다.
+test("보존 정책 저장 500 의 pgx 원문은 Alert 본문이 아니라 detail 로만 남는다", () => {
+  for (const message of [RETENTION_FK_PGX, RETENTION_DOWN_PGX]) {
+    const described = describeRetentionError(
+      apiError(500, "RETENTION_SAVE_FAILED", message),
+    );
+    for (const marker of PG_MARKERS) {
+      assert.ok(
+        !described.message.includes(marker),
+        `RETENTION_SAVE_FAILED: Postgres 표지 "${marker}" 가 Alert 본문에 섞였다: ${described.message}`,
+      );
+    }
+    assert.equal(
+      described.detail,
+      message,
+      "RETENTION_SAVE_FAILED: 서버 원문이 detail 에서 사라졌다",
+    );
+  }
+});
+
+// INSERT 가 `ON CONFLICT(site_id) DO UPDATE`(advanced_analytics.go:115) 라 '이미
+// 등록된 정책' 은 거짓이고, 같은 500 을 DB 장애도 쓴다. 이 환경에 Postgres 가 없어
+// 재현하지 못했으므로 원인을 단정하지 않는다는 것이 이 단언이 묶는 것이다.
+test("보존 정책 저장 500 을 중복이라고 설명하지 않는다", () => {
+  for (const message of [RETENTION_FK_PGX, RETENTION_DOWN_PGX]) {
+    assert.doesNotMatch(
+      describeRetentionError(apiError(500, "RETENTION_SAVE_FAILED", message))
+        .message,
+      /이미 (있는|등록된|존재)/,
+      "RETENTION_SAVE_FAILED 를 중복이라고 단정한다",
+    );
+  }
+});
+
+// 기준 2: 남은 세 코드도 한국어이고 서버 영문이 아니다.
+const RETENTION_OTHER_ERRORS = [
+  {
+    label: "사이트를 찾을 수 없음",
+    status: 404,
+    code: "UNKNOWN_SITE",
+    message: "site not found",
+    detail: false,
+  },
+  {
+    label: "본문을 읽지 못함",
+    status: 400,
+    code: "INVALID_PAYLOAD",
+    message: "json: cannot unmarshal string into Go struct field",
+    detail: true,
+  },
+  // client.ts 가 코드 없는 응답에 채우는 것.
+  {
+    label: "응답에 코드가 없음",
+    status: 502,
+    code: "REQUEST_FAILED",
+    message: "HTTP 502",
+    detail: true,
+  },
+];
+
+test("보존 정책 쪽 남은 코드도 서버의 영문 문장이 아니라 한국어로 안내한다", () => {
+  for (const entry of RETENTION_OTHER_ERRORS) {
+    const described = describeRetentionError(
+      apiError(entry.status, entry.code, entry.message),
+    );
+    assert.notEqual(
+      described.message,
+      entry.message,
+      `${entry.label} (${entry.code}): 서버 영문이 그대로 본문에 올라왔다`,
+    );
+    assert.match(
+      described.message,
+      /[가-힣]/,
+      `${entry.label} (${entry.code}): 한국어 안내가 아니다`,
+    );
+    assert.equal(
+      described.detail,
+      entry.detail ? entry.message : undefined,
+      `${entry.label} (${entry.code}): detail 이 기대와 다르다`,
+    );
+  }
+});
+
+// UNKNOWN_SITE 가 화면에서 도달 가능한지는 확인하지 않았다 — RetentionAdmin 은
+// useSite() 의 사이트로만 요청하므로 사이트가 지워진 직후에만 난다. 그래서 원인을
+// 단정하지 않고 새로 고침을 권하는 문구인지만 묶는다.
+test("UNKNOWN_SITE 안내는 새로 고침을 권한다", () => {
+  assert.match(
+    describeRetentionError(apiError(404, "UNKNOWN_SITE", "site not found"))
+      .message,
+    /새로 고침|새로 고친/,
+  );
+});
+
+// 기준 2: 모르는 코드는 서버 메시지 그대로 — 네 describe\* 와 같은 계약.
+test("보존 정책 쪽도 모르는 코드는 서버 메시지를 그대로 돌려준다", () => {
+  assert.equal(
+    describeRetentionError(
+      apiError(400, "RETENTION_SOMETHING_NEW", "a brand new refusal"),
+    ).message,
+    "a brand new refusal",
+  );
+});
+
+test("보존 정책 쪽도 메시지·코드가 없는 실패에 빈 Alert 을 남기지 않는다", () => {
+  for (const value of [
+    null,
+    undefined,
+    {},
+    new Error(""),
+    "문자열",
+    apiError(500, "RETENTION_SOMETHING_NEW", ""),
+    apiError(400, "INVALID_RETENTION", ""),
+  ]) {
+    const described = describeRetentionError(value);
     assert.ok(
       described.message.length > 0,
       `${String(value)}: 안내가 비어 있다`,
