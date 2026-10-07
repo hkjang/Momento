@@ -75,6 +75,7 @@ import { useUnsavedWarning } from "../components/useUnsavedWarning";
 import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import { CIDR_RULE, judgeCIDR } from "./cidrRule";
+import { retentionFieldProps } from "./retentionRule";
 import {
   describeEventDefinitionError,
   describeNetworkError,
@@ -2899,26 +2900,36 @@ function RetentionAdmin() {
               gap: 2,
             }}
           >
+            {/*
+              라벨·helperText·오류 색은 retentionRule.ts 가 정한다 — 범위를
+              말하는 문장이 저장 실패 Alert(describeRetentionError)과 같은
+              상수에서 나오게 해서, 둘이 갈라질 수 없게 한다. 그 전에는 이 두
+              칸이 범위를 아예 말하지 않아 저장을 눌러 400 을 받은 뒤에야 1~120
+              을 읽었다.
+            */}
             <TextField
-              label="Raw Event (개월)"
               type="number"
               value={current?.raw_event_months ?? 13}
               onChange={(event) =>
                 set("raw_event_months", Number(event.target.value))
               }
-              helperText="1~120개월"
+              {...retentionFieldProps(
+                "raw_event_months",
+                current?.raw_event_months ?? 13,
+              )}
             />
             <TextField
-              label="Session 요약 (개월)"
               type="number"
               value={current?.session_months ?? 25}
               onChange={(event) =>
                 set("session_months", Number(event.target.value))
               }
-              helperText="Raw Event 삭제 후에도 유지되는 요약"
+              {...retentionFieldProps(
+                "session_months",
+                current?.session_months ?? 25,
+              )}
             />
             <TextField
-              label="Aggregation (개월)"
               type="number"
               value={current?.aggregation_months ?? ""}
               onChange={(event) =>
@@ -2927,32 +2938,29 @@ function RetentionAdmin() {
                   event.target.value ? Number(event.target.value) : null,
                 )
               }
-              // Two of these tables hold one row per visitor per day, with the
-              // visitor and user id on it. Calling them "집계" reads as anonymous
-              // and left an operator believing a blank field kept only totals.
-              helperText="비워 두면 무기한. 일별 집계 중 방문자·세션 테이블은 Visitor ID와 User ID를 행마다 가지므로, 비워 두면 Raw Event가 삭제된 뒤에도 사람 단위 기록이 남습니다"
+              {...retentionFieldProps(
+                "aggregation_months",
+                current?.aggregation_months ?? null,
+              )}
             />
             <TextField
-              label="Realtime (시간)"
               type="number"
               value={current?.realtime_hours ?? 24}
               onChange={(event) =>
                 set("realtime_hours", Number(event.target.value))
               }
-              // Kept for API compatibility, and labelled for what it is: Momento
-              // keeps no separate realtime store, so there is nothing for this
-              // value to trim. Saying so is better than a control that silently
-              // does nothing.
-              helperText="1~168시간 · 현재 적용되지 않습니다. 별도의 Realtime 저장소가 없어 삭제할 대상이 없습니다"
+              {...retentionFieldProps(
+                "realtime_hours",
+                current?.realtime_hours ?? 24,
+              )}
             />
             <TextField
-              label="Debugger / Dead Letter (일)"
               type="number"
               value={current?.debug_days ?? 7}
               onChange={(event) =>
                 set("debug_days", Number(event.target.value))
               }
-              helperText="1~90일"
+              {...retentionFieldProps("debug_days", current?.debug_days ?? 7)}
             />
           </Box>
           {save.error && <RetentionErrorAlert error={save.error} />}
