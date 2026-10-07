@@ -29,6 +29,10 @@ import { CIDR_RULE } from "./cidrRule.ts";
 // 출처다 — 칸 아래의 helperText 와 이 Alert 이 같은 상수를 쓰게 해서, 사용자가
 // 저장을 눌러 400 을 받은 뒤에야 범위를 읽는 일을 없앤다.
 import { RETENTION_LIMITS, retentionNotice } from "./retentionRule.ts";
+// 「JSON Schema」 칸의 구문 안내는 schemaTextRule.ts 가 단일 출처다 — 칸 아래의
+// helperText 와 이 Alert 이 같은 상수를 쓰게 해서, 사용자가 「저장」 을 눌러
+// 헛클릭 왕복을 한 번 치른 뒤에야 안내를 읽는 일을 없앤다.
+import { JSON_SCHEMA_RULE } from "./schemaTextRule.ts";
 
 export interface UserErrorNotice {
   /** The Korean guidance to show. Never empty. */
@@ -347,9 +351,11 @@ export function describeEventDefinitionError(error: unknown): UserErrorNotice {
   if (error instanceof SyntaxError || (!code && /JSON/.test(message))) {
     return {
       // Says which box, because the error itself cannot: the screen has two
-      // other free-text boxes and the engine's text names none of them.
-      message:
-        "「JSON Schema」 칸의 내용이 올바른 JSON 이 아닙니다. 중괄호·대괄호의 짝과 쉼표 위치를 확인하고, 키와 문자열 값은 겹따옴표로 감싸세요. 규격을 비워 둘 때는 {} 로 적습니다.",
+      // other free-text boxes and the engine's text names none of them. The
+      // sentence lives in schemaTextRule.ts because the box now says it while
+      // the text is still being typed — this Alert is only the case where the
+      // reader got here without reading it.
+      message: JSON_SCHEMA_RULE,
       // The engine's own text is the only clue to *where* the text broke, so
       // it is kept — as the caption, never as the guidance.
       detail: message || undefined,
