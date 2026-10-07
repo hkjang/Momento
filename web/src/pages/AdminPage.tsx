@@ -76,6 +76,7 @@ import { policyRange } from "../components/queryError";
 import { PASSWORD_RULE, passwordWithinBounds } from "./passwordRule";
 import { CIDR_RULE, judgeCIDR } from "./cidrRule";
 import { retentionFieldProps } from "./retentionRule";
+import { SCHEMA_TEXT_HELP, judgeSchemaText } from "./schemaTextRule";
 import {
   describeEventDefinitionError,
   describeNetworkError,
@@ -3749,6 +3750,10 @@ function SchemasAdmin() {
       qc.invalidateQueries({ queryKey: ["schemas"] });
     },
   });
+  // 「저장」 이 만드는 요청은 이 값을 `JSON.parse` 로 통과시켜야 존재한다 — 깨진
+  // JSON 이면 뮤테이션이 던지고 서버에는 아무것도 가지 않는다. 그래서 같은
+  // 판정을 미리 한 번 돌려, 안내를 헛클릭 **뒤** 가 아니라 **전에** 보인다.
+  const schemaJudgement = judgeSchemaText(form.schemaText);
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorState error={q.error} retry={() => q.refetch()} />;
   return (
@@ -3807,12 +3812,14 @@ function SchemasAdmin() {
             className="mono"
             value={form.schemaText}
             onChange={(e) => setForm({ ...form, schemaText: e.target.value })}
+            error={schemaJudgement.error}
+            helperText={schemaJudgement.blocking ?? SCHEMA_TEXT_HELP}
           />
           {save.error && <EventDefinitionErrorAlert error={save.error} />}
           <Button
             variant="contained"
             onClick={() => save.mutate()}
-            disabled={!site || !form.name}
+            disabled={!site || !form.name || !!schemaJudgement.blocking}
           >
             저장
           </Button>

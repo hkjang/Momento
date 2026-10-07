@@ -7,6 +7,7 @@ import {
   describeSiteError,
   describeUserError,
 } from "../src/pages/adminErrors.ts";
+import { JSON_SCHEMA_RULE } from "../src/pages/schemaTextRule.ts";
 
 // internal/httpapi/admin.go 의 createUser(877행~)·updateUser(924행~) 가 실제로
 // 돌려주는 (status, code, message) 를 그대로 옮긴 것. 서버 문장은 writeError 의
@@ -979,6 +980,26 @@ test("Event Schema 쪽도 모르는 코드는 서버 메시지를 그대로 돌�
     ).message,
     "a brand new refusal",
   );
+});
+
+// 저장 실패 Alert 과 「JSON Schema」 칸 아래의 helperText 는 schemaTextRule.ts 의
+// 한 상수에서 나온다 — 두 자리가 갈라질 수 없다는 증거. 에러는 손으로 만든
+// new SyntaxError 가 아니라 뮤테이션이 실제로 던지는 그것이다.
+test("깨진 JSON 안내는 칸 아래 helperText 와 같은 상수에서 나온다", () => {
+  let thrown;
+  try {
+    JSON.parse('{"properties": }');
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof SyntaxError, "실제 SyntaxError 를 잡지 못했다");
+  const described = describeEventDefinitionError(thrown);
+  assert.ok(
+    described.message.includes(JSON_SCHEMA_RULE),
+    `Alert 의 안내가 helperText 의 상수를 쓰지 않는다: ${described.message}`,
+  );
+  // 엔진 원문은 본문이 아니라 캡션으로만 — 이 경로의 기존 계약.
+  assert.match(described.detail ?? "", /Unexpected token|is not valid JSON/);
 });
 
 // 코드가 있는 실패는 JSON 분기로 가로채이지 않아야 한다 — 서버 문장에 'JSON' 이
