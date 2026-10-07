@@ -382,3 +382,96 @@ export function describeEventDefinitionError(error: unknown): UserErrorNotice {
       return { message: message || "요청을 완료하지 못했습니다." };
   }
 }
+
+/**
+ * validateRetention(advanced_analytics.go:80-97) 이 거절하는 다섯 컬럼과, 각각이
+ * 화면에서 어느 칸인지. `column` 은 서버 문장에서 찾는 열쇠이고, 안내가 「」 로
+ * 감싸 부르는 이름은 그 칸의 TextField label 과 **글자 그대로** 같아야 한다 —
+ * 그래야 읽는 사람이 눈으로 칸을 찾을 수 있다(AdminPage.tsx 의 RetentionAdmin).
+ * 범위도 서버의 숫자 그대로이고, 단위는 칸 이름이 쓰는 개월·시간·일을 쓴다.
+ */
+const RETENTION_FIELDS = [
+  {
+    column: "raw_event_months",
+    notice: "「Raw Event (개월)」 은 1개월에서 120개월 사이로 적으세요.",
+  },
+  {
+    column: "session_months",
+    notice: "「Session 요약 (개월)」 은 1개월에서 120개월 사이로 적으세요.",
+  },
+  {
+    column: "aggregation_months",
+    // 서버는 null 을 통과시킨다(`AggregationMonths != nil` 가드). 비워 두는 것이
+    // 무기한을 뜻한다는 것은 칸의 helperText 가 이미 말하므로 여기서는 그것이
+    // 허용된다는 사실만 말한다.
+    notice:
+      "「Aggregation (개월)」 은 비워 두거나 1개월에서 1200개월 사이로 적으세요.",
+  },
+  {
+    column: "realtime_hours",
+    notice: "「Realtime (시간)」 은 1시간에서 168시간 사이로 적으세요.",
+  },
+  {
+    column: "debug_days",
+    notice: "「Debugger / Dead Letter (일)」 은 1일에서 90일 사이로 적으세요.",
+  },
+];
+
+/**
+ * 「보존 정책」 칸 다섯 개가 범위를 벗어났을 때 읽을 수 있는 것을 돌려준다.
+ *
+ * 이 Alert 도 `error.message` 를 그대로 띄웠다(AdminPage.tsx). 다섯 칸이 전부
+ * `type="number"` 자유 입력이라 범위를 벗어난 값이 흔한데, 그때 올라오는 것은
+ * 화면에 **없는** 영문 컬럼명이었다 — `raw_event_months must be between 1 and
+ * 120`. 읽는 사람은 `raw_event_months` 가 「Raw Event (개월)」 칸이라는 것을
+ * 스스로 번역해야 했고, 500 으로 떨어지면 putRetentionPolicy 가
+ * `err.Error()` 를 그대로 싣기 때문에(advanced_analytics.go:117) pgx 원문이
+ * 브라우저까지 흘렀다.
+ *
+ * 앞의 네 describe\* 와 합치지 않았다 — 핸들러마다 답하는 코드 집합이 다르고,
+ * 고쳐야 할 칸도 다르다. `refusal` 과 공용 문장만 재사용한다.
+ */
+export function describeRetentionError(error: unknown): UserErrorNotice {
+  const { code, message } = refusal(error);
+
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return { message: UNREADABLE_PAYLOAD, detail: message || undefined };
+    case "INVALID_RETENTION": {
+      // 코드 하나에 원인이 다섯이므로 문장을 읽어 가른다 — PASSWORD_PROBLEM
+      // (37행)과 같은 모양이다. 다섯 컬럼명은 `_months` 를 셋이 공유하지만
+      // 어느 것도 다른 것의 부분문자열이 아니라서 단순 포함 검사로 갈린다.
+      const field = RETENTION_FIELDS.find((entry) =>
+        message.includes(entry.column),
+      );
+      if (field) return { message: field.notice };
+      // 서버가 검사를 더 늘린 경우. 영문을 본문에 올리지 않고 중립 문구로
+      // 되돌리되, 어느 칸인지의 유일한 단서인 원문은 caption 으로 남긴다.
+      return {
+        message:
+          "보존기간 값이 허용 범위를 벗어났습니다. 각 칸 아래에 적힌 범위를 확인하고 다시 저장하세요.",
+        detail: message || undefined,
+      };
+    }
+    case "UNKNOWN_SITE":
+      // RetentionAdmin 은 useSite() 의 사이트로만 요청하므로 사이트가 지워진
+      // 직후에만 닿는다. 그 도달성을 확인하지 않았으니 원인을 단정하지 않고
+      // 화면이 오래되었을 가능성만 말한다.
+      return {
+        message:
+          "이 사이트를 찾을 수 없습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+      };
+    case "RETENTION_SAVE_FAILED":
+      // 원인을 특정하지 않는다. INSERT 가 `ON CONFLICT(site_id) DO UPDATE`
+      // (advanced_analytics.go:115) 라 '이미 등록된 정책' 은 거짓이고, 같은
+      // 500 을 DB 장애도 쓴다. 둘을 확실히 갈라 주는 표지가 없다.
+      return {
+        message: `보존 정책을 저장하지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "REQUEST_FAILED":
+      return { message: LOST_REQUEST, detail: message || undefined };
+    default:
+      return { message: message || "요청을 완료하지 못했습니다." };
+  }
+}

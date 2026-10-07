@@ -78,6 +78,7 @@ import { CIDR_RULE, judgeCIDR } from "./cidrRule";
 import {
   describeEventDefinitionError,
   describeNetworkError,
+  describeRetentionError,
   describeSiteError,
   describeUserError,
   type UserErrorNotice,
@@ -2954,7 +2955,7 @@ function RetentionAdmin() {
               helperText="1~90일"
             />
           </Box>
-          {save.error && <Alert severity="error">{save.error.message}</Alert>}
+          {save.error && <RetentionErrorAlert error={save.error} />}
           <Button
             variant="contained"
             startIcon={<SaveRounded />}
@@ -3367,6 +3368,15 @@ function NetworkErrorAlert({ error }: { error: unknown }) {
  */
 function EventDefinitionErrorAlert({ error }: { error: unknown }) {
   return <AdminNoticeAlert notice={describeEventDefinitionError(error)} />;
+}
+/**
+ * And again for 「보존 정책」, whose five boxes are all free-typed numbers — so the
+ * commonest refusal names a column that is nowhere on the screen:
+ * `raw_event_months must be between 1 and 120`. describeRetentionError reads the
+ * sentence to tell the five apart and calls each box by the label above it.
+ */
+function RetentionErrorAlert({ error }: { error: unknown }) {
+  return <AdminNoticeAlert notice={describeRetentionError(error)} />;
 }
 /**
  * Guidance first, the server's own text only where describe\* kept it as the
