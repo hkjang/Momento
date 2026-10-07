@@ -25,6 +25,10 @@
 // is a value, and the rule the Alert quotes must be the one the form quotes.
 import { PASSWORD_RULE } from "./passwordRule.ts";
 import { CIDR_RULE } from "./cidrRule.ts";
+// 보존 정책 다섯 칸의 범위와 그 범위를 말하는 문장은 retentionRule.ts 가 단일
+// 출처다 — 칸 아래의 helperText 와 이 Alert 이 같은 상수를 쓰게 해서, 사용자가
+// 저장을 눌러 400 을 받은 뒤에야 범위를 읽는 일을 없앤다.
+import { RETENTION_LIMITS, retentionNotice } from "./retentionRule.ts";
 
 export interface UserErrorNotice {
   /** The Korean guidance to show. Never empty. */
@@ -384,40 +388,6 @@ export function describeEventDefinitionError(error: unknown): UserErrorNotice {
 }
 
 /**
- * validateRetention(advanced_analytics.go:80-97) 이 거절하는 다섯 컬럼과, 각각이
- * 화면에서 어느 칸인지. `column` 은 서버 문장에서 찾는 열쇠이고, 안내가 「」 로
- * 감싸 부르는 이름은 그 칸의 TextField label 과 **글자 그대로** 같아야 한다 —
- * 그래야 읽는 사람이 눈으로 칸을 찾을 수 있다(AdminPage.tsx 의 RetentionAdmin).
- * 범위도 서버의 숫자 그대로이고, 단위는 칸 이름이 쓰는 개월·시간·일을 쓴다.
- */
-const RETENTION_FIELDS = [
-  {
-    column: "raw_event_months",
-    notice: "「Raw Event (개월)」 은 1개월에서 120개월 사이로 적으세요.",
-  },
-  {
-    column: "session_months",
-    notice: "「Session 요약 (개월)」 은 1개월에서 120개월 사이로 적으세요.",
-  },
-  {
-    column: "aggregation_months",
-    // 서버는 null 을 통과시킨다(`AggregationMonths != nil` 가드). 비워 두는 것이
-    // 무기한을 뜻한다는 것은 칸의 helperText 가 이미 말하므로 여기서는 그것이
-    // 허용된다는 사실만 말한다.
-    notice:
-      "「Aggregation (개월)」 은 비워 두거나 1개월에서 1200개월 사이로 적으세요.",
-  },
-  {
-    column: "realtime_hours",
-    notice: "「Realtime (시간)」 은 1시간에서 168시간 사이로 적으세요.",
-  },
-  {
-    column: "debug_days",
-    notice: "「Debugger / Dead Letter (일)」 은 1일에서 90일 사이로 적으세요.",
-  },
-];
-
-/**
  * 「보존 정책」 칸 다섯 개가 범위를 벗어났을 때 읽을 수 있는 것을 돌려준다.
  *
  * 이 Alert 도 `error.message` 를 그대로 띄웠다(AdminPage.tsx). 다섯 칸이 전부
@@ -441,10 +411,10 @@ export function describeRetentionError(error: unknown): UserErrorNotice {
       // 코드 하나에 원인이 다섯이므로 문장을 읽어 가른다 — PASSWORD_PROBLEM
       // (37행)과 같은 모양이다. 다섯 컬럼명은 `_months` 를 셋이 공유하지만
       // 어느 것도 다른 것의 부분문자열이 아니라서 단순 포함 검사로 갈린다.
-      const field = RETENTION_FIELDS.find((entry) =>
+      const field = RETENTION_LIMITS.find((entry) =>
         message.includes(entry.column),
       );
-      if (field) return { message: field.notice };
+      if (field) return { message: retentionNotice(field.column) };
       // 서버가 검사를 더 늘린 경우. 영문을 본문에 올리지 않고 중립 문구로
       // 되돌리되, 어느 칸인지의 유일한 단서인 원문은 caption 으로 남긴다.
       return {
