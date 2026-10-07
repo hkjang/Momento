@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.34.60
+
+- **보존 정책 다섯 칸이 저장을 누르기 전에 허용 범위를 말합니다.** 지난 릴리스가 고친 것은 **실패한 뒤에 뜨는 문장**이었고, 이번에는 같은 폼에서 그 실패 자체를 저장 전에 알립니다. 허용 범위의 정본은 서버의 `validateRetention`(`internal/httpapi/advanced_analytics.go:80-97`)인데 같은 숫자가 세 곳에 따로 적혀 있어 **두 칸은 helperText 가 범위를 아예 말하지 않았습니다** — 「Session 요약 (개월)」 은 요약의 뜻만, 「Aggregation (개월)」 은 무기한의 뜻만 적어, 읽는 사람은 저장을 눌러 400 을 받은 뒤에야 1~120 을 읽었습니다. 이제 다섯 칸이 모두 자기 범위를 칸 아래에 먼저 적습니다(`1~120개월`·`1~1200개월`·`1~168시간`·`1~90일`).
+- **안내와 저장 실패 문장이 같은 상수에서 나옵니다.** 새 순수 모듈 `web/src/pages/retentionRule.ts` 가 범위·라벨·단위를 화면에서 한 번만 적습니다(`cidrRule.ts`·`passwordRule.ts` 와 같은 자리). helperText·저장 실패 Alert(`describeRetentionError`)·칸의 label 이 모두 이 상수를 읽으므로 세 문장이 갈라질 수 없고, Alert 이 화면에 없는 칸을 가리키는 일이 구조적으로 생기지 않습니다. 기존 설명 문장(「Realtime (시간)」 의 '현재 적용되지 않습니다', 「Aggregation (개월)」 의 사람 단위 기록 경고)은 그대로 두고 범위만 앞에 붙였습니다.
+- **비울 수 없는 네 칸을 지우면 `Number("")` 가 0 을 만들어 그대로 저장되던 것을 막습니다.** 정수 판정이 범위 판정보다 앞에 있습니다 — 서버의 다섯 필드는 `int`·`*int` 라 `1.5` 는 범위에 닿기도 전에 JSON 디코딩에서 떨어집니다. 글자 입력을 가로막거나 「보존 정책 저장」 을 닫지는 않습니다: 서버가 범위의 정본이고 화면은 그 거울입니다. 경계값과 빈 「Aggregation (개월)」 은 그대로 실려 가며 전송되는 요청 본문은 바뀌지 않습니다.
+- **SDK 의 `npm test` 가 상위 경로의 Node 에 가려지지 않습니다.** npm 은 lifecycle 스크립트의 PATH 에 상위 디렉터리의 `node_modules/.bin` 을 모두 앞에 붙이므로, 맨 `node` 였던 `sdk/package.json` 의 `test` 가 npm 자신을 돌리는 Node 가 아닌 그쪽으로 해석돼 `ERR_UNKNOWN_FILE_EXTENSION ".ts"` 로 떨어졌습니다. v0.34.53 이 콘솔 쪽을 같은 방식으로 고쳤는데 SDK 는 남아 있던 자리입니다. 이제 `${npm_node_execpath:-node}` 를 쓰고 회귀 가드를 `sdk/test/testCommand.test.mjs` 에 두었습니다. 게이트를 느슨하게 한 것은 없습니다.
+- 콘솔 테스트 14건(234 → 248건), SDK 테스트 2건(27 → 29건)이 추가되었습니다.
+- 서버·API 변경과 데이터베이스 마이그레이션은 없습니다. 보존기간의 허용 범위와 저장 성공 흐름은 그대로입니다.
+
 ## v0.34.59
 
 - **보존 정책을 저장하다 실패하면 고칠 칸과 허용 범위를 한국어로 말합니다.** 다섯 숫자 입력칸의 저장 실패에 화면에 없는 영문 컬럼명(`raw_event_months` 등)이 그대로 표시되던 문제를 고쳤습니다. `describeRetentionError`가 서버의 `INVALID_RETENTION` 문장에서 항목을 찾아 「Raw Event (개월)」·「Session 요약 (개월)」·「Aggregation (개월)」·「Realtime (시간)」·「Debugger / Dead Letter (일)」을 화면 라벨 그대로 부릅니다. 개월·시간·일 단위와 Aggregation의 빈 값 허용도 안내합니다.
