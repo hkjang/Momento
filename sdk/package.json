@@ -6,7 +6,7 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --minify --target=es2018 --format=iife --outfile=dist/tracker.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.mjs"
+    "test": "\"${npm_node_execpath:-node}\" --test test/*.test.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.9",
