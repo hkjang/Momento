@@ -91,6 +91,49 @@ const UNREADABLE_PAYLOAD =
 const LOST_REQUEST =
   "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.";
 
+/** 「Custom Dimension」 등록·갱신의 서버 계약은 다른 관리 폼과 분리한다. */
+export function describeDimensionError(error: unknown): UserErrorNotice {
+  const { code, message } = refusal(error);
+
+  switch (code) {
+    case "INVALID_PAYLOAD":
+      return { message: UNREADABLE_PAYLOAD, detail: message || undefined };
+    case "UNKNOWN_SITE":
+      return {
+        message:
+          "이 사이트를 찾을 수 없습니다. 화면을 새로 고친 뒤 다시 시도하세요.",
+      };
+    case "INVALID_DIMENSION":
+      // saveDimension 은 어느 칸이 틀렸는지 구분하지 않는다. 두 칸에 적용되는
+      // PropertyKeyPattern 의 첫 글자 제한과 전체 길이까지 함께 안내한다.
+      return {
+        message:
+          "「Dimension 이름」과 「Property key」를 확인하세요. 두 칸 모두 첫 글자는 영문(A–Z, a–z) 또는 _로 시작하고, 이후에는 영문·숫자·_·.·-만 사용할 수 있습니다. 전체 길이는 1~128자입니다.",
+      };
+    case "INVALID_SCOPE":
+      return {
+        message:
+          "「Scope」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 User·Session·Event·Item (Ecommerce) 중에서 다시 고르세요.",
+      };
+    case "INVALID_DATA_TYPE":
+      return {
+        message:
+          "「Data type」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 string·number·boolean·date 중에서 다시 고르세요.",
+      };
+    case "DIMENSION_SAVE_FAILED":
+      // ON CONFLICT(site_id,name) DO UPDATE 이므로 이름 중복으로 단정하지 않는다.
+      // DB 실패의 원문은 본문과 분리해 관리자에게 전달할 단서로만 남긴다.
+      return {
+        message: `Custom Dimension을 저장하지 못했습니다. ${PASS_TO_ADMIN}`,
+        detail: message || undefined,
+      };
+    case "REQUEST_FAILED":
+      return { message: LOST_REQUEST, detail: message || undefined };
+    default:
+      return { message: message || "요청을 완료하지 못했습니다." };
+  }
+}
+
 export function describeUserError(error: unknown): UserErrorNotice {
   const { code, message } = refusal(error);
 

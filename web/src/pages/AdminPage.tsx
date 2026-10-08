@@ -78,6 +78,7 @@ import { CIDR_RULE, judgeCIDR } from "./cidrRule";
 import { retentionFieldProps } from "./retentionRule";
 import { SCHEMA_TEXT_HELP, judgeSchemaText } from "./schemaTextRule";
 import {
+  describeDimensionError,
   describeEventDefinitionError,
   describeNetworkError,
   describeRetentionError,
@@ -3119,7 +3120,7 @@ function DimensionsAdmin() {
             }
             label="활성화"
           />
-          {save.error && <Alert severity="error">{save.error.message}</Alert>}
+          {save.error && <DimensionErrorAlert error={save.error} />}
           <Button
             variant="contained"
             onClick={() => save.mutate()}
@@ -3387,6 +3388,11 @@ function EventDefinitionErrorAlert({ error }: { error: unknown }) {
 function RetentionErrorAlert({ error }: { error: unknown }) {
   return <AdminNoticeAlert notice={describeRetentionError(error)} />;
 }
+
+function DimensionErrorAlert({ error }: { error: unknown }) {
+  return <AdminNoticeAlert notice={describeDimensionError(error)} />;
+}
+
 /**
  * Guidance first, the server's own text only where describe\* kept it as the
  * remaining clue. Laid out like States.tsx's query error.
