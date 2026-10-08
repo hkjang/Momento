@@ -106,8 +106,8 @@ export MOMENTO_TEST_POSTGRES_DSN='postgres://postgres:test@127.0.0.1:5432/moment
 
 ```bash
 go test ./... && go vet ./...
-cd sdk && npm install && npm run typecheck && npm run build
-cd ../web && npm install && npm run lint && npm test && npm run build
+(cd sdk && npm install && npm run typecheck && npm run build)
+(cd web && npm install && npm run lint && npm test && npm run build)
 make docker            # momento:v<version> 이미지를 만듭니다
 ```
 
