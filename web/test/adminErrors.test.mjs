@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  describeDimensionError,
   describeEventDefinitionError,
   describeNetworkError,
   describeRetentionError,
@@ -28,6 +29,79 @@ function apiError(status, code, message) {
   error.code = code;
   return error;
 }
+
+// saveDimension (segments.go) 의 여섯 코드. INVALID_DIMENSION 은 두 입력을
+// 구분하지 않으며 정규식은 PropertyKeyPattern 이 정본이다.
+const DIMENSION_ERRORS = [
+  [400, "INVALID_PAYLOAD", "unexpected EOF",
+    "보낸 내용을 서버가 읽지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.", true],
+  [404, "UNKNOWN_SITE", "site not found",
+    "이 사이트를 찾을 수 없습니다. 화면을 새로 고친 뒤 다시 시도하세요.", false],
+  [400, "INVALID_DIMENSION", "name and property_key must use letters, numbers, underscore, dot, or hyphen",
+    "「Dimension 이름」과 「Property key」를 확인하세요. 두 칸 모두 첫 글자는 영문(A–Z, a–z) 또는 _로 시작하고, 이후에는 영문·숫자·_·.·-만 사용할 수 있습니다. 전체 길이는 1~128자입니다.", false],
+  [400, "INVALID_SCOPE", "scope must be user, session, event, or item",
+    "「Scope」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 User·Session·Event·Item (Ecommerce) 중에서 다시 고르세요.", false],
+  [400, "INVALID_DATA_TYPE", "data_type must be string, number, boolean, or date",
+    "「Data type」 값이 올바르지 않습니다. 화면을 새로 고친 뒤 string·number·boolean·date 중에서 다시 고르세요.", false],
+  [500, "DIMENSION_SAVE_FAILED", "connection closed",
+    "Custom Dimension을 저장하지 못했습니다. 잠시 후 다시 시도하고, 반복되면 아래 메시지를 관리자에게 전달하세요.", true],
+];
+
+for (const [status, code, message, expected, detail] of DIMENSION_ERRORS) {
+  test(`Custom Dimension ${code} 는 한국어로 고칠 곳이나 다음 행동을 안내한다`, () => {
+    const notice = describeDimensionError(apiError(status, code, message));
+    assert.equal(notice.message, expected);
+    assert.equal(notice.detail, detail ? message : undefined);
+  });
+}
+
+test("INVALID_DIMENSION 은 원인을 한 칸으로 단정하지 않고 두 칸의 정확한 규칙을 안내한다", () => {
+  const notice = describeDimensionError(apiError(400, "INVALID_DIMENSION", ""));
+  assert.match(notice.message, /「Dimension 이름」과 「Property key」를 확인/);
+  assert.match(notice.message, /첫 글자는 영문\(A–Z, a–z\) 또는 _/);
+  assert.match(notice.message, /이후에는 영문·숫자·_·\.·-만/);
+  assert.match(notice.message, /전체 길이는 1~128자/);
+});
+
+test("Custom Dimension 저장 500 은 원인이 달라도 중립 본문과 원문 detail 을 분리한다", () => {
+  const messages = [
+    'ERROR: insert or update on table "dimensions" violates foreign key constraint (SQLSTATE 23503)',
+    "no rows in result set",
+  ];
+  const notices = messages.map((message) =>
+    describeDimensionError(apiError(500, "DIMENSION_SAVE_FAILED", message)),
+  );
+  for (const [i, notice] of notices.entries()) {
+    assert.match(notice.message, /저장하지 못했습니다/);
+    assert.doesNotMatch(notice.message, /SQLSTATE|violates|no rows|중복|이미 등록/);
+    assert.equal(notice.detail, messages[i]);
+  }
+  assert.equal(notices[0].message, notices[1].message);
+});
+
+test("Custom Dimension REQUEST_FAILED 는 공통 재시도 안내와 원문을 남긴다", () => {
+  assert.deepEqual(describeDimensionError(apiError(502, "REQUEST_FAILED", "HTTP 502")), {
+    message: "서버가 요청을 처리하지 못했습니다. 네트워크를 확인하고 다시 시도하세요.",
+    detail: "HTTP 502",
+  });
+});
+
+test("Custom Dimension 의 모르는 코드와 일반 Error 는 기존 메시지를 보존한다", () => {
+  for (const error of [apiError(500, "FUTURE_CODE", "new server refusal"), new Error("offline")]) {
+    assert.deepEqual(describeDimensionError(error), { message: error.message });
+  }
+});
+
+test("Custom Dimension 은 null 이나 빈 메시지에도 빈 Alert 를 만들지 않는다", () => {
+  for (const error of [null, undefined, new Error(""), apiError(400, "FUTURE_CODE", "")]) {
+    assert.deepEqual(describeDimensionError(error), { message: "요청을 완료하지 못했습니다." });
+  }
+  for (const code of ["INVALID_PAYLOAD", "DIMENSION_SAVE_FAILED", "REQUEST_FAILED"]) {
+    const notice = describeDimensionError(apiError(500, code, ""));
+    assert.ok(notice.message.trim());
+    assert.equal(notice.detail, undefined);
+  }
+});
 
 // 서버가 실제로 내는 코드 전부와, 각각에 나와야 하는 안내 전문.
 // detail: true 면 서버 원문이 유일한 단서라 따로 들고 있어야 하는 경우다.
