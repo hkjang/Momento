@@ -797,6 +797,24 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+
+// normalizeCIDR 은 사용자가 적은 대역을 network_ranges.cidr 컬럼이 받아들이는
+// 글자로 바꾼다. 그 컬럼은 PostgreSQL 의 cidr 타입이라 넷마스크 오른쪽에 비트가
+// 켜진 값을 거절하는데(22P02), net.ParseCIDR 은 `10.20.30.1/24` 를 통과시키고
+// 망 구분 추가 폼도 이를 막지 않는다. 사용자가 말한 뜻은 "그 주소가 속한 대역"
+// 이므로 파싱이 이미 계산해 둔 대역을 그대로 쓴다. 판정은 바꾸지 않는다 —
+// net.ParseCIDR 이 거절하는 값은 여기서도 오류다.
+//
+// 망 구분 추가 경로 하나만 쓴다. 다른 핸들러나 trusted_proxy_cidrs 설정 경로는
+// 각자의 계약이 있으므로 이 함수를 그쪽으로 번지게 하지 않는다.
+func normalizeCIDR(text string) (string, error) {
+	_, network, err := net.ParseCIDR(text)
+	if err != nil {
+		return "", err
+	}
+	return network.String(), nil
+}
+
 func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	var in struct {
@@ -809,7 +827,8 @@ func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
 		return
 	}
-	if _, _, err := net.ParseCIDR(in.CIDR); err != nil {
+	cidr, err := normalizeCIDR(in.CIDR)
+	if err != nil {
 		writeError(w, 400, "INVALID_CIDR", "CIDR is invalid")
 		return
 	}
@@ -818,12 +837,12 @@ func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 		internal = *in.Internal
 	}
 	var id uuid.UUID
-	err := s.DB.QueryRow(r.Context(), `INSERT INTO network_ranges(name,cidr,description,internal) VALUES($1,$2,$3,$4) RETURNING id`, in.Name, in.CIDR, in.Description, internal).Scan(&id)
+	err = s.DB.QueryRow(r.Context(), `INSERT INTO network_ranges(name,cidr,description,internal) VALUES($1,$2,$3,$4) RETURNING id`, in.Name, cidr, in.Description, internal).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "NETWORK_CREATE_FAILED", err.Error())
 		return
 	}
-	s.audit(r.Context(), &p, "network.create", "network", id.String(), map[string]any{"cidr": in.CIDR}, clientIP(r))
+	s.audit(r.Context(), &p, "network.create", "network", id.String(), map[string]any{"cidr": cidr}, clientIP(r))
 	writeJSON(w, 201, map[string]any{"id": id})
 }
 func (s *Server) deleteNetwork(w http.ResponseWriter, r *http.Request) {
