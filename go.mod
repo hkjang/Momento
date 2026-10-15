@@ -2,7 +2,7 @@ module github.com/hkjang/Momento
 
 go 1.26.0
 
-toolchain go1.26.7
+toolchain go1.26.9
 
 require (
 	github.com/coreos/go-oidc/v3 v3.16.0
