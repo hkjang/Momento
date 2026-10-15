@@ -49,6 +49,35 @@ func TestNormalizeCIDRAgreesWithParseCIDR(t *testing.T) {
 	}
 }
 
+// IPv4-mapped IPv6 표기(`::ffff:a.b.c.d`)는 위 표의 계약에서 빼 둔다 —
+// (*net.IPNet).String() 이 이 표기를 IPv4 점표기로 접으면서 넷마스크에서 96 비트를
+// 같이 지워 버리기 때문이다(`::ffff:0:0/96` → `0.0.0.0/0`). 주소 체계가 바뀌고
+// 대역이 넓어지는 쪽은 net.ParseCIDR 의 String() 이지 사용자가 적은 뜻이 아니므로,
+// 여기서는 기대값을 손으로 적어 고정한다. 이 값들은 정규화 이전의 서버가 원문을
+// 그대로 넣었을 때 PostgreSQL cidr 컬럼이 저장하던 글자와 같다.
+func TestNormalizeCIDRKeepsTheAddressFamilyOfIPv4MappedIPv6(t *testing.T) {
+	for _, c := range []struct {
+		given string
+		want  string
+	}{
+		{"::ffff:0:0/96", "::ffff:0.0.0.0/96"},
+		{"::ffff:10.0.0.0/104", "::ffff:10.0.0.0/104"},
+		{"::ffff:192.168.1.1/128", "::ffff:192.168.1.1/128"},
+		{"::ffff:0.0.0.0/96", "::ffff:0.0.0.0/96"},
+		// 호스트 비트가 켜진 IPv4-mapped 표기도 같은 체계 안에서 대역 시작으로 깎는다.
+		{"::ffff:10.1.2.3/120", "::ffff:10.1.2.0/120"},
+	} {
+		got, err := normalizeCIDR(c.given)
+		if err != nil {
+			t.Errorf("%q: 정규화가 거절했다: %v", c.given, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%q: 정규화 결과가 %q 다 — %q 를 기대했다", c.given, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeCIDRRejectsWhatParseCIDRRejects(t *testing.T) {
 	for _, text := range []string{
 		"",
@@ -110,6 +139,8 @@ func TestCreateNetworkStoresTheNetworkAddressOfACIDRWithHostBits(t *testing.T) {
 		{"정규화 핸들러 확인 전체", "0.0.0.0/0", "0.0.0.0/0"},
 		{"정규화 핸들러 확인 단일주소", "10.20.32.1/32", "10.20.32.1/32"},
 		{"정규화 핸들러 확인 IPv6", "2001:db8::1/64", "2001:db8::/64"},
+		{"정규화 핸들러 확인 IPv4맵핑", "::ffff:10.0.0.0/104", "::ffff:10.0.0.0/104"},
+		{"정규화 핸들러 확인 IPv4맵핑 호스트비트", "::ffff:10.1.2.3/120", "::ffff:10.1.2.0/120"},
 	} {
 		body := `{"name":"` + c.name + `","cidr":"` + c.given + `","description":"","internal":true}`
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/networks", strings.NewReader(body))
@@ -145,11 +176,13 @@ func TestCreateNetworkStoresTheNetworkAddressOfACIDRWithHostBits(t *testing.T) {
 		stored[row.Name] = row.CIDR
 	}
 	for name, want := range map[string]string{
-		"정규화 핸들러 확인 호스트비트": "10.20.30.0/24",
-		"정규화 핸들러 확인 이미정규화": "10.20.31.0/24",
-		"정규화 핸들러 확인 전체":    "0.0.0.0/0",
-		"정규화 핸들러 확인 단일주소":  "10.20.32.1/32",
-		"정규화 핸들러 확인 IPv6":  "2001:db8::/64",
+		"정규화 핸들러 확인 호스트비트":        "10.20.30.0/24",
+		"정규화 핸들러 확인 이미정규화":        "10.20.31.0/24",
+		"정규화 핸들러 확인 전체":           "0.0.0.0/0",
+		"정규화 핸들러 확인 단일주소":         "10.20.32.1/32",
+		"정규화 핸들러 확인 IPv6":         "2001:db8::/64",
+		"정규화 핸들러 확인 IPv4맵핑":       "::ffff:10.0.0.0/104",
+		"정규화 핸들러 확인 IPv4맵핑 호스트비트": "::ffff:10.1.2.0/120",
 	} {
 		if got := stored[name]; got != want {
 			t.Errorf("%s: 목록의 cidr 이 %q 다 — %q 를 기대했다", name, got, want)

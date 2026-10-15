@@ -8,6 +8,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -807,10 +808,26 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
 //
 // 망 구분 추가 경로 하나만 쓴다. 다른 핸들러나 trusted_proxy_cidrs 설정 경로는
 // 각자의 계약이 있으므로 이 함수를 그쪽으로 번지게 하지 않는다.
+//
+// (*net.IPNet).String() 을 그대로 쓸 수 없는 표기가 하나 있다. IPv4-mapped IPv6
+// (`::ffff:a.b.c.d`) 에서는 그 메서드가 주소를 IPv4 점표기로 접으면서 넷마스크의
+// 96 비트를 같이 지워 `::ffff:0:0/96` 을 `0.0.0.0/0` 으로, `::ffff:10.0.0.0/104`
+// 를 `10.0.0.0/8` 로 바꿔 놓는다. 저장만 틀리는 게 아니라 collector 의
+// `$1::inet <<= cidr` 판정이 달라져서 — `203.0.113.9` 는 `::ffff:0.0.0.0/96` 에
+// 안 걸리지만 `0.0.0.0/0` 에는 걸린다 — 엉뚱한 IPv4 방문자가 그 망으로 분류된다.
+// 호스트 비트만 깎는 것이 이 함수의 일이므로 주소 체계는 사용자가 적은 쪽을
+// 유지한다. 넷마스크가 128 비트 폭이면 netip 으로 직접 글자를 만든다.
 func normalizeCIDR(text string) (string, error) {
-	_, network, err := net.ParseCIDR(text)
+	ip, network, err := net.ParseCIDR(text)
 	if err != nil {
 		return "", err
+	}
+	if ones, bits := network.Mask.Size(); bits == 128 && ip.To4() != nil {
+		addr, ok := netip.AddrFromSlice(network.IP.To16())
+		if !ok {
+			return "", fmt.Errorf("cidr %q: cannot render masked address", text)
+		}
+		return netip.PrefixFrom(addr, ones).String(), nil
 	}
 	return network.String(), nil
 }
