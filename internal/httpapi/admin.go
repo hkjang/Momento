@@ -8,6 +8,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -797,6 +798,40 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+
+// normalizeCIDR 은 사용자가 적은 대역을 network_ranges.cidr 컬럼이 받아들이는
+// 글자로 바꾼다. 그 컬럼은 PostgreSQL 의 cidr 타입이라 넷마스크 오른쪽에 비트가
+// 켜진 값을 거절하는데(22P02), net.ParseCIDR 은 `10.20.30.1/24` 를 통과시키고
+// 망 구분 추가 폼도 이를 막지 않는다. 사용자가 말한 뜻은 "그 주소가 속한 대역"
+// 이므로 파싱이 이미 계산해 둔 대역을 그대로 쓴다. 판정은 바꾸지 않는다 —
+// net.ParseCIDR 이 거절하는 값은 여기서도 오류다.
+//
+// 망 구분 추가 경로 하나만 쓴다. 다른 핸들러나 trusted_proxy_cidrs 설정 경로는
+// 각자의 계약이 있으므로 이 함수를 그쪽으로 번지게 하지 않는다.
+//
+// (*net.IPNet).String() 을 그대로 쓸 수 없는 표기가 하나 있다. IPv4-mapped IPv6
+// (`::ffff:a.b.c.d`) 에서는 그 메서드가 주소를 IPv4 점표기로 접으면서 넷마스크의
+// 96 비트를 같이 지워 `::ffff:0:0/96` 을 `0.0.0.0/0` 으로, `::ffff:10.0.0.0/104`
+// 를 `10.0.0.0/8` 로 바꿔 놓는다. 저장만 틀리는 게 아니라 collector 의
+// `$1::inet <<= cidr` 판정이 달라져서 — `203.0.113.9` 는 `::ffff:0.0.0.0/96` 에
+// 안 걸리지만 `0.0.0.0/0` 에는 걸린다 — 엉뚱한 IPv4 방문자가 그 망으로 분류된다.
+// 호스트 비트만 깎는 것이 이 함수의 일이므로 주소 체계는 사용자가 적은 쪽을
+// 유지한다. 넷마스크가 128 비트 폭이면 netip 으로 직접 글자를 만든다.
+func normalizeCIDR(text string) (string, error) {
+	ip, network, err := net.ParseCIDR(text)
+	if err != nil {
+		return "", err
+	}
+	if ones, bits := network.Mask.Size(); bits == 128 && ip.To4() != nil {
+		addr, ok := netip.AddrFromSlice(network.IP.To16())
+		if !ok {
+			return "", fmt.Errorf("cidr %q: cannot render masked address", text)
+		}
+		return netip.PrefixFrom(addr, ones).String(), nil
+	}
+	return network.String(), nil
+}
+
 func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.FromContext(r.Context())
 	var in struct {
@@ -809,7 +844,8 @@ func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "INVALID_PAYLOAD", err.Error())
 		return
 	}
-	if _, _, err := net.ParseCIDR(in.CIDR); err != nil {
+	cidr, err := normalizeCIDR(in.CIDR)
+	if err != nil {
 		writeError(w, 400, "INVALID_CIDR", "CIDR is invalid")
 		return
 	}
@@ -818,12 +854,12 @@ func (s *Server) createNetwork(w http.ResponseWriter, r *http.Request) {
 		internal = *in.Internal
 	}
 	var id uuid.UUID
-	err := s.DB.QueryRow(r.Context(), `INSERT INTO network_ranges(name,cidr,description,internal) VALUES($1,$2,$3,$4) RETURNING id`, in.Name, in.CIDR, in.Description, internal).Scan(&id)
+	err = s.DB.QueryRow(r.Context(), `INSERT INTO network_ranges(name,cidr,description,internal) VALUES($1,$2,$3,$4) RETURNING id`, in.Name, cidr, in.Description, internal).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "NETWORK_CREATE_FAILED", err.Error())
 		return
 	}
-	s.audit(r.Context(), &p, "network.create", "network", id.String(), map[string]any{"cidr": in.CIDR}, clientIP(r))
+	s.audit(r.Context(), &p, "network.create", "network", id.String(), map[string]any{"cidr": cidr}, clientIP(r))
 	writeJSON(w, 201, map[string]any{"id": id})
 }
 func (s *Server) deleteNetwork(w http.ResponseWriter, r *http.Request) {
