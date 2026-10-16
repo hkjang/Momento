@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.34.64
+
+- **CI 가 돌리는 게이트를 밀기 전에 로컬에서 그대로 돌리는 `make verify` 를 만들었습니다.** 빠른 루프용 `make test` 에는 `-race`·`govulncheck`·`npm ci`·`npm audit`·SDK 의 `npm run build` 가 하나도 없어, 로컬에서 녹색을 보고 올린 커밋이 CI 에서 빨간불을 만났습니다 — 이 저장소가 겪은 verify-failed 두 건(`golang.org/x/text` 권고, 표준 라이브러리 권고 10건)이 모두 `govulncheck` 단계였고, 그 단계는 `make test` 에 아예 없었습니다. `verify:` 타깃은 `.github/workflows/ci.yml` 의 `test` job 이 돌리는 다섯 명령을 **같은 글자·같은 순서**(Go → SDK → 콘솔)로 실행합니다.
+- **`make test` 는 한 글자도 바꾸지 않았습니다.** 빠른 루프는 빠른 루프로 남겨 두고, 밀기 전 검사만 새 타깃으로 분리했습니다.
+- **두 선언이 어긋나면 테스트가 실패합니다.** `internal/version/buildgates_test.go` 는 `toolchain_test.go` 의 go.mod↔Dockerfile 짝 맞추기와 같은 방식으로, 「게이트가 최신인가」가 아니라 「ci.yml 과 Makefile 이 여전히 일치하는가」를 봅니다 — ci.yml 의 `run:` 단계 개수가 표의 항목 수와 다르면 실패하고, 각 항목의 CI 명령이 ci.yml 에 있는지와 로컬 명령이 `verify` 레시피 안에 그 순서로 있는지를 양쪽으로 확인합니다. `docker build` 는 `--build-arg` 값이 의도적으로 달라 면제로 적고 이유를 주석에 남겼습니다.
+- 이 테스트는 텍스트만 읽으므로 `make verify` 가 통과한다는 것까지 증명하지는 않습니다. 그래서 이번 회차에 실제로 끝까지 한 번 돌려 exit 0 을 확인했습니다. `make verify` 의 녹색이 CI 의 녹색을 보장하지도 않습니다 — DSN 없이는 데이터베이스 통합 테스트가 건너뛰어지며(측정 120건), CI 는 `postgres:17-alpine` 서비스를 띄워 `MOMENTO_TEST_POSTGRES_DSN` 을 줍니다. 주석에 그대로 적어 두었습니다.
+- 서비스·콘솔·SDK 코드, API 계약, 데이터베이스 마이그레이션, 설정 항목, `.github/workflows/*.yml` 은 바뀌지 않았습니다. **운영자가 할 일도, 화면에서 달라지는 것도 없습니다.**
+
 ## v0.34.63
 
 - **「망 대역 추가」가 호스트 비트 켜진 CIDR 에 500 으로 답하던 것을 고쳤습니다.** `createNetwork` 가 `net.ParseCIDR` 이 이미 계산해 둔 대역을 버리고 사용자가 적은 글자를 `cidr cidr NOT NULL` 컬럼에 그대로 넣었습니다. PostgreSQL 의 `cidr` 타입은 넷마스크 오른쪽에 비트가 켜진 값을 거절하므로(SQLSTATE 22P02), `net.ParseCIDR` 이 통과시키고 화면(`cidrRule.ts`, v0.34.58)도 막지 않는 `10.20.30.1/24` 가 500 `NETWORK_CREATE_FAILED` 와 pgx 원문으로 돌아왔습니다. 이제 새 `normalizeCIDR` 의 결과를 INSERT 와 감사 기록에 넘겨, 사용자가 말한 뜻 그대로(`10.20.30.1` 이 속한 `10.20.30.0/24`) 저장됩니다. 400 `INVALID_CIDR` 의 판정 범위·코드·메시지는 그대로입니다.
