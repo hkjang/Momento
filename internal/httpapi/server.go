@@ -581,7 +581,29 @@ func versionInfo(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, version.Current())
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	if !s.LoginLimiter.Allow(clientIP(r)) {
+	// 이 파일에는 이름이 거의 같은 두 판독기가 있고, 둘은 서로 다른 질문에 답한다.
+	// 패키지 함수 `clientIP(r)` 는 `r.RemoteAddr` 에서 호스트만 떼어 내는 원시
+	// 판독기로, `s.clientIP`·`requestSecure` 가 자신의 첫 단계로 쓴다. 메서드
+	// `s.clientIP(r)` 는 그 위에 신뢰 계약을 얹는다 — RemoteAddr 이 운영자가
+	// `trusted_proxy_cidrs` 로 신뢰한 대역에서 온 경우에만 `X-Forwarded-For` 를
+	// 오른쪽에서 왼쪽으로 걸어 실제 클라이언트를 찾고, 그렇지 않으면 헤더를 무시한다.
+	//
+	// 로그인은 메서드 쪽이어야 한다. 이 제품이 문서로 안내하는 배치가 리버스 프록시
+	// 뒤(설치 안내의 nginx 블록이 `X-Forwarded-For` 를 붙인다)인데, 그 배치에서
+	// 원시 판독기로 제한을 키잉하면 모든 로그인 시도가 **프록시 주소 하나**로 묶인다.
+	// 분당 한도가 IP 별이 아니라 설치 전체의 합계가 되어, 한 사람(또는 한 공격자)의
+	// 실패 몇 번이 전 직원의 로그인을 429 로 막고, 정작 개별 출처에 대한
+	// brute-force 제한으로는 동작하지 않는다. 아래 두 감사 기록의 IP 도 같은 이유로
+	// 프록시 주소만 남아, 로그인 실패 추적이라는 그 기록의 용도를 잃는다.
+	//
+	// 그래서 collector(`s.Limiter.Allow(req.SiteID + "|" + ip)`)와 같은 모양으로
+	// 핸들러 첫 줄에서 **한 번만** 계산해 제한 키와 감사 기록이 같은 값을 쓰게 한다 —
+	// 세 자리에서 따로 부르면 두 자리가 다시 어긋날 수 있다. 쿠키 Secure 판정
+	// (`requestSecure`)과 collector 의 속도 제한이 이미 이 신뢰 계약 위에 서 있으므로,
+	// 신뢰 대역을 지나치게 넓게 적는 설정 오류는 그 두 곳을 이미 무력화한다 —
+	// 로그인만 다른 계약을 쓰고 있던 것이 결함이다.
+	ip := s.clientIP(r)
+	if !s.LoginLimiter.Allow(ip) {
 		w.Header().Set("Retry-After", "60")
 		writeError(w, 429, "RATE_LIMITED", "too many login attempts")
 		return
@@ -596,12 +618,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	p, token, err := s.Auth.Login(r.Context(), in.Email, in.Password)
 	if err != nil {
-		s.audit(r.Context(), nil, "login.failed", "session", strings.ToLower(in.Email), nil, clientIP(r))
+		s.audit(r.Context(), nil, "login.failed", "session", strings.ToLower(in.Email), nil, ip)
 		writeError(w, 401, "INVALID_CREDENTIALS", "email or password is incorrect")
 		return
 	}
 	auth.SetSessionCookie(w, token, s.requestSecure(r))
-	s.audit(r.Context(), &p, "login", "session", p.ID.String(), nil, clientIP(r))
+	s.audit(r.Context(), &p, "login", "session", p.ID.String(), nil, ip)
 	writeJSON(w, 200, p)
 }
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
