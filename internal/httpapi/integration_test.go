@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2620,5 +2621,62 @@ func TestAPersonalAPIKeyCannotChangeAnything(t *testing.T) {
 		if !served[operation] {
 			t.Errorf("readsSentAsPosts exempts %q, which this server no longer serves", operation)
 		}
+	}
+}
+
+// TestLoginAuditRecordsTheTrustedProxyClientIP covers the other half of the same
+// contract as TestLoginRateLimitUsesTheTrustedProxyClientIP, and it needs a
+// database because the only place the audit IP can be read back is the row the
+// handler writes. The rate limit refusal returns before any query, so that half
+// is proved without one; this half cannot be.
+//
+// What it pins down is that the `login.failed` row carries the forwarded client
+// rather than the proxy. An audit trail of login failures that records one
+// address for the whole installation cannot be used for the thing it exists for.
+// The successful `login` row is written from the same local variable one line
+// below, which is the point of computing it once at the top of the handler.
+// The fixture's password hash is a literal, so a successful login cannot be
+// driven from here and only the failure row is asserted.
+func TestLoginAuditRecordsTheTrustedProxyClientIP(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	// A login for an address nobody seeded: Auth.Login refuses it, which is the
+	// branch that writes the audit row, and the email makes the row unambiguous
+	// among the login failures other tests leave behind.
+	const email = "proxy-audit@test.local"
+	if _, err := pool.Exec(ctx, `DELETE FROM audit_logs WHERE resource_id=$1`, email); err != nil {
+		t.Fatalf("clear audit rows: %v", err)
+	}
+	_, trusted, err := net.ParseCIDR("192.0.2.0/24")
+	if err != nil {
+		t.Fatalf("parse trusted cidr: %v", err)
+	}
+	server := &Server{
+		DB:             pool,
+		Auth:           auth.Service{DB: pool},
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Limiter:        newRateLimiter(1),
+		LoginLimiter:   newRateLimiter(10),
+		trustedProxies: []*net.IPNet{trusted},
+	}
+
+	// httptest.NewRequest's default RemoteAddr is 192.0.2.1:1234, so the request
+	// arrives from inside the trusted range — the documented nginx deployment.
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+		strings.NewReader(`{"email":"`+email+`","password":"wrong"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-For", "198.51.100.7")
+	recorder := httptest.NewRecorder()
+	server.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401 for an unknown email: %s", recorder.Code, truncateBody(recorder.Body.String()))
+	}
+
+	var recorded string
+	if err := pool.QueryRow(ctx, `SELECT host(client_ip) FROM audit_logs WHERE resource_id=$1 AND action='login.failed' ORDER BY created_at DESC LIMIT 1`, email).Scan(&recorded); err != nil {
+		t.Fatalf("read the audit row the refused login should have written: %v", err)
+	}
+	if recorded != "198.51.100.7" {
+		t.Fatalf("the login.failed audit row recorded %q, want the forwarded client 198.51.100.7 — the trail records the proxy, not the person", recorded)
 	}
 }
